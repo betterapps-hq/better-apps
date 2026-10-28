@@ -25,13 +25,13 @@ Imports of `@better-auth/core`, Node built-ins and declared externals such as `p
 stops the sync. A rewrite that upstream no longer needs also stops it. Either case means upstream changed shape, so
 review it and update the file list or rewrites.
 
-The sync also pins `@better-auth/core` and `@better-auth/drizzle-adapter` to the synced release, and copies upstream's
-version range for each external.
+The sync also pins `@better-auth/core` and `@better-auth/drizzle-adapter` to the synced release, in this package and in
+`better-apps`, which shares `@better-auth/core` types with it. It copies upstream's version range for each external.
 
 ## Taking a new release
 
 ```sh
-pnpm --filter @buildkitgg/better-apps sync:better-auth 1.8.0
+pnpm --filter @better-apps/cli sync:better-auth 1.8.0
 pnpm install
 ```
 

@@ -30,8 +30,11 @@ describe("vendored Better Auth source", () => {
     expect(present.sort()).toEqual(Object.keys(snapshot.files).sort())
   })
 
-  it("pins @better-auth/core to the synced version", () => {
-    const manifest = JSON.parse(readFileSync(resolve(packageRoot, "package.json"), "utf8"))
-    expect(manifest.dependencies["@better-auth/core"]).toBe(snapshot.version)
-  })
+  it.each(["package.json", "../better-apps/package.json"])(
+    "%s pins @better-auth/core to the synced version",
+    (path) => {
+      const manifest = JSON.parse(readFileSync(resolve(packageRoot, path), "utf8"))
+      expect(manifest.dependencies["@better-auth/core"]).toBe(snapshot.version)
+    }
+  )
 })

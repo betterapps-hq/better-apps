@@ -1,5 +1,5 @@
 {
-  "name": "@buildkitgg/better-apps",
+  "name": "better-apps",
   "version": "0.0.0",
   "private": true,
   "description": "Composable app features that declare their own database schema, generated for your ORM.",
@@ -20,9 +20,7 @@
     "dist/**/*.js",
     "dist/**/*.d.ts",
     "README.md",
-    "docs/*.md",
     "LICENSE",
-    "src/vendor/better-auth/LICENSE.md",
     "CHANGELOG.md"
   ],
   "scripts": {
@@ -30,13 +28,11 @@
     "check:types": "pnpm build && tsc --noEmit",
     "lint": "oxlint --max-warnings=0",
     "prepack": "pnpm build",
-    "sync:better-auth": "node scripts/sync-better-auth.ts",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@better-auth/core": "1.7.14",
-    "prettier": "^3.8.1"
+    "@better-auth/core": "1.7.14"
   },
   "devDependencies": {
     "@better-auth/drizzle-adapter": "1.7.14",
@@ -45,7 +41,6 @@
     "@types/node": "24.13.2",
     "@vitest/coverage-v8": "5.0.5",
     "drizzle-orm": "0.45.4",
-    "ts-morph": "26.0.0",
     "typescript": "catalog:",
     "vitest": "5.0.5"
   },

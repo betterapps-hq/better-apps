@@ -1,7 +1,7 @@
 // Stands in for `better-auth/db` in vendored code. Only `getAuthTables` differs from upstream.
 import type { BetterAuthOptions } from "@better-auth/core"
 import type { BetterAuthDBSchema } from "@better-auth/core/db"
-import { getFeatureTables } from "../tables.js"
+import { getFeatureTables } from "better-apps"
 
 export type { BetterAuthDBSchema, DBFieldAttribute } from "@better-auth/core/db"
 

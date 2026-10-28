@@ -7,8 +7,7 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],
-      // Vendored upstream code is covered by Better Auth's own tests.
-      exclude: ["src/**/*.test.ts", "src/vendor/**"],
+      exclude: ["src/**/*.test.ts"],
       thresholds: { lines: 85, statements: 85, functions: 85, branches: 75 }
     }
   }
