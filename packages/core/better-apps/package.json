@@ -1,0 +1,71 @@
+{
+  "name": "@buildkitgg/better-apps",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Composable app features that declare their own database schema, generated for your ORM.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=24"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "README.md",
+    "docs/*.md",
+    "LICENSE",
+    "src/vendor/better-auth/LICENSE.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check:types": "pnpm build && tsc --noEmit",
+    "lint": "oxlint --max-warnings=0",
+    "prepack": "pnpm build",
+    "sync:better-auth": "node scripts/sync-better-auth.ts",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@better-auth/core": "1.7.14",
+    "prettier": "^3.8.1"
+  },
+  "devDependencies": {
+    "@better-auth/drizzle-adapter": "1.7.14",
+    "@repo/oxlint-config": "workspace:*",
+    "@repo/typescript-config": "workspace:*",
+    "@types/node": "24.13.2",
+    "@vitest/coverage-v8": "5.0.5",
+    "drizzle-orm": "0.45.4",
+    "ts-morph": "26.0.0",
+    "typescript": "catalog:",
+    "vitest": "5.0.5"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AndrewCraswell/buildkit.git",
+    "directory": "packages/better-apps/better-apps"
+  },
+  "homepage": "https://github.com/AndrewCraswell/buildkit/tree/main/packages/better-apps/better-apps#readme",
+  "bugs": {
+    "url": "https://github.com/AndrewCraswell/buildkit/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "keywords": [
+    "better-apps",
+    "drizzle",
+    "schema",
+    "buildkit"
+  ]
+}

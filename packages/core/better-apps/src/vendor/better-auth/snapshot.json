@@ -1,0 +1,22 @@
+{
+  "repository": "https://github.com/better-auth/better-auth",
+  "version": "1.7.14",
+  "revision": "a936663d3a3c811af82ee9e9418d986f70662d9b",
+  "files": {
+    "packages/cli/src/generators/drizzle.ts": {
+      "upstream": "c3855fac861bd5bbcc1af4246909712e3f76b82403f4c82e942bab838a567cf9",
+      "vendored": "daf82492a2e2f813e8158b3bc9001f2b8cd38a2f433e39cd62a18c95edb3e020"
+    },
+    "packages/cli/src/generators/types.ts": {
+      "upstream": "480549bac94686f337a26fecbf12727e3d6d1810ee67b48cc9149c91925ebd0e",
+      "vendored": "2210bf677e805b6b163d0cedfa7fcc15f913d0a48f2dfbd3458e10eec9631c3c"
+    },
+    "LICENSE.md": {
+      "upstream": "7a07f7d9085cb3157e4377d944988c9712933141b0f7201955ceccfac92abde4",
+      "vendored": "7a07f7d9085cb3157e4377d944988c9712933141b0f7201955ceccfac92abde4"
+    },
+    "README.md": {
+      "vendored": "bf836ba41bc6e85935b1838974b1161e6892bc5007d3bb5b05466ae9daaed5c6"
+    }
+  }
+}
