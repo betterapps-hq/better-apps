@@ -115,6 +115,10 @@ function InvoiceComments({ invoiceId }: { invoiceId: string }) {
 - `applyEvent` takes events from `toClientEvent`, such as from a live updates feature, and ignores ones it has applied
   and comments it already has. A thread that gets a new comment moves to the top of lists by activity.
 - `dehydrate()` and `hydrate(snapshot)` carry a server render's loads to the browser, so the first paint has threads.
+  Each Better Apps client has one store, so a router that hydrates `createCommentsClient(client)` and hooks under a
+  `BetterAppsProvider` with that client share it.
+- The store holds what the signed-in person could see. If someone else signs in without a page load, call `reset()` or
+  create a new Better Apps client, so they never see the previous person's threads.
 - Hooks: `useThreads(subject, { status, order })`, `useThread(id)`, `useThreadCounts(subjectType, subjectIds)`, which
   splits lists over 50, `useSuggestMentions`, `useAnchorPosition(thread, rootRef, version)`, and a mutation hook per
   write, from `useCreateThread()` to `useDeleteThread()`, each with `mutate`, `status`, `error` and `reset`.

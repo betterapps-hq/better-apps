@@ -67,43 +67,7 @@ export interface CommentsState<Thread = CommentThread, Message = Comment_2> {
 export function countKey(subjectType: string, subjectId: string): string;
 
 // @public
-export function createCommentsClient<App = BetterApp>(client: BetterAppsClient<App>): {
-    store: Store<CommentsState<CommentThread & AppCommentsTypes<App>["threadFields"], Comment_2 & AppCommentsTypes<App>["commentFields"]>>;
-    loadThreads(subject: Subject<AppCommentsTypes<App>["subjectType"]>, options?: ListOptions): Promise<void>;
-    loadMoreThreads(subject: Subject<AppCommentsTypes<App>["subjectType"]>, options?: ListOptions): Promise<void>;
-    loadThread(threadId: string): Promise<void>;
-    loadMoreComments(threadId: string): Promise<void>;
-    loadCounts(subjectType: AppCommentsTypes<App>["subjectType"], subjectIds: readonly string[]): Promise<void>;
-    createThread(input: CreateThreadInput<AppCommentsTypes<App>>): Promise<{
-        thread: CommentThread & AppCommentsTypes<App>["threadFields"];
-        comment: Comment_2 & AppCommentsTypes<App>["commentFields"];
-        droppedMentions: string[];
-    }>;
-    reply(input: ReplyInput<AppCommentsTypes<App>>): Promise<{
-        thread: CommentThread & AppCommentsTypes<App>["threadFields"];
-        comment: Comment_2 & AppCommentsTypes<App>["commentFields"];
-        droppedMentions: string[];
-    }>;
-    editComment(input: EditCommentInput<AppCommentsTypes<App>>): Promise<{
-        comment: Comment_2 & AppCommentsTypes<App>["commentFields"];
-        droppedMentions: string[];
-    }>;
-    deleteComment(input: CommentTarget): Promise<{
-        comment: Comment_2 & AppCommentsTypes<App>["commentFields"];
-        threadDeleted: boolean;
-    }>;
-    resolveThread: (input: ThreadTarget) => Promise<CommentThread & AppCommentsTypes<App>["threadFields"]>;
-    reopenThread: (input: ThreadTarget) => Promise<CommentThread & AppCommentsTypes<App>["threadFields"]>;
-    updateThread(input: UpdateThreadInput<AppCommentsTypes<App>>): Promise<CommentThread & AppCommentsTypes<App>["threadFields"]>;
-    updateAnchor(input: UpdateAnchorInput<AppCommentsTypes<App>>): Promise<CommentThread & AppCommentsTypes<App>["threadFields"]>;
-    deleteThread(input: ThreadTarget): Promise<{
-        threadId: string;
-    }>;
-    suggestMentions(input: SuggestMentionsInput<AppCommentsTypes<App>["subjectType"]>): Promise<IdentityUser[]>;
-    applyEvent(event: ClientEvent | Serialized<ClientEvent>): void;
-    dehydrate(): DehydratedComments;
-    hydrate(snapshot: DehydratedComments): void;
-};
+export function createCommentsClient<App = BetterApp>(client: BetterAppsClient<App>): CommentsClient<AppCommentsTypes<App>>;
 
 // @public
 export type DehydratedComments = Serialized<CommentsState>;
@@ -195,15 +159,6 @@ export function ulid(time?: number): string;
 // Warnings were encountered during analysis:
 //
 // dist/client.d.ts:15:5 - (ae-forgotten-export) The symbol "CommentsOptions" needs to be exported by the entry point client.d.ts
-// dist/client.d.ts:86:5 - (ae-forgotten-export) The symbol "CreateThreadInput" needs to be exported by the entry point client.d.ts
-// dist/client.d.ts:92:5 - (ae-forgotten-export) The symbol "ReplyInput" needs to be exported by the entry point client.d.ts
-// dist/client.d.ts:97:5 - (ae-forgotten-export) The symbol "EditCommentInput" needs to be exported by the entry point client.d.ts
-// dist/client.d.ts:101:5 - (ae-forgotten-export) The symbol "CommentTarget" needs to be exported by the entry point client.d.ts
-// dist/client.d.ts:105:5 - (ae-forgotten-export) The symbol "ThreadTarget" needs to be exported by the entry point client.d.ts
-// dist/client.d.ts:107:5 - (ae-forgotten-export) The symbol "UpdateThreadInput" needs to be exported by the entry point client.d.ts
-// dist/client.d.ts:108:5 - (ae-forgotten-export) The symbol "UpdateAnchorInput" needs to be exported by the entry point client.d.ts
-// dist/client.d.ts:113:5 - (ae-forgotten-export) The symbol "SuggestMentionsInput" needs to be exported by the entry point client.d.ts
-// dist/client.d.ts:118:5 - (ae-forgotten-export) The symbol "ClientEvent" needs to be exported by the entry point client.d.ts
 
 // (No @packageDocumentation comment for this package)
 

@@ -19,20 +19,13 @@ import type { Comment, CommentThread } from "./schema.js"
 
 export * from "./client.js"
 
-const clients = new WeakMap<object, CommentsClient>()
-
 /**
- * The comments client for the nearest `BetterAppsProvider`, created once per Better Apps client, so every hook shares
- * one store. Pass `typeof app` for the app's types.
+ * The comments client for the nearest `BetterAppsProvider`. Each Better Apps client has one, so every hook shares one
+ * store, and so does code that called `createCommentsClient` with the same client, such as a router hydrating a server
+ * render's loads. Pass `typeof app` for the app's types.
  */
 export function useComments<App = BetterApp>() {
-  const client = useBetterApps<BetterAppsClient<App>>()
-  let comments = clients.get(client)
-  if (!comments) {
-    comments = createCommentsClient(client as BetterAppsClient) as CommentsClient
-    clients.set(client, comments)
-  }
-  return comments as unknown as ReturnType<typeof createCommentsClient<App>>
+  return createCommentsClient(useBetterApps<BetterAppsClient<App>>())
 }
 
 type ThreadOf<Types extends CommentsTypes> = CommentThread & Types["threadFields"]
@@ -147,6 +140,7 @@ export function useThreadCounts<Types extends CommentsTypes = CommentsTypes>(
 ): Readonly<Record<string, { open: number; total: number }>> {
   const comments = useComments()
   const idsKey = subjectIds.join("\u0000")
+  // Ids with no counts at all, not even loading ones. A reset empties the store, so its ids show up here again.
   const missing = useCommentsState(
     (state) => subjectIds.filter((subjectId) => !state.counts[countKey(subjectType, subjectId)]),
     sameItems
@@ -156,7 +150,7 @@ export function useThreadCounts<Types extends CommentsTypes = CommentsTypes>(
       Object.fromEntries(
         subjectIds.flatMap((subjectId) => {
           const count = state.counts[countKey(subjectType, subjectId)]
-          return count ? [[subjectId, { open: count.open, total: count.total }] as const] : []
+          return count?.state === "ready" ? [[subjectId, { open: count.open, total: count.total }] as const] : []
         })
       ),
     (a, b) => JSON.stringify(a) === JSON.stringify(b)
@@ -167,6 +161,16 @@ export function useThreadCounts<Types extends CommentsTypes = CommentsTypes>(
       comments.loadCounts(subjectType, missingKey.split("\u0000")).catch(() => undefined)
     }
   }, [comments, subjectType, idsKey, missingKey])
+  // Counts that failed load again once when the list mounts or changes, rather than after every failure, so a failing
+  // server isn't asked in a loop.
+  useEffect(() => {
+    const state = comments.store.getSnapshot()
+    const ids = idsKey === "" ? [] : idsKey.split("\u0000")
+    const failed = ids.filter((subjectId) => state.counts[countKey(subjectType, subjectId)]?.state === "error")
+    if (failed.length > 0) {
+      comments.loadCounts(subjectType, failed).catch(() => undefined)
+    }
+  }, [comments, subjectType, idsKey])
   return counts
 }
 
@@ -236,6 +240,15 @@ export function useSuggestMentions(target: { threadId: string } | Subject) {
   const [suggestions, setSuggestions] = useState<IdentityUser[]>([])
   const [error, setError] = useState<Error | null>(null)
   const targetKey = JSON.stringify(target)
+  // Suggestions are what the signed-in person could see, so they go when the store is reset for someone else.
+  useEffect(
+    () =>
+      comments.onReset(() => {
+        setSuggestions([])
+        setError(null)
+      }),
+    [comments]
+  )
   const search = useCallback(
     async (query: string) => {
       try {

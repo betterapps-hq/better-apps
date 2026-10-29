@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import type { BetterAppsEvent } from "better-apps"
+import { createBetterAppsClient } from "better-apps/client"
 import { describe, expect, expectTypeOf, it } from "vitest"
 import { browser } from "../test/browser.js"
 import { countKey, createCommentsClient, listKey, mentionToken, type CommentsState } from "./client.js"
@@ -233,21 +234,98 @@ describe("applyEvent", () => {
   })
 })
 
+describe("createCommentsClient", () => {
+  it("keeps one store per Better Apps client", () => {
+    const { client, comments } = browser()
+    expect(createCommentsClient(client)).toBe(comments)
+    expect(createCommentsClient(createBetterAppsClient())).not.toBe(comments)
+  })
+})
+
+describe("reset", () => {
+  it("empties the store, so the next person loads their own threads", async () => {
+    const { api, as, comments } = browser()
+    const { thread } = await api.createThread({ ...onInvoice, body: "Private to Bob's view" }, as("bob"))
+    await comments.loadThreads(onInvoice)
+    await comments.loadThread(thread.id)
+    expect(comments.store.getSnapshot().threads[thread.id]).toBeDefined()
+    comments.reset()
+    const state = comments.store.getSnapshot()
+    expect(state.threads).toEqual({})
+    expect(state.lists).toEqual({})
+    expect(state.users).toEqual({})
+  })
+
+  it("ignores answers to requests made before it", async () => {
+    const { api, as, comments } = browser()
+    const { thread } = await api.createThread({ ...onInvoice, body: "Before the switch" }, as("bob"))
+    const loading = comments.loadThreads(onInvoice)
+    const counting = comments.loadCounts("invoice", ["inv-1"])
+    const opening = comments.loadThread(thread.id)
+    const writing = comments.createThread({ ...onInvoice, body: "Written before the switch" })
+    const refused = comments.createThread({ subjectType: "invoice", subjectId: "inv-locked", body: "Refused" })
+    comments.reset()
+    await Promise.all([loading, counting, opening, writing])
+    await expect(refused).rejects.toMatchObject({ code: "FORBIDDEN" })
+    expect(comments.store.getSnapshot()).toEqual({
+      threads: {},
+      comments: {},
+      threadComments: {},
+      lists: {},
+      counts: {},
+      users: {},
+      pending: {}
+    })
+  })
+
+  it("tells listeners, and drops mention searches it overtakes", async () => {
+    const { comments } = browser()
+    const heard: string[] = []
+    const stop = comments.onReset(() => heard.push("reset"))
+    const searching = comments.suggestMentions({ ...onInvoice, query: "ada" })
+    comments.reset()
+    expect(await searching).toEqual([])
+    expect((await comments.suggestMentions({ ...onInvoice, query: "ada" })).map((user) => user.id)).toEqual(["ada"])
+    stop()
+    comments.reset()
+    expect(heard).toEqual(["reset"])
+  })
+})
+
 describe("dehydrate and hydrate", () => {
   it("carry a server render's loads to the browser as JSON", async () => {
-    const { api, as, comments, client } = browser()
+    const { api, as, comments } = browser()
     const { thread } = await api.createThread({ ...onInvoice, body: "Prefetched" }, as("bob"))
     await comments.loadThreads(onInvoice)
     await comments.loadThread(thread.id)
     const json = JSON.stringify(comments.dehydrate())
     const snapshot = JSON.parse(json) as ReturnType<typeof comments.dehydrate>
-    const fresh = createCommentsClient(client)
+    const fresh = createCommentsClient(createBetterAppsClient())
     fresh.hydrate(snapshot)
     const state = fresh.store.getSnapshot()
     expect(state.threads[thread.id]?.lastActivityAt).toBeInstanceOf(Date)
     expect(state.lists[listKey(onInvoice)]?.state).toBe("ready")
     expect(state.threadComments[thread.id]?.ids).toHaveLength(1)
     expect(Object.values(state.comments)[0]?.createdAt).toBeInstanceOf(Date)
+  })
+
+  it("carry only loaded counts", () => {
+    const { comments } = browser()
+    const ready = countKey("invoice", "inv-1")
+    comments.store.setState((state) => ({
+      ...state,
+      counts: {
+        [ready]: { open: 1, total: 2, state: "ready" },
+        [countKey("invoice", "inv-2")]: { open: 0, total: 0, state: "loading" },
+        [countKey("invoice", "inv-3")]: { open: 0, total: 0, state: "error" }
+      }
+    }))
+    const snapshot = comments.dehydrate()
+    expect(Object.keys(snapshot.counts)).toEqual([ready])
+    const failed = { [countKey("invoice", "inv-4")]: { open: 0, total: 0, state: "error" as const } }
+    const fresh = createCommentsClient(createBetterAppsClient())
+    fresh.hydrate({ ...snapshot, counts: { ...snapshot.counts, ...failed } })
+    expect(Object.keys(fresh.store.getSnapshot().counts)).toEqual([ready])
   })
 })
 

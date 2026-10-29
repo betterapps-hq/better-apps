@@ -1,6 +1,12 @@
 import { describe, expect, expectTypeOf, it, vi } from "vitest"
 import { memoryDatabase } from "../test/memory-database.js"
-import { BetterAppsClientError, createBetterAppsClient, createStore, type Serialized } from "./client.js"
+import {
+  BetterAppsClientError,
+  createBetterAppsClient,
+  createStore,
+  type JsonValue,
+  type Serialized
+} from "./client.js"
 import {
   BetterAppsError,
   createBetterApps,
@@ -137,6 +143,13 @@ describe("Serialized", () => {
       list: string[]
       nested: { at: string | null }
       run: never
+    }>()
+  })
+
+  it("types unknown values as JSON", () => {
+    expectTypeOf<Serialized<{ body: unknown; meta: Record<string, unknown> | null }>>().toEqualTypeOf<{
+      body: JsonValue
+      meta: { [key: string]: JsonValue } | null
     }>()
   })
 })

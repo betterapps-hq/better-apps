@@ -5,16 +5,24 @@ import type { BetterApp } from "./app.js"
 import type { InputIssue } from "./errors.js"
 import type { BetterAppsFeature } from "./feature.js"
 
-/** A value as JSON carries it to the browser: dates become ISO strings. */
-export type Serialized<Value> = Value extends Date
-  ? string
-  : Value extends (...args: never[]) => unknown
-    ? never
-    : Value extends readonly (infer Item)[]
-      ? Serialized<Item>[]
-      : Value extends object
-        ? { [Key in keyof Value]: Serialized<Value[Key]> }
-        : Value
+/** Any value JSON can carry. */
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
+
+/**
+ * A value as JSON carries it to the browser: dates become ISO strings, and a value typed `unknown`, such as a comment's
+ * body, is whatever JSON can carry.
+ */
+export type Serialized<Value> = unknown extends Value
+  ? JsonValue
+  : Value extends Date
+    ? string
+    : Value extends (...args: never[]) => unknown
+      ? never
+      : Value extends readonly (infer Item)[]
+        ? Serialized<Item>[]
+        : Value extends object
+          ? { [Key in keyof Value]: Serialized<Value[Key]> }
+          : Value
 
 /** An action as the client exposes it. The input is optional when the action accepts `undefined`. */
 export type ClientMethod<Input, Output> = undefined extends Input

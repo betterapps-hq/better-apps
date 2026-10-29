@@ -67,7 +67,12 @@ export type FeatureClient<Feature> = Feature extends {
 } : Record<never, never>;
 
 // @public
-export type Serialized<Value> = Value extends Date ? string : Value extends (...args: never[]) => unknown ? never : Value extends readonly (infer Item)[] ? Serialized<Item>[] : Value extends object ? {
+export type JsonValue = string | number | boolean | null | JsonValue[] | {
+    [key: string]: JsonValue;
+};
+
+// @public
+export type Serialized<Value> = unknown extends Value ? JsonValue : Value extends Date ? string : Value extends (...args: never[]) => unknown ? never : Value extends readonly (infer Item)[] ? Serialized<Item>[] : Value extends object ? {
     [Key in keyof Value]: Serialized<Value[Key]>;
 } : Value;
 

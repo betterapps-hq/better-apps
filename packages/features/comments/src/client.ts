@@ -145,12 +145,23 @@ export type CommentsClient<Types extends CommentsTypes = CommentsTypes> = Return
   typeof createCommentsClientFor<Types>
 >
 
+const clients = new WeakMap<object, CommentsClient>()
+
 /**
  * Creates the comments store for a Better Apps client. Pass `typeof app` as the client's type to get the app's subject
- * types, anchors, formats and additional fields.
+ * types, anchors, formats and additional fields. Each Better Apps client has one store, so calling this again with the
+ * same client, as `useComments` does, returns the store already made, with whatever a server render hydrated into it.
+ *
+ * The store holds what the signed-in person could see. When someone else signs in without a page load, call `reset()`
+ * or create a new Better Apps client, so they never see the previous person's threads.
  */
 export function createCommentsClient<App = BetterApp>(client: BetterAppsClient<App>) {
-  return createCommentsClientFor<AppCommentsTypes<App>>(client.$call)
+  let comments = clients.get(client)
+  if (!comments) {
+    comments = createCommentsClientFor((client as BetterAppsClient).$call)
+    clients.set(client, comments)
+  }
+  return comments as unknown as CommentsClient<AppCommentsTypes<App>>
 }
 
 function createCommentsClientFor<Types extends CommentsTypes>(
@@ -162,7 +173,19 @@ function createCommentsClientFor<Types extends CommentsTypes>(
   const store: Store<State> = createStore(empty as State)
   const run = (action: string, input: unknown) => call("comments", action, input)
   const applied: string[] = []
+  const resetListeners = new Set<() => void>()
   const update = (change: (state: State) => State) => store.setState(change)
+  // reset() starts a new generation. Answers to requests made before it belong to the previous person, so an
+  // operation applies its changes only while its generation is current.
+  let generation = 0
+  const scoped = () => {
+    const started = generation
+    return (change: (state: State) => State) => {
+      if (started === generation) {
+        update(change)
+      }
+    }
+  }
 
   const mergeUsers = (state: State, users: Record<string, IdentityUser> | undefined): State =>
     users && Object.keys(users).length > 0 ? { ...state, users: { ...state.users, ...users } } : state
@@ -193,7 +216,8 @@ function createCommentsClientFor<Types extends CommentsTypes>(
   const countChange = (state: State, thread: Thread, total: number, open: number): State => {
     const key = countKey(thread.subjectType, thread.subjectId)
     const counts = state.counts[key]
-    if (!counts) {
+    // Counts still loading arrive from the server with the change in them, or without it, and replace these anyway.
+    if (counts?.state !== "ready") {
       return state
     }
     return {
@@ -240,13 +264,14 @@ function createCommentsClientFor<Types extends CommentsTypes>(
   /** Applies a change now and returns a function that undoes it, for when the server refuses the write. */
   const optimistic = (change: (state: State) => State, ids: readonly string[]) => {
     const before = store.getSnapshot()
-    update((state) => {
+    const apply = scoped()
+    apply((state) => {
       const next = change(state)
       return { ...next, pending: { ...next.pending, ...Object.fromEntries(ids.map((id) => [id, true as const])) } }
     })
-    const settle = () => update((state) => ({ ...state, pending: without(state.pending, ...ids) }))
+    const settle = () => apply((state) => ({ ...state, pending: without(state.pending, ...ids) }))
     const undo = () =>
-      update((state) => ({
+      apply((state) => ({
         ...before,
         // Keep what was loaded meanwhile; only the optimistic change is rolled back.
         users: state.users,
@@ -262,6 +287,7 @@ function createCommentsClientFor<Types extends CommentsTypes>(
     ids: readonly string[],
     confirm: (state: State, output: Output) => State
   ): Promise<Output> {
+    const apply = scoped()
     const { settle, undo } = optimistic(change, ids)
     let output: Output
     try {
@@ -270,7 +296,7 @@ function createCommentsClientFor<Types extends CommentsTypes>(
       undo()
       throw error
     }
-    update((state) => confirm(state, output))
+    apply((state) => confirm(state, output))
     settle()
     return output
   }
@@ -332,29 +358,45 @@ function createCommentsClientFor<Types extends CommentsTypes>(
 
     /** Loads open and total counts for many subjects, 50 per call. */
     async loadCounts(subjectType: Types["subjectType"], subjectIds: readonly string[]) {
+      const apply = scoped()
       const unique = [...new Set(subjectIds)]
       const pages: string[][] = []
       for (let start = 0; start < unique.length; start += 50) {
         pages.push(unique.slice(start, start + 50))
       }
-      await Promise.all(
-        pages.map(async (page) => {
-          const input: CountThreadsInput = { subjectType, subjectIds: page }
-          const counts = (await run("countThreads", input)) as Record<string, ThreadCounts>
-          update((state) => ({
-            ...state,
-            counts: {
-              ...state.counts,
-              ...Object.fromEntries(
-                page.map((subjectId) => [
-                  countKey(subjectType, subjectId),
-                  { ...(counts[subjectId] ?? { open: 0, total: 0 }), state: "ready" as const }
-                ])
-              )
-            }
-          }))
-        })
-      )
+      // Counts not loaded yet are marked as loading, so a reset meanwhile shows they're missing again.
+      const placeholders = (state: CommentsState["counts"], loadState: LoadState) =>
+        Object.fromEntries(
+          unique.flatMap((subjectId) => {
+            const key = countKey(subjectType, subjectId)
+            const current = state[key]
+            return current?.state === "ready" ? [] : [[key, { open: 0, total: 0, state: loadState }] as const]
+          })
+        )
+      apply((state) => ({ ...state, counts: { ...state.counts, ...placeholders(state.counts, "loading") } }))
+      try {
+        await Promise.all(
+          pages.map(async (page) => {
+            const input: CountThreadsInput = { subjectType, subjectIds: page }
+            const counts = (await run("countThreads", input)) as Record<string, ThreadCounts>
+            apply((state) => ({
+              ...state,
+              counts: {
+                ...state.counts,
+                ...Object.fromEntries(
+                  page.map((subjectId) => [
+                    countKey(subjectType, subjectId),
+                    { ...(counts[subjectId] ?? { open: 0, total: 0 }), state: "ready" as const }
+                  ])
+                )
+              }
+            }))
+          })
+        )
+      } catch (error) {
+        apply((state) => ({ ...state, counts: { ...state.counts, ...placeholders(state.counts, "error") } }))
+        throw error
+      }
     },
 
     /** Starts a thread. It shows at once under its final id, and is rolled back if the server refuses it. */
@@ -522,9 +564,14 @@ function createCommentsClientFor<Types extends CommentsTypes>(
       )
     },
 
-    /** Suggests users to mention in a thread, or on a subject before its thread exists. */
-    suggestMentions(input: SuggestMentionsInput<Types["subjectType"]>) {
-      return run("suggestMentions", input) as Promise<IdentityUser[]>
+    /**
+     * Suggests users to mention in a thread, or on a subject before its thread exists. A search that a `reset()`
+     * overtakes suggests nobody, since it ran as the previous person.
+     */
+    async suggestMentions(input: SuggestMentionsInput<Types["subjectType"]>): Promise<IdentityUser[]> {
+      const started = generation
+      const users = (await run("suggestMentions", input)) as IdentityUser[]
+      return started === generation ? users : []
     },
 
     /**
@@ -560,9 +607,36 @@ function createCommentsClientFor<Types extends CommentsTypes>(
 
     /** The store's state as JSON can carry it, to send a server render's loads to the browser. */
     dehydrate(): DehydratedComments {
-      // Through JSON on purpose, so dates become the strings a server render sends.
-      const json = JSON.stringify({ ...store.getSnapshot(), pending: {} })
+      // Through JSON on purpose, so dates become the strings a server render sends. Only loaded counts go, since the
+      // browser loads counts it doesn't have and would keep ones marked loading or failed.
+      const state = store.getSnapshot()
+      const counts = Object.fromEntries(Object.entries(state.counts).filter(([, count]) => count.state === "ready"))
+      const json = JSON.stringify({ ...state, counts, pending: {} })
       return JSON.parse(json) as DehydratedComments
+    },
+
+    /**
+     * Empties the store, such as when the signed-in person changes without a page load. Lists and threads that are on
+     * screen load again for the new person.
+     */
+    reset() {
+      generation += 1
+      applied.length = 0
+      store.setState(() => empty as State)
+      for (const listener of Array.from(resetListeners)) {
+        listener()
+      }
+    },
+
+    /**
+     * Calls `listener` after each `reset()`, such as to clear state kept outside the store that the previous person could
+     * see. Returns a function that stops it.
+     */
+    onReset(listener: () => void) {
+      resetListeners.add(listener)
+      return () => {
+        resetListeners.delete(listener)
+      }
     },
 
     /** Merges a snapshot from `dehydrate`, such as one a server render loaded. */
@@ -582,7 +656,10 @@ function createCommentsClientFor<Types extends CommentsTypes>(
         },
         threadComments: { ...state.threadComments, ...(snapshot.threadComments as Record<string, ThreadComments>) },
         lists: { ...state.lists, ...(snapshot.lists as Record<string, ThreadList>) },
-        counts: { ...state.counts, ...snapshot.counts },
+        counts: {
+          ...state.counts,
+          ...Object.fromEntries(Object.entries(snapshot.counts).filter(([, count]) => count.state === "ready"))
+        },
         users: { ...state.users, ...(snapshot.users as Record<string, IdentityUser>) },
         pending: state.pending
       }))
@@ -616,6 +693,7 @@ function createCommentsClientFor<Types extends CommentsTypes>(
   }
 
   async function loadPage(key: string, input: ListThreadsInput, append: boolean) {
+    const apply = scoped()
     try {
       const page = (await run("listThreads", input)) as {
         threads: unknown[]
@@ -623,7 +701,7 @@ function createCommentsClientFor<Types extends CommentsTypes>(
         users: Record<string, IdentityUser>
       }
       const threads = page.threads.map((thread) => reviveThread<Thread>(thread))
-      update((state) => {
+      apply((state) => {
         const list = state.lists[key] as ThreadList
         const ids = threads.map((thread) => thread.id)
         // Threads that moved up through an event while paging are already listed, so they aren't repeated.
@@ -638,7 +716,7 @@ function createCommentsClientFor<Types extends CommentsTypes>(
         )
       })
     } catch (error) {
-      update((state) => ({
+      apply((state) => ({
         ...state,
         lists: { ...state.lists, [key]: { ...(state.lists[key] as ThreadList), state: "error", error: error as Error } }
       }))
@@ -648,7 +726,8 @@ function createCommentsClientFor<Types extends CommentsTypes>(
 
   async function loadComments(input: GetThreadInput, append: boolean) {
     const { threadId } = input
-    update((state) => ({
+    const apply = scoped()
+    apply((state) => ({
       ...state,
       threadComments: {
         ...state.threadComments,
@@ -663,7 +742,7 @@ function createCommentsClientFor<Types extends CommentsTypes>(
         users: Record<string, IdentityUser>
       }
       const comments = page.comments.map((comment) => reviveComment<Message>(comment))
-      update((state) => {
+      apply((state) => {
         const loaded = state.threadComments[threadId] as ThreadComments
         const ids = comments.map((comment) => comment.id)
         return mergeUsers(
@@ -684,7 +763,7 @@ function createCommentsClientFor<Types extends CommentsTypes>(
         )
       })
     } catch (error) {
-      update((state) => ({
+      apply((state) => ({
         ...state,
         threadComments: {
           ...state.threadComments,

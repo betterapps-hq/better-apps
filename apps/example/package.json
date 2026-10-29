@@ -1,0 +1,45 @@
+{
+  "name": "@better-apps/example",
+  "private": true,
+  "description": "A TanStack Start app that runs Better Apps features on SQLite, for trying features in a real app.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "vite dev --host 127.0.0.1 --port 4190",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 4191",
+    "lint": "oxlint --max-warnings=0",
+    "check:types": "tsc --noEmit",
+    "db:generate": "better-apps generate --output src/db/better-apps-schema.ts && drizzle-kit generate && oxfmt src/db/better-apps-schema.ts drizzle"
+  },
+  "dependencies": {
+    "@better-apps/comments": "workspace:*",
+    "@better-apps/drizzle": "workspace:*",
+    "@better-apps/react": "workspace:*",
+    "@better-apps/tanstack-start": "workspace:*",
+    "@tanstack/react-router": "^1.170.46",
+    "@tanstack/react-start": "^1.169.4",
+    "better-apps": "workspace:*",
+    "drizzle-orm": "0.45.4",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@better-apps/cli": "workspace:*",
+    "@repo/oxlint-config": "workspace:*",
+    "@repo/typescript-config": "workspace:*",
+    "@types/node": "24.13.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "drizzle-kit": "0.31.11",
+    "oxc-transform-react": "0.155.0",
+    "oxfmt": "^0.74.0",
+    "typescript": "catalog:",
+    "vite": "^8.3.5"
+  }
+}
