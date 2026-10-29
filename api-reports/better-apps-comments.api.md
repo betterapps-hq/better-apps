@@ -193,58 +193,86 @@ export function comments<const Options extends CommentsOptions>(options: Options
         version?: string | null | undefined;
         } : never : never : never : never)["kind"]>>, ThreadPage<CommentThread & (Options["additionalFields"] extends {
         thread: infer Fields;
-        } ? InferFields<Fields> : Record<never, never>)>>;
+        } ? InferFields<Fields> : Record<never, never>)>> & {
+            serverOnly?: false | undefined;
+        };
         getThread: ActionDefinition<StandardSchemaV1<GetThreadInput, GetThreadInput>, ThreadWithComments<CommentThread & (Options["additionalFields"] extends {
         thread: infer Fields;
         } ? InferFields<Fields> : Record<never, never>), Comment_2 & (Options["additionalFields"] extends {
         comment: infer Fields_1;
-        } ? InferFields<Fields_1> : Record<never, never>)>>;
-        countThreads: ActionDefinition<StandardSchemaV1<CountThreadsInput<keyof Options["subjects"] & string>, CountThreadsInput<keyof Options["subjects"] & string>>, Record<string, ThreadCounts>>;
+        } ? InferFields<Fields_1> : Record<never, never>)>> & {
+            serverOnly?: false | undefined;
+        };
+        countThreads: ActionDefinition<StandardSchemaV1<CountThreadsInput<keyof Options["subjects"] & string>, CountThreadsInput<keyof Options["subjects"] & string>>, Record<string, ThreadCounts>> & {
+            serverOnly?: false | undefined;
+        };
         createThread: ActionDefinition<StandardSchemaV1<CreateThreadInput<TypesOf<Options>>, CreateThreadInput<TypesOf<Options>>>, WriteResult<CommentThread & (Options["additionalFields"] extends {
         thread: infer Fields;
         } ? InferFields<Fields> : Record<never, never>), Comment_2 & (Options["additionalFields"] extends {
         comment: infer Fields_1;
-        } ? InferFields<Fields_1> : Record<never, never>)>>;
+        } ? InferFields<Fields_1> : Record<never, never>)>> & {
+            serverOnly?: false | undefined;
+        };
         reply: ActionDefinition<StandardSchemaV1<ReplyInput<TypesOf<Options>>, ReplyInput<TypesOf<Options>>>, WriteResult<CommentThread & (Options["additionalFields"] extends {
         thread: infer Fields;
         } ? InferFields<Fields> : Record<never, never>), Comment_2 & (Options["additionalFields"] extends {
         comment: infer Fields_1;
-        } ? InferFields<Fields_1> : Record<never, never>)>>;
+        } ? InferFields<Fields_1> : Record<never, never>)>> & {
+            serverOnly?: false | undefined;
+        };
         editComment: ActionDefinition<StandardSchemaV1<EditCommentInput<TypesOf<Options>>, EditCommentInput<TypesOf<Options>>>, {
         comment: Comment_2 & (Options["additionalFields"] extends {
         comment: infer Fields_1;
         } ? InferFields<Fields_1> : Record<never, never>);
         droppedMentions: string[];
-        }>;
+        }> & {
+            serverOnly?: false | undefined;
+        };
         deleteComment: ActionDefinition<StandardSchemaV1<CommentTarget, CommentTarget>, {
         comment: Comment_2 & (Options["additionalFields"] extends {
         comment: infer Fields_1;
         } ? InferFields<Fields_1> : Record<never, never>);
         threadDeleted: boolean;
-        }>;
+        }> & {
+            serverOnly?: false | undefined;
+        };
         resolveThread: ActionDefinition<StandardSchemaV1<ThreadTarget, ThreadTarget>, CommentThread & (Options["additionalFields"] extends {
         thread: infer Fields;
-        } ? InferFields<Fields> : Record<never, never>)>;
+        } ? InferFields<Fields> : Record<never, never>)> & {
+            serverOnly?: false | undefined;
+        };
         reopenThread: ActionDefinition<StandardSchemaV1<ThreadTarget, ThreadTarget>, CommentThread & (Options["additionalFields"] extends {
         thread: infer Fields;
-        } ? InferFields<Fields> : Record<never, never>)>;
+        } ? InferFields<Fields> : Record<never, never>)> & {
+            serverOnly?: false | undefined;
+        };
         updateThread: ActionDefinition<StandardSchemaV1<UpdateThreadInput<TypesOf<Options>>, UpdateThreadInput<TypesOf<Options>>>, CommentThread & (Options["additionalFields"] extends {
         thread: infer Fields;
-        } ? InferFields<Fields> : Record<never, never>)>;
+        } ? InferFields<Fields> : Record<never, never>)> & {
+            serverOnly?: false | undefined;
+        };
         updateAnchor: ActionDefinition<StandardSchemaV1<UpdateAnchorInput<TypesOf<Options>>, UpdateAnchorInput<TypesOf<Options>>>, CommentThread & (Options["additionalFields"] extends {
         thread: infer Fields;
-        } ? InferFields<Fields> : Record<never, never>)>;
+        } ? InferFields<Fields> : Record<never, never>)> & {
+            serverOnly?: false | undefined;
+        };
         deleteThread: ActionDefinition<StandardSchemaV1<ThreadTarget, ThreadTarget>, {
         threadId: string;
-        }>;
-        suggestMentions: ActionDefinition<StandardSchemaV1<SuggestMentionsInput<keyof Options["subjects"] & string>, SuggestMentionsInput<keyof Options["subjects"] & string>>, IdentityUser[]>;
+        }> & {
+            serverOnly?: false | undefined;
+        };
+        suggestMentions: ActionDefinition<StandardSchemaV1<SuggestMentionsInput<keyof Options["subjects"] & string>, SuggestMentionsInput<keyof Options["subjects"] & string>>, IdentityUser[]> & {
+            serverOnly?: false | undefined;
+        };
         removeSubject: ActionDefinition<StandardSchemaV1<{
         subjectType: keyof Options["subjects"] & string;
         subjectId: string;
         }, {
         subjectType: keyof Options["subjects"] & string;
         subjectId: string;
-        }>, UpkeepStep>;
+        }>, UpkeepStep> & {
+            serverOnly?: true | undefined;
+        };
         moveSubject: ActionDefinition<StandardSchemaV1<{
         subjectType: keyof Options["subjects"] & string;
         subjectId: string;
@@ -253,12 +281,16 @@ export function comments<const Options extends CommentsOptions>(options: Options
         subjectType: keyof Options["subjects"] & string;
         subjectId: string;
         toOrgId: string | null;
-        }>, UpkeepStep>;
+        }>, UpkeepStep> & {
+            serverOnly?: true | undefined;
+        };
         removeUser: ActionDefinition<StandardSchemaV1<{
         userId: string;
         }, {
         userId: string;
-        }>, UpkeepStep>;
+        }>, UpkeepStep> & {
+            serverOnly?: true | undefined;
+        };
         recountThreads: ActionDefinition<StandardSchemaV1<{
         threadIds: readonly string[];
         } | {
@@ -273,7 +305,9 @@ export function comments<const Options extends CommentsOptions>(options: Options
         cursor?: string;
         }>, UpkeepStep & {
         cursor: string | null;
-        }>;
+        }> & {
+            serverOnly?: true | undefined;
+        };
         canViewThread: ActionDefinition<StandardSchemaV1<{
         actor: Actor | null;
         threadId: string;
@@ -286,14 +320,18 @@ export function comments<const Options extends CommentsOptions>(options: Options
         } | {
         actor: Actor | null;
         thread: CommentThread;
-        }>, boolean>;
+        }>, boolean> & {
+            serverOnly?: true | undefined;
+        };
         toClientEvent: ActionDefinition<StandardSchemaV1<{
         event: BetterAppsEvent;
         viewer: Actor | null;
         }, {
         event: BetterAppsEvent;
         viewer: Actor | null;
-        }>, ClientEvent | null>;
+        }>, ClientEvent | null> & {
+            serverOnly?: true | undefined;
+        };
     };
 };
 

@@ -90,6 +90,29 @@ base path is `/api/apps` unless you set `basePath`. It works on any runtime with
   `INVALID_INPUT` 400 with the schema's issues, `CONFLICT` 409, `RATE_LIMITED` 429, and 400 for other codes unless the
   error names a status. Any other error returns 500 `INTERNAL_ERROR` without details and goes to `onError`.
 
+## Client
+
+`better-apps/client` calls the actions from the browser, with no framework and no server code in the bundle. Pass the
+app's type for typed calls; the import is type-only.
+
+```ts
+import { createBetterAppsClient } from "better-apps/client"
+import type { app } from "./server/app"
+
+const client = createBetterAppsClient<typeof app>()
+await client.notes.add({ text: "Hi" })
+```
+
+- Server-only actions are left out of the client's types, and `app.handler` answers them with 404.
+- Outputs arrive as JSON, so dates are ISO strings, and the types say so. Feature clients, such as comments', turn the
+  dates they know back into `Date`s.
+- A failed call throws a `BetterAppsClientError` with the server's `code`, `status` and `issues`, or `NETWORK_ERROR`
+  when the server can't be reached.
+- `baseURL`, `basePath`, `headers`, `credentials` and `fetch` change how calls are sent. Tests can pass a `fetch` that
+  calls `app.handler` directly.
+- `createStore(initial)` makes the store feature clients keep their state in: `getSnapshot`, `subscribe` and `setState`,
+  which framework layers such as [`@better-apps/react`](../react/README.md) bind to.
+
 ## Events
 
 - `emit` adds an event to the action's next `db.batch`, so it's written to the core's outbox in the same transaction as

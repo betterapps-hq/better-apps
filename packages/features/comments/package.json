@@ -13,6 +13,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.js"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "import": "./dist/react.js"
     }
   },
   "types": "./dist/index.d.ts",
@@ -35,16 +43,25 @@
     "zod": "^4.6.7"
   },
   "peerDependencies": {
-    "better-apps": "workspace:*"
+    "@better-apps/react": "workspace:*",
+    "better-apps": "workspace:*",
+    "react": "^19.0.0"
   },
   "devDependencies": {
+    "@better-apps/react": "workspace:*",
     "@better-apps/testing": "workspace:*",
     "@repo/oxlint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
+    "@testing-library/react": "^16.3.3",
     "@types/node": "24.13.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "@vitest/coverage-v8": "5.0.5",
     "better-apps": "workspace:*",
     "drizzle-orm": "0.45.4",
+    "happy-dom": "^21.0.4",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
     "typescript": "catalog:",
     "vitest": "5.0.5"
   },
@@ -65,5 +82,13 @@
     "better-apps",
     "comments",
     "threads"
-  ]
+  ],
+  "peerDependenciesMeta": {
+    "@better-apps/react": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    }
+  }
 }

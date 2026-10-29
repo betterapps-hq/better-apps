@@ -58,8 +58,12 @@ export type CallOutput<Action> = Action extends { handler: (...args: never[]) =>
   : never
 
 /** Declares an action and keeps its input and output types for `app.api` and the client. */
-export function defineAction<Schema extends StandardSchemaV1 | undefined = undefined, Output = unknown>(
-  action: ActionDefinition<Schema, Output>
-): ActionDefinition<Schema, Output> {
+export function defineAction<
+  Schema extends StandardSchemaV1 | undefined = undefined,
+  Output = unknown,
+  const ServerOnly extends boolean = false
+>(
+  action: ActionDefinition<Schema, Output> & { serverOnly?: ServerOnly | undefined }
+): ActionDefinition<Schema, Output> & { serverOnly?: ServerOnly | undefined } {
   return action
 }

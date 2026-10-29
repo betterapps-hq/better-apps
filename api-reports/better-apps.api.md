@@ -240,7 +240,11 @@ export type DatabaseAdapterFactory = (options: {
 export type DatabaseSchema = Record<string, TableSchema>;
 
 // @public
-export function defineAction<Schema extends StandardSchemaV1 | undefined = undefined, Output = unknown>(action: ActionDefinition<Schema, Output>): ActionDefinition<Schema, Output>;
+export function defineAction<Schema extends StandardSchemaV1 | undefined = undefined, Output = unknown, const ServerOnly extends boolean = false>(action: ActionDefinition<Schema, Output> & {
+    serverOnly?: ServerOnly | undefined;
+}): ActionDefinition<Schema, Output> & {
+    serverOnly?: ServerOnly | undefined;
+};
 
 // @public
 export function defineEvent<Data = unknown>(): EventDefinition<Data>;

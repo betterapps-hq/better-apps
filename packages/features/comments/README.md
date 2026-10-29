@@ -92,6 +92,37 @@ as "Former user".
 - `elementAnchor()` pins threads to an element, found with a selector that may use only ids, data attributes, tag names
   and structural positions. Add others with `defineAnchor({ kind, schema })`.
 
+## In the browser
+
+`@better-apps/comments/client` keeps threads, comments, lists and counts in a framework-free store, and
+`@better-apps/comments/react` reads it with hooks. Neither has UI or an editor; apps bring their own composer and pin
+styles.
+
+```tsx
+import { useCreateThread, useThreads } from "@better-apps/comments/react"
+import { BetterAppsProvider } from "@better-apps/react"
+
+function InvoiceComments({ invoiceId }: { invoiceId: string }) {
+  const { threads, state } = useThreads({ subjectType: "invoice", subjectId: invoiceId })
+  const createThread = useCreateThread()
+  // Render the threads, and call createThread.mutate({ subjectType, subjectId, body }) from a form.
+}
+```
+
+- Writes are optimistic: the client makes each new thread's and comment's ULID, so a change shows at once under its
+  final id, and a retry can't duplicate it. A refused write is rolled back and rethrown with the server's code.
+  `isPending(id)` from `useThread` says which items are still waiting.
+- `applyEvent` takes events from `toClientEvent`, such as from a live updates feature, and ignores ones it has applied
+  and comments it already has. A thread that gets a new comment moves to the top of lists by activity.
+- `dehydrate()` and `hydrate(snapshot)` carry a server render's loads to the browser, so the first paint has threads.
+- Hooks: `useThreads(subject, { status, order })`, `useThread(id)`, `useThreadCounts(subjectType, subjectIds)`, which
+  splits lists over 50, `useSuggestMentions`, `useAnchorPosition(thread, rootRef, version)`, and a mutation hook per
+  write, from `useCreateThread()` to `useDeleteThread()`, each with `mutate`, `status`, `error` and `reset`.
+- `resolveAnchor(thread, root, version)` finds an element anchor on the page: `attached` with a position, `outdated`
+  when the content version on screen differs from the anchor's, or `detached`. `elementAnchorFor(element, root, point)`
+  builds one from a click, with a selector from `selectorFor`.
+- Dates in core fields are `Date`s again in the store. Dates in additional fields stay ISO strings.
+
 ## Events
 
 `thread.created`, `thread.updated`, `comment.created`, `comment.edited` and `comment.deleted` (both with the previous

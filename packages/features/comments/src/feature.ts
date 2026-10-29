@@ -153,16 +153,21 @@ export function comments<const Options extends CommentsOptions>(options: Options
   type Message = Comment & Types["commentFields"]
   type Kind = Types["anchor"]["kind"]
   const config = resolve(options)
-  const action = <Input, Output>(
+  // `serverOnly` keeps its literal type, so the browser client leaves server-only actions out.
+  const action = <Input, Output, ServerOnly extends boolean = false>(
     schema: StandardSchemaV1 | null,
     run: (config: Config, context: Context) => Promise<unknown>,
-    serverOnly = false
+    serverOnly?: ServerOnly
   ) =>
-    defineAction({
+    defineAction<StandardSchemaV1<Input, Input>, Output, ServerOnly>({
       input: (schema ?? unchecked<Input>()) as StandardSchemaV1<Input, Input>,
       serverOnly,
       handler: async (context) => (await run(config, context as Context)) as Output
     })
+  const serverAction = <Input, Output>(
+    schema: StandardSchemaV1 | null,
+    run: (config: Config, context: Context) => Promise<unknown>
+  ) => action<Input, Output, true>(schema, run, true)
 
   return defineFeature({
     id: "comments",
@@ -198,29 +203,26 @@ export function comments<const Options extends CommentsOptions>(options: Options
         inputs.suggestMentions,
         suggestMentions
       ),
-      removeSubject: action<{ subjectType: Types["subjectType"]; subjectId: string }, UpkeepStep>(
+      removeSubject: serverAction<{ subjectType: Types["subjectType"]; subjectId: string }, UpkeepStep>(
         inputs.removeSubject,
-        removeSubject,
-        true
+        removeSubject
       ),
-      moveSubject: action<{ subjectType: Types["subjectType"]; subjectId: string; toOrgId: string | null }, UpkeepStep>(
-        inputs.moveSubject,
-        moveSubject,
-        true
-      ),
-      removeUser: action<{ userId: string }, UpkeepStep>(inputs.removeUser, removeUser, true),
-      recountThreads: action<
+      moveSubject: serverAction<
+        { subjectType: Types["subjectType"]; subjectId: string; toOrgId: string | null },
+        UpkeepStep
+      >(inputs.moveSubject, moveSubject),
+      removeUser: serverAction<{ userId: string }, UpkeepStep>(inputs.removeUser, removeUser),
+      recountThreads: serverAction<
         { threadIds: readonly string[] } | { subjectType: Types["subjectType"]; subjectId: string; cursor?: string },
         UpkeepStep & { cursor: string | null }
-      >(inputs.recountThreads, recountThreads, true),
-      canViewThread: action<
+      >(inputs.recountThreads, recountThreads),
+      canViewThread: serverAction<
         { actor: Actor | null; threadId: string } | { actor: Actor | null; thread: CommentThread },
         boolean
-      >(null, canViewThread, true),
-      toClientEvent: action<{ event: BetterAppsEvent; viewer: Actor | null }, ClientEvent | null>(
+      >(null, canViewThread),
+      toClientEvent: serverAction<{ event: BetterAppsEvent; viewer: Actor | null }, ClientEvent | null>(
         null,
-        toClientEvent,
-        true
+        toClientEvent
       )
     }
   })
