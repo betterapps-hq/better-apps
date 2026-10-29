@@ -1,7 +1,7 @@
 // Copies Better Auth source into src/vendor/better-auth. Files stay verbatim apart from the import rewrites below and a
 // banner, so a new upstream release can be taken by rerunning this script. Usage: pnpm sync:better-auth [version]
 import { createHash } from "node:crypto"
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, posix, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { Project, SyntaxKind, type StringLiteral } from "ts-morph"
@@ -11,18 +11,36 @@ const vendorRoot = resolve(packageRoot, "src/vendor/better-auth")
 const repository = "better-auth/better-auth"
 
 // Upstream paths to copy. They keep their upstream location under the vendor folder.
-const files = ["packages/cli/src/generators/drizzle.ts", "packages/cli/src/generators/types.ts"]
+const files = [
+  "packages/cli/src/generators/drizzle.ts",
+  "packages/cli/src/generators/types.ts",
+  "packages/core/src/db/adapter/get-default-field-name.ts",
+  "packages/core/src/db/adapter/get-default-model-name.ts",
+  "packages/core/src/db/adapter/get-field-name.ts",
+  "packages/core/src/db/adapter/get-model-name.ts",
+  "packages/core/src/db/database-index.ts",
+  "packages/core/src/utils/string.ts"
+]
 
-// Every other import must be vendored, a published @better-auth/core subpath, a Node built-in, or an external below.
-// Targets under src/ are Buildkit replacements; the rest are package specifiers.
+// Package imports and where they go. Targets under src/ are Better Apps replacements, and targets under packages/ are
+// vendored files. Every other import must be vendored or a Node built-in, so the package needs no Better Auth package.
 const rewrites: Record<string, string> = {
+  "better-auth/adapters": "src/replacements/adapter.ts",
   "better-auth/db": "src/replacements/db.ts",
-  "better-auth/types": "@better-auth/core",
-  "better-auth/adapters": "@better-auth/core/db/adapter"
+  "better-auth/types": "src/replacements/core.ts",
+  "@better-auth/core": "src/replacements/core.ts",
+  "@better-auth/core/db/adapter": "src/replacements/adapter.ts",
+  "@better-auth/core/db/internal": "packages/core/src/db/database-index.ts",
+  "@better-auth/core/utils/string": "packages/core/src/utils/string.ts",
+  prettier: "src/replacements/prettier.ts"
 }
 
-// Packages vendored files import directly, with the upstream manifest that declares their version range.
-const externals: Record<string, string> = { prettier: "packages/cli/package.json" }
+// Upstream modules that vendored files import by relative path without them being vendored, keyed by upstream path
+// without the extension.
+const pathRewrites: Record<string, string> = {
+  "packages/core/src/db/type": "src/replacements/db.ts",
+  "packages/core/src/error": "src/replacements/error.ts"
+}
 
 async function get(url: string, accept?: string) {
   const headers: Record<string, string> = { "User-Agent": "buildkit-better-auth-sync" }
@@ -54,19 +72,23 @@ const revision = ref.object.sha
 const raw = async (path: string) =>
   (await get(`https://raw.githubusercontent.com/${repository}/${revision}/${path}`)).text()
 
-const usedRewrites = new Set<string>()
-const toImport = (fromFile: string, target: string) => {
-  const path = relative(dirname(fromFile), target).replaceAll("\\", "/").replace(/\.ts$/, ".js")
+const used = new Set<string>()
+function toImport(upstreamPath: string, target: string) {
+  if (target.startsWith("packages/") && !files.includes(target)) {
+    throw new Error(`${target} is a rewrite target but isn't vendored. Add it to the vendored files.`)
+  }
+  const absolute = resolve(target.startsWith("src/") ? packageRoot : vendorRoot, target)
+  const path = relative(dirname(resolve(vendorRoot, upstreamPath)), absolute)
+    .replaceAll("\\", "/")
+    .replace(/\.ts$/, ".js")
   return path.startsWith(".") ? path : `./${path}`
 }
 
 function resolveSpecifier(specifier: string, upstreamPath: string): string {
   const rewrite = rewrites[specifier]
   if (rewrite) {
-    usedRewrites.add(specifier)
-    return rewrite.startsWith("src/")
-      ? toImport(resolve(vendorRoot, upstreamPath), resolve(packageRoot, rewrite))
-      : rewrite
+    used.add(specifier)
+    return toImport(upstreamPath, rewrite)
   }
   if (specifier.startsWith(".")) {
     const target = posix.join(posix.dirname(upstreamPath), specifier)
@@ -76,17 +98,17 @@ function resolveSpecifier(specifier: string, upstreamPath: string): string {
     if (files.includes(`${target}/index.ts`)) {
       return `${specifier}/index.js`
     }
-    throw new Error(`${upstreamPath} imports ${specifier}, which is not vendored. Add it to the vendored files.`)
+    const pathRewrite = pathRewrites[target]
+    if (pathRewrite) {
+      used.add(target)
+      return toImport(upstreamPath, pathRewrite)
+    }
+    throw new Error(`${upstreamPath} imports ${specifier}, which is not vendored. Vendor it or add a path rewrite.`)
   }
-  if (
-    specifier.startsWith("node:") ||
-    specifier === "@better-auth/core" ||
-    specifier.startsWith("@better-auth/core/") ||
-    specifier in externals
-  ) {
+  if (specifier.startsWith("node:")) {
     return specifier
   }
-  throw new Error(`${upstreamPath} imports ${specifier}. Vendor it, add a rewrite, or declare it as an external.`)
+  throw new Error(`${upstreamPath} imports ${specifier}. Vendor it or add a rewrite.`)
 }
 
 const project = new Project({ useInMemoryFileSystem: true })
@@ -120,7 +142,8 @@ function rewriteImports(upstreamPath: string, text: string) {
   return result
 }
 
-// Generated files such as README.md have no upstream hash.
+// Generated files such as README.md have no upstream hash. Everything is fetched and checked before any file is
+// written, so a failed sync leaves the previous one in place.
 const snapshotFiles: Record<string, { upstream?: string; vendored: string }> = {}
 const outputs: Record<string, string> = {}
 for (const path of files) {
@@ -129,7 +152,7 @@ for (const path of files) {
   outputs[path] = banner + rewriteImports(path, upstream)
   snapshotFiles[path] = { upstream: hash(upstream), vendored: hash(outputs[path]) }
 }
-const unused = Object.keys(rewrites).filter((specifier) => !usedRewrites.has(specifier))
+const unused = [...Object.keys(rewrites), ...Object.keys(pathRewrites)].filter((specifier) => !used.has(specifier))
 if (unused.length) {
   throw new Error(`Upstream no longer imports ${unused.join(", ")}. Remove those rewrites.`)
 }
@@ -143,25 +166,6 @@ Generated by \`pnpm sync:better-auth\` from Better Auth ${version}. Do not edit 
 `
 snapshotFiles["README.md"] = { vendored: hash(outputs["README.md"]) }
 
-// Published Better Auth packages and the externals' ranges move with the vendored source. The better-apps package
-// shares @better-auth/core types with this one, so its pins move too. Everything is fetched and checked before any file
-// is written, so a failed sync leaves the previous one in place.
-const manifestPath = resolve(packageRoot, "package.json")
-const manifest = JSON.parse(readFileSync(manifestPath, "utf8"))
-const corePath = resolve(packageRoot, "../better-apps/package.json")
-const core = JSON.parse(readFileSync(corePath, "utf8"))
-for (const pkg of [manifest, core]) {
-  pkg.dependencies["@better-auth/core"] = version
-  pkg.devDependencies["@better-auth/drizzle-adapter"] = version
-}
-for (const [name, upstreamManifest] of Object.entries(externals)) {
-  const range = JSON.parse(await raw(upstreamManifest)).dependencies?.[name]
-  if (!range) {
-    throw new Error(`${upstreamManifest} no longer declares ${name}`)
-  }
-  manifest.dependencies[name] = range
-}
-
 rmSync(vendorRoot, { recursive: true, force: true })
 for (const [path, text] of Object.entries(outputs)) {
   mkdirSync(dirname(resolve(vendorRoot, path)), { recursive: true })
@@ -172,7 +176,5 @@ writeFileSync(
   JSON.stringify({ repository: `https://github.com/${repository}`, version, revision, files: snapshotFiles }, null, 2) +
     "\n"
 )
-writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n")
-writeFileSync(corePath, JSON.stringify(core, null, 2) + "\n")
 
-process.stdout.write(`Vendored Better Auth ${version} (${revision}): ${files.length} files. Run pnpm install next.\n`)
+process.stdout.write(`Vendored Better Auth ${version} (${revision}): ${files.length} files.\n`)

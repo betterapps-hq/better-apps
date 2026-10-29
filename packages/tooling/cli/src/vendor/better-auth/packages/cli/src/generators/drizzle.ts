@@ -4,13 +4,13 @@ import {
 	getDatabaseFieldIndexName,
 	getDatabaseIndexStringLength,
 	resolveDatabaseSchemaIndexes,
-} from "@better-auth/core/db/internal";
-import { toSnakeCase } from "@better-auth/core/utils/string";
-import { initGetFieldName, initGetModelName } from "@better-auth/core/db/adapter";
+} from "../../../core/src/db/database-index.js";
+import { toSnakeCase } from "../../../core/src/utils/string.js";
+import { initGetFieldName, initGetModelName } from "../../../../../../replacements/adapter.js";
 import type { BetterAuthDBSchema, DBFieldAttribute } from "../../../../../../replacements/db.js";
 import { getAuthTables } from "../../../../../../replacements/db.js";
-import type { BetterAuthOptions } from "@better-auth/core";
-import prettier from "prettier";
+import type { BetterAuthOptions } from "../../../../../../replacements/core.js";
+import prettier from "../../../../../../replacements/prettier.js";
 import type { SchemaGenerator } from "./types.js";
 
 function convertToSnakeCase(str: string, camelCase?: boolean) {

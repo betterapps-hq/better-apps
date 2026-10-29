@@ -4,7 +4,7 @@
 
 ```ts
 
-import type { BetterAppsOptions } from 'better-apps';
+import { BetterAppsOptions } from 'better-apps';
 
 // @public
 export function generateSchema(input: GenerateSchemaOptions): Promise<SchemaGeneratorResult>;

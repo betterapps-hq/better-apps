@@ -1,6 +1,5 @@
-import { drizzleAdapter } from "@better-auth/drizzle-adapter"
 import { describe, expect, it } from "vitest"
-import { createDatabaseAdapter, defineFeature, getFeatureTables } from "./index.js"
+import { createDatabaseAdapter, defineFeature, getFeatureTables, type DatabaseAdapter } from "./index.js"
 
 const comments = defineFeature({
   id: "comments",
@@ -20,7 +19,6 @@ const reactions = defineFeature({
   id: "reactions",
   schema: { comment: { fields: { reactionCount: { type: "number", required: false } } } }
 })
-const database = drizzleAdapter({}, { provider: "pg" })
 
 describe("getFeatureTables", () => {
   it("merges tables that several features extend", () => {
@@ -75,6 +73,13 @@ describe("getFeatureTables", () => {
 
 describe("createDatabaseAdapter", () => {
   it("creates the adapter with the features' tables", () => {
-    expect(createDatabaseAdapter({ database, features: [comments] }).id).toBe("drizzle")
+    const adapter = { id: "test" } as DatabaseAdapter
+    let tables: string[] = []
+    const database = ({ schema }: { schema: Record<string, unknown> }) => {
+      tables = Object.keys(schema)
+      return adapter
+    }
+    expect(createDatabaseAdapter({ database, features: [comments] })).toBe(adapter)
+    expect(tables).toEqual(["comment"])
   })
 })

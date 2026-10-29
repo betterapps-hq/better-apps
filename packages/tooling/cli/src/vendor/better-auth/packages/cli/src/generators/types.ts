@@ -1,6 +1,6 @@
 // Vendored from Better Auth 1.7.14 (packages/cli/src/generators/types.ts). Do not edit. Run pnpm sync:better-auth instead.
-import type { BetterAuthOptions } from "@better-auth/core";
-import type { DBAdapter } from "@better-auth/core/db/adapter";
+import type { BetterAuthOptions } from "../../../../../../replacements/core.js";
+import type { DBAdapter } from "../../../../../../replacements/adapter.js";
 
 export interface SchemaGeneratorResult {
 	code?: string;

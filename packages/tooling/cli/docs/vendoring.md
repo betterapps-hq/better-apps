@@ -2,7 +2,7 @@
 
 Better Apps reuses Better Auth's schema generators. They call Better Auth's `getAuthTables`, which always adds the
 `user` and `account` tables, so they can't be used from the published packages. Instead, `src/vendor/better-auth` holds
-copies of those files.
+copies of those files and the few Better Auth core modules they need, so the package doesn't depend on Better Auth.
 
 ## Never edit vendored files
 
@@ -17,31 +17,35 @@ The script copies each listed file from the Better Auth tag and keeps its upstre
 
 - A banner naming the release and source path is added to the top.
 - Imports are rewritten:
-  - `better-auth/db` goes to `src/replacements/db.ts`, whose `getAuthTables` returns feature tables only.
-  - `better-auth/types` and `better-auth/adapters` go to the matching `@better-auth/core` entry points.
+  - `better-auth/db` and the relative imports of Better Auth's `db/type.ts` go to `src/replacements/db.ts`. Its
+    `getAuthTables` returns feature tables only, and its schema types are Better Apps' own.
+  - `better-auth/types` and `@better-auth/core` go to `src/replacements/core.ts`, which declares the options the
+    generators read.
+  - `better-auth/adapters` and `@better-auth/core/db/adapter` go to `src/replacements/adapter.ts`, which re-exports the
+    vendored naming helpers and declares what generators read from an adapter.
+  - `@better-auth/core/db/internal` and `@better-auth/core/utils/string` go to the vendored core files.
+  - Relative imports of Better Auth's error module go to `src/replacements/error.ts`.
+  - `prettier` goes to `src/replacements/prettier.ts`, which formats the output when Prettier is installed and returns
+    it unchanged when it isn't.
   - Imports between vendored files get a `.js` extension.
 
-Imports of `@better-auth/core`, Node built-ins and declared externals such as `prettier` are kept. Any other import
-stops the sync. A rewrite that upstream no longer needs also stops it. Either case means upstream changed shape, so
-review it and update the file list or rewrites.
-
-The sync also pins `@better-auth/core` and `@better-auth/drizzle-adapter` to the synced release, in this package and in
-`better-apps`, which shares `@better-auth/core` types with it. It copies upstream's version range for each external.
+Node built-ins are kept. Any other import stops the sync. A rewrite that upstream no longer needs also stops it. Either
+case means upstream changed shape, so review it and update the file list or rewrites.
 
 ## Taking a new release
 
 ```sh
 pnpm --filter @better-apps/cli sync:better-auth 1.8.0
-pnpm install
 ```
 
 Omit the version to take the latest release. Review the vendored diff, which contains only upstream changes, then run
-`pnpm verify`. If upstream changes what `getAuthTables` returns or the options the generators read, type checks fail in
-`src/replacements/`. Update the replacement to match.
+`pnpm verify`. If upstream changes what `getAuthTables` returns, the options the generators read or the schema
+attributes they use, type checks fail in the vendored files or `src/replacements/`. Update the replacement, or Better
+Apps' schema types, to match.
 
 ## Adding a file
 
 Add its upstream path to `files` in `scripts/sync-better-auth.ts` and rerun the sync. The sync reports any imports the
-new file needs that aren't vendored, rewritten or declared.
+new file needs that aren't vendored or rewritten.
 
 Better Auth is MIT licensed. `LICENSE.md` in the vendor folder is synced with the source and ships with the package.

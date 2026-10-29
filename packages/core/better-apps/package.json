@@ -31,16 +31,11 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage"
   },
-  "dependencies": {
-    "@better-auth/core": "1.7.14"
-  },
   "devDependencies": {
-    "@better-auth/drizzle-adapter": "1.7.14",
     "@repo/oxlint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
     "@types/node": "24.13.2",
     "@vitest/coverage-v8": "5.0.5",
-    "drizzle-orm": "0.45.4",
     "typescript": "catalog:",
     "vitest": "5.0.5"
   },

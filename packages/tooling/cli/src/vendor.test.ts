@@ -7,7 +7,6 @@ import { describe, expect, it } from "vitest"
 const packageRoot = fileURLToPath(new URL("../", import.meta.url))
 const vendorRoot = resolve(packageRoot, "src/vendor/better-auth")
 const snapshot = JSON.parse(readFileSync(resolve(vendorRoot, "snapshot.json"), "utf8")) as {
-  version: string
   files: Record<string, { vendored: string }>
 }
 const hash = (path: string) =>
@@ -29,12 +28,4 @@ describe("vendored Better Auth source", () => {
       .filter((path) => path !== "snapshot.json")
     expect(present.sort()).toEqual(Object.keys(snapshot.files).sort())
   })
-
-  it.each(["package.json", "../better-apps/package.json"])(
-    "%s pins @better-auth/core to the synced version",
-    (path) => {
-      const manifest = JSON.parse(readFileSync(resolve(packageRoot, path), "utf8"))
-      expect(manifest.dependencies["@better-auth/core"]).toBe(snapshot.version)
-    }
-  )
 })

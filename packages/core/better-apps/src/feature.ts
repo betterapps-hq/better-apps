@@ -1,7 +1,4 @@
-import type { BetterAuthPluginDBSchema } from "@better-auth/core/db"
-
-/** Tables a feature adds, keyed by logical model name. Uses Better Auth's plugin schema format. */
-export type FeatureSchema = BetterAuthPluginDBSchema
+import type { FeatureSchema } from "./schema.js"
 
 /** An app feature, such as comments or audit history, and the tables it stores. */
 export interface BetterAppsFeature {

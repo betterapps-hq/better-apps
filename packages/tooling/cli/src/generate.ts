@@ -1,5 +1,6 @@
-import type { BetterAuthOptions } from "@better-auth/core"
-import type { BetterAppsOptions } from "better-apps"
+import { getFeatureTables, type BetterAppsOptions } from "better-apps"
+import type { DBAdapter } from "./replacements/adapter.js"
+import type { BetterAuthOptions } from "./replacements/core.js"
 import { generateDrizzleSchema } from "./vendor/better-auth/packages/cli/src/generators/drizzle.js"
 import type { SchemaGenerator, SchemaGeneratorResult } from "./vendor/better-auth/packages/cli/src/generators/types.js"
 
@@ -19,14 +20,15 @@ export async function generateSchema({
   database,
   features
 }: GenerateSchemaOptions): Promise<SchemaGeneratorResult> {
-  // Better Auth's generators read features as plugins. src/replacements/db.ts turns them back into feature tables.
-  const options: BetterAuthOptions = { database, plugins: features.map(({ id, schema }) => ({ id, schema })) }
-  const adapter = database(options)
+  const adapter = database({ schema: getFeatureTables(features) })
   const generator = generators[adapter.id]
   if (!generator) {
     throw new Error(
       `Better Apps can't generate a schema for the "${adapter.id}" adapter. Supported adapters: ${Object.keys(generators).join(", ")}.`
     )
   }
-  return generator({ adapter, options, file: file ?? "./better-apps-schema.ts" })
+  // Better Auth's generators read features as plugins. src/replacements/db.ts turns them back into feature tables.
+  const options: BetterAuthOptions = { plugins: features }
+  // Each adapter's options hold its own configuration, in the shape the generator for its id reads.
+  return generator({ adapter: adapter as DBAdapter, options, file: file ?? "./better-apps-schema.ts" })
 }

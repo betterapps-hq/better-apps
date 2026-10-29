@@ -1,0 +1,63 @@
+# Database servers for the adapter tests. `pnpm test:servers` starts them and runs the tests against them, and
+# `pnpm test:servers:down` stops them. Data lives in memory, so every start is a clean database.
+name: better-apps-drizzle-test
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: better_apps
+    ports:
+      - "15432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d better_apps"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  # Neon's proxy in front of the Postgres above, serving the Neon serverless driver's HTTP and WebSocket protocols.
+  # The community image builds the proxy from Neon's own source (github.com/TimoWilhelm/local-neon-http-proxy), and
+  # Neon's local development guide points to it. Pinned by digest, since its only tag is the moving `main`.
+  neon-proxy:
+    image: ghcr.io/timowilhelm/local-neon-http-proxy@sha256:cd2ae14edf2feafbc3330492de5c80506f77274c3bd013154cdef697bdeb768a
+    environment:
+      PG_CONNECTION_STRING: postgres://postgres:postgres@postgres:5432/better_apps
+    ports:
+      - "14444:4444"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - --fail
+        - --silent
+        - --output
+        - /dev/null
+        - --header
+        - "Neon-Connection-String: postgres://postgres:postgres@db.localtest.me:5432/better_apps"
+        - --data
+        - '{"query":"select 1","params":[]}'
+        - http://localhost:4444/sql
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: mysql
+      MYSQL_DATABASE: better_apps
+    ports:
+      - "13306:3306"
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      # Over TCP, so it fails until the server that accepts connections is up, not just the setup server.
+      test: ["CMD", "mysqladmin", "ping", "--host=127.0.0.1", "--user=root", "--password=mysql"]
+      interval: 2s
+      timeout: 5s
+      retries: 60

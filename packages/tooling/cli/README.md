@@ -2,14 +2,14 @@
 
 Generates the database schema for the [Better Apps](../better-apps/README.md) features an app enables. It reuses Better
 Auth's schema generator, so the output matches what Better Auth writes for its plugins, without Better Auth's own
-tables.
+tables. It doesn't need Better Auth installed.
 
 ## Usage
 
 Create `better-apps.config.ts` with a default export of your database adapter and features:
 
 ```ts
-import { drizzleAdapter } from "@better-auth/drizzle-adapter"
+import { drizzleAdapter } from "@better-apps/drizzle"
 import { defineFeature, type BetterAppsOptions } from "better-apps"
 import { db } from "./db.ts"
 
@@ -33,7 +33,9 @@ the same output without writing a file.
 
 ## Behavior
 
-- Schema generation supports the Drizzle adapter.
+- Schema generation supports the [Drizzle adapter](../drizzle/README.md). Its `provider`, `usePlural`, `camelCase` and
+  `schemaName` options shape the generated tables.
+- The schema is formatted with Prettier when the app has it installed. Otherwise it's written unformatted.
 - The config is loaded with Node's own TypeScript support. Relative imports need their file extension, such as
   `./db.ts`, and the config can't use syntax that Node can't strip, such as enums.
 - An existing schema file is replaced.

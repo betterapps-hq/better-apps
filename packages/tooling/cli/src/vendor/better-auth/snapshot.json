@@ -5,11 +5,35 @@
   "files": {
     "packages/cli/src/generators/drizzle.ts": {
       "upstream": "c3855fac861bd5bbcc1af4246909712e3f76b82403f4c82e942bab838a567cf9",
-      "vendored": "daf82492a2e2f813e8158b3bc9001f2b8cd38a2f433e39cd62a18c95edb3e020"
+      "vendored": "9d627078a9759afb256c229a00014898bca08542dffdaf5775d5e8dda9b1d7ae"
     },
     "packages/cli/src/generators/types.ts": {
       "upstream": "480549bac94686f337a26fecbf12727e3d6d1810ee67b48cc9149c91925ebd0e",
-      "vendored": "2210bf677e805b6b163d0cedfa7fcc15f913d0a48f2dfbd3458e10eec9631c3c"
+      "vendored": "4ca03e88f63b1ef5b981481b1d65b1f62c9a7e56ff5d117181e11ee8085dd48a"
+    },
+    "packages/core/src/db/adapter/get-default-field-name.ts": {
+      "upstream": "585a4df8c018b862c7b2bb7507ed3cdc7b08c80fe01c43699591b3b77d4fb4a2",
+      "vendored": "ebb0257732d296f1a8a2241bf8cf0822e4116816a2ff67057d7d3b07cfb26903"
+    },
+    "packages/core/src/db/adapter/get-default-model-name.ts": {
+      "upstream": "21d32c63b744192027c2a6db5610cc436f9409adb7956f659dd4ee9b89ff9901",
+      "vendored": "772312db0181fed7e73a53583269a4a1bad3fbcf2c9e6eaf857e02b0d3910c3e"
+    },
+    "packages/core/src/db/adapter/get-field-name.ts": {
+      "upstream": "a188a0cf961c76faf3b82cabbdc3861186418c690b2560fd61a5910251190892",
+      "vendored": "5784bca5221a30f531bb025a0051eac5979f748f4c5734f5beb31c0a3f44cc12"
+    },
+    "packages/core/src/db/adapter/get-model-name.ts": {
+      "upstream": "db9f86e170fb051efd81d334bb81eca07f4200f9b476921b76dba2be4752a1b5",
+      "vendored": "0d828230d3053b4382b225140dc9f06d537f545bf9b99729657513d84e49281c"
+    },
+    "packages/core/src/db/database-index.ts": {
+      "upstream": "f93512de6a82de95e06cd789309d8e10b70509222b738b6a78952d910202cb55",
+      "vendored": "b9ac05546f1b280f9d1dc41e54e526f59505e8ec37769522efe7f096fcc7298a"
+    },
+    "packages/core/src/utils/string.ts": {
+      "upstream": "977205a86cf405b41d9e5bddb2a094a1489b99de20c1173c75abfa7540d5a7b5",
+      "vendored": "ffb4846d6dcfb2737e26e8b036f0a273ea65134794bed6d7b2de72ee6081cbd4"
     },
     "LICENSE.md": {
       "upstream": "7a07f7d9085cb3157e4377d944988c9712933141b0f7201955ceccfac92abde4",

@@ -4,11 +4,6 @@
 
 ```ts
 
-import type { BetterAuthDBSchema } from '@better-auth/core/db';
-import type { BetterAuthPluginDBSchema } from '@better-auth/core/db';
-import type { DBAdapter } from '@better-auth/core/db/adapter';
-import type { DBAdapterInstance } from '@better-auth/core/db/adapter';
-
 // @public
 export interface BetterAppsFeature {
     id: string;
@@ -17,21 +12,214 @@ export interface BetterAppsFeature {
 
 // @public
 export interface BetterAppsOptions {
-    database: DBAdapterInstance;
+    database: DatabaseAdapterFactory;
     features: readonly BetterAppsFeature[];
 }
 
 // @public
-export function createDatabaseAdapter(options: BetterAppsOptions): DBAdapter;
+export interface CountGroup {
+    // (undocumented)
+    count: number;
+    // (undocumented)
+    group: Row;
+}
+
+// @public
+export function createDatabaseAdapter(input: BetterAppsOptions): DatabaseAdapter;
+
+// @public
+export interface DatabaseAdapter {
+    batch(operations: readonly WriteOperation[]): Promise<WriteResult[]>;
+    // (undocumented)
+    count(input: {
+        model: string;
+        where?: readonly Where[] | undefined;
+    }): Promise<number>;
+    countGroups(input: {
+        model: string;
+        where?: readonly Where[] | undefined;
+        groupBy: readonly [string, ...string[]];
+    }): Promise<CountGroup[]>;
+    create<T extends Row = Row>(input: {
+        model: string;
+        data: Row;
+    }): Promise<T>;
+    createMany<T extends Row = Row>(input: {
+        model: string;
+        data: readonly Row[];
+    }): Promise<T[]>;
+    // (undocumented)
+    deleteMany(input: {
+        model: string;
+        where: readonly Where[];
+    }): Promise<number>;
+    findMany<T extends Row = Row>(input: {
+        model: string;
+        where?: readonly Where[] | undefined;
+        sortBy?: SortBy | readonly SortBy[] | undefined;
+        after?: Row | undefined;
+        limit?: number | undefined;
+        offset?: number | undefined;
+        select?: readonly string[] | undefined;
+    }): Promise<T[]>;
+    // (undocumented)
+    findOne<T extends Row = Row>(input: {
+        model: string;
+        where: readonly Where[];
+        select?: readonly string[] | undefined;
+    }): Promise<T | null>;
+    id: string;
+    incrementOne<T extends Row = Row>(input: {
+        model: string;
+        where: readonly Where[];
+        increment: Record<string, number>;
+        set?: Row | undefined;
+    }): Promise<T | null>;
+    options: Record<string, unknown>;
+    update<T extends Row = Row>(input: {
+        model: string;
+        where: readonly Where[];
+        update: Row;
+    }): Promise<T | null>;
+    // (undocumented)
+    updateMany(input: {
+        model: string;
+        where: readonly Where[];
+        update: Row;
+    }): Promise<number>;
+}
+
+// @public
+export type DatabaseAdapterFactory = (options: {
+    schema: DatabaseSchema;
+}) => DatabaseAdapter;
+
+// @public
+export type DatabaseSchema = Record<string, TableSchema>;
 
 // @public
 export function defineFeature<const Feature extends BetterAppsFeature>(feature: Feature): Feature;
 
 // @public
-export type FeatureSchema = BetterAuthPluginDBSchema;
+export type FeatureSchema = {
+    [table: string]: {
+        fields: Record<string, FieldAttribute>;
+        indexes?: readonly TableIndex[] | undefined;
+        modelName?: string | undefined;
+        disableMigration?: boolean | undefined;
+    };
+};
 
 // @public
-export function getFeatureTables(features: readonly BetterAppsFeature[]): BetterAuthDBSchema;
+export interface FieldAttribute {
+    bigint?: boolean | undefined;
+    defaultValue?: FieldValue | (() => FieldValue) | undefined;
+    fieldName?: string | undefined;
+    // (undocumented)
+    index?: boolean | undefined;
+    onUpdate?: (() => FieldValue) | undefined;
+    references?: {
+        model: string;
+        field: string;
+        onDelete?: "no action" | "restrict" | "cascade" | "set null" | "set default" | undefined;
+    } | undefined;
+    required?: boolean | undefined;
+    sortable?: boolean | undefined;
+    transform?: {
+        input?: ((value: FieldValue) => FieldValue | Promise<FieldValue>) | undefined;
+        output?: ((value: FieldValue) => FieldValue | Promise<FieldValue>) | undefined;
+    } | undefined;
+    // (undocumented)
+    type: FieldType;
+    // (undocumented)
+    unique?: boolean | undefined;
+}
+
+// @public
+export type FieldType = "string" | "number" | "boolean" | "date" | "json" | "string[]" | "number[]" | readonly string[];
+
+// @public
+export type FieldValue = string | number | boolean | Date | null | undefined | string[] | number[] | Record<string, unknown> | unknown[];
+
+// @public
+export function getFeatureTables(features: readonly BetterAppsFeature[]): DatabaseSchema;
+
+// @public
+export type Row = Record<string, unknown>;
+
+// @public
+export interface SortBy {
+    // (undocumented)
+    direction: "asc" | "desc";
+    // (undocumented)
+    field: string;
+}
+
+// @public
+export interface TableIndex {
+    fields: readonly [string, ...string[]];
+    name?: string | undefined;
+    // (undocumented)
+    unique?: boolean | undefined;
+}
+
+// @public
+export interface TableSchema {
+    // (undocumented)
+    disableMigrations?: boolean | undefined;
+    // (undocumented)
+    fields: Record<string, FieldAttribute>;
+    // (undocumented)
+    indexes?: readonly TableIndex[] | undefined;
+    // (undocumented)
+    modelName: string;
+}
+
+// @public
+export interface Where {
+    // (undocumented)
+    connector?: "AND" | "OR" | undefined;
+    // (undocumented)
+    field: string;
+    mode?: "sensitive" | "insensitive" | undefined;
+    // (undocumented)
+    operator?: WhereOperator | undefined;
+    // (undocumented)
+    value: FieldValue | readonly FieldValue[];
+}
+
+// @public
+export type WhereOperator = "eq" | "ne" | "lt" | "lte" | "gt" | "gte" | "in" | "not_in" | "contains" | "starts_with" | "ends_with";
+
+// @public
+export type WriteOperation = {
+    type: "create";
+    model: string;
+    data: Row;
+} | {
+    type: "update";
+    model: string;
+    where: readonly Where[];
+    update: Row;
+} | {
+    type: "updateMany";
+    model: string;
+    where: readonly Where[];
+    update: Row;
+} | {
+    type: "incrementOne";
+    model: string;
+    where: readonly Where[];
+    increment: Record<string, number>;
+    set?: Row | undefined;
+} | {
+    type: "deleteMany";
+    model: string;
+    where: readonly Where[];
+};
+
+// @public
+export type WriteResult = Row | null | number;
 
 // (No @packageDocumentation comment for this package)
 

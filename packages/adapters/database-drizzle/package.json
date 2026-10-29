@@ -1,0 +1,78 @@
+{
+  "name": "@better-apps/drizzle",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The Drizzle database adapter for Better Apps, for PostgreSQL, MySQL, SQLite and Cloudflare D1.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=24"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "README.md",
+    "docs/*.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check:types": "pnpm build && tsc --noEmit",
+    "lint": "oxlint --max-warnings=0",
+    "prepack": "pnpm build",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:servers": "docker compose -f test/compose.yaml up --detach --wait && vitest run --mode servers",
+    "test:servers:down": "docker compose -f test/compose.yaml down",
+    "upstream:changes": "node scripts/upstream-changes.ts"
+  },
+  "dependencies": {
+    "better-apps": "workspace:*"
+  },
+  "peerDependencies": {
+    "drizzle-orm": "^0.45.2"
+  },
+  "devDependencies": {
+    "@neondatabase/serverless": "1.2.0",
+    "@repo/oxlint-config": "workspace:*",
+    "@repo/typescript-config": "workspace:*",
+    "@types/node": "24.13.2",
+    "@types/pg": "8.23.1",
+    "@vitest/coverage-v8": "5.0.5",
+    "drizzle-orm": "0.45.4",
+    "miniflare": "4.20260730.0",
+    "mysql2": "3.24.6",
+    "pg": "8.23.1",
+    "typescript": "catalog:",
+    "vitest": "5.0.5"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AndrewCraswell/buildkit.git",
+    "directory": "packages/better-apps/drizzle"
+  },
+  "homepage": "https://github.com/AndrewCraswell/buildkit/tree/main/packages/better-apps/drizzle#readme",
+  "bugs": {
+    "url": "https://github.com/AndrewCraswell/buildkit/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "keywords": [
+    "better-apps",
+    "drizzle",
+    "database",
+    "adapter",
+    "d1"
+  ]
+}

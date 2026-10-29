@@ -7,7 +7,7 @@ its ORM, the way Better Auth does for its plugins. Apps don't need Better Auth o
 ## Usage
 
 ```ts
-import { drizzleAdapter } from "@better-auth/drizzle-adapter"
+import { drizzleAdapter } from "@better-apps/drizzle"
 import { createDatabaseAdapter, defineFeature } from "better-apps"
 
 const comments = defineFeature({
@@ -26,13 +26,17 @@ const database = drizzleAdapter(db, { provider: "pg" })
 const adapter = createDatabaseAdapter({ database, features: [comments] })
 ```
 
-`createDatabaseAdapter` returns the adapter features use to read and write their tables. Run `better-apps generate` from
-`@better-apps/cli` to write the schema file that `drizzle-kit` reads.
+`createDatabaseAdapter` returns the adapter features use to read and write their tables. Adapters come from separate
+packages, such as [`@better-apps/drizzle`](../drizzle/README.md). Run `better-apps generate` from `@better-apps/cli` to
+write the schema file that `drizzle-kit` reads.
 
 ## Behavior
 
 - Schemas use Better Auth's plugin schema format: field types, `required`, `unique`, `index`, `references`,
-  `defaultValue`, table indexes and custom `modelName` or `fieldName`.
+  `defaultValue`, table indexes and custom `modelName` or `fieldName`. The types are forked from Better Auth, so Better
+  Apps doesn't depend on it.
+- Besides reads and writes, `DatabaseAdapter` sorts on several fields with an `after` cursor, counts rows per group,
+  creates many rows at once and runs several writes as one atomic `batch`.
 - Several features can extend the same table. Later fields win, and indexes are merged.
 - Better Apps adds no tables of its own. Feature tables can't use the names Better Auth reserves: `user`, `session`,
   `account`, `verification` and `rateLimit`, or any name that becomes the same snake_case table, such as `User` or

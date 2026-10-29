@@ -1,0 +1,52 @@
+{
+  "repository": "https://github.com/better-auth/better-auth",
+  "package": "@better-auth/drizzle-adapter",
+  "version": "1.7.14",
+  "revision": "a936663d3a3c811af82ee9e9418d986f70662d9b",
+  "files": {
+    "packages/drizzle-adapter/src/drizzle-adapter.ts": {
+      "forks": ["src/drizzle-adapter.ts"],
+      "sha256": "837519efb4401c1696e8125e2f1903099f542c8f513f6a197ccf858e25c411ce"
+    },
+    "packages/drizzle-adapter/src/query-builders.ts": {
+      "forks": ["src/query-builders.ts"],
+      "sha256": "a1cf49840328fc85838bf44921c8dbdcc771b526adf8ef2d99e9838024b48c5f"
+    },
+    "packages/drizzle-adapter/src/date-columns.ts": {
+      "forks": ["src/date-columns.ts"],
+      "sha256": "7b4945c433ae8f957fec096f6117b676bfa21d34fd1f305aefcf1729d09f58e5"
+    },
+    "packages/core/src/db/adapter/factory.ts": {
+      "forks": ["src/factory.ts"],
+      "sha256": "0ed2b6af32268701af823a0bcd6145684062d0248889e7b85c2fbae40e0770c4"
+    },
+    "packages/core/src/db/adapter/get-default-model-name.ts": {
+      "forks": ["src/factory.ts"],
+      "sha256": "21d32c63b744192027c2a6db5610cc436f9409adb7956f659dd4ee9b89ff9901"
+    },
+    "packages/core/src/db/adapter/get-default-field-name.ts": {
+      "forks": ["src/factory.ts"],
+      "sha256": "585a4df8c018b862c7b2bb7507ed3cdc7b08c80fe01c43699591b3b77d4fb4a2"
+    },
+    "packages/core/src/db/adapter/get-model-name.ts": {
+      "forks": ["src/factory.ts"],
+      "sha256": "db9f86e170fb051efd81d334bb81eca07f4200f9b476921b76dba2be4752a1b5"
+    },
+    "packages/core/src/db/adapter/get-field-name.ts": {
+      "forks": ["src/factory.ts"],
+      "sha256": "a188a0cf961c76faf3b82cabbdc3861186418c690b2560fd61a5910251190892"
+    },
+    "packages/core/src/db/type.ts": {
+      "forks": ["../better-apps/src/schema.ts"],
+      "sha256": "b386de32ba3e57f519780cfe72f4024fc1e298117c2f42ccf9d2465ec0acb1fd"
+    },
+    "packages/core/src/db/plugin.ts": {
+      "forks": ["../better-apps/src/schema.ts"],
+      "sha256": "d45749ed919960b5044677bc3a965309802cf0263156d7a95d394b2f4300f236"
+    },
+    "packages/core/src/utils/string.ts": {
+      "forks": ["../better-apps/src/string.ts"],
+      "sha256": "977205a86cf405b41d9e5bddb2a094a1489b99de20c1173c75abfa7540d5a7b5"
+    }
+  }
+}
