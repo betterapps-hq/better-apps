@@ -1,0 +1,101 @@
+# @better-apps/comments
+
+Comment threads on any record an app owns, such as an invoice, a ticket or a preview deploy, optionally pinned to a spot
+inside it. Comments store only the record's type and id; the app's callbacks say who can see and act on its threads.
+Every write is one atomic batch through [`@better-apps/drizzle`](../drizzle/README.md), on Cloudflare D1 as on any other
+SQL database.
+
+## Usage
+
+```ts
+import { comments, CommentsError, elementAnchor } from "@better-apps/comments"
+import { createBetterApps } from "better-apps"
+
+export const app = createBetterApps({
+  database,
+  identity,
+  features: [
+    comments({
+      subjects: {
+        invoice: {
+          getOrgId: ({ subjectId }) => invoices.orgOf(subjectId),
+          canView: ({ actor, subjectId }) => invoices.canRead(actor, subjectId),
+          canComment: ({ actor, subjectId }) => invoices.canEdit(actor, subjectId),
+          canModerate: ({ actor }) => actor.roles.includes("admin"),
+          visibility: { staff: ({ actor }) => actor.roles.includes("staff") }
+        }
+      },
+      anchors: [elementAnchor()],
+      hooks: {
+        before: {
+          resolveThread: ({ actor, thread, input }) => {
+            if (thread?.createdBy !== actor?.userId) {
+              throw new CommentsError("FORBIDDEN", "Only the thread's creator can resolve it.")
+            }
+            return input
+          }
+        }
+      }
+    })
+  ]
+})
+
+const { thread } = await app.api.comments.createThread(
+  { subjectType: "invoice", subjectId: "inv_42", body: "Is this total right?" },
+  { request }
+)
+```
+
+Browsers call the same actions through `app.handler`, at `POST /api/apps/comments/<action>`. Run `better-apps generate`
+to add the `commentThread` and `comment` tables to your schema.
+
+## Actions
+
+- Reads: `listThreads` (by last activity or creation, 20 a page), `getThread` (comments oldest first, 50 a page),
+  `countThreads` (open and total for up to 50 records in one grouped query) and `suggestMentions`.
+- Writes: `createThread`, `reply`, `editComment`, `deleteComment`, `resolveThread`, `reopenThread`, `updateThread`,
+  `updateAnchor` and `deleteThread`.
+- Server only, through `app.api.comments`: `removeSubject`, `moveSubject`, `removeUser` and `recountThreads` for upkeep,
+  `canViewThread` for other features' recipient checks, and `toClientEvent` for live updates.
+
+Reads return the users they name, from the identity adapter's `getUsers`. Users it can't find are left out, so show them
+as "Former user".
+
+## Access
+
+- Each subject type supplies `canView` and `canComment`, and optionally `canModerate`, `canViewMany`, `getOrgId`, extra
+  visibilities such as `staff`, `publicRead`, a `metadata` schema and `canMention`.
+- One rule decides whether someone can see a thread: its organization must be its subject's, `canView` must pass, and
+  the actor must pass the thread's visibility check. Reads, mentions and live updates all use it.
+- `NOT_FOUND` means the caller can't see it, and `FORBIDDEN` that they can see it but can't do this. Signed-out callers
+  get `UNAUTHENTICATED`, except signed-out readers of `publicRead` subjects, who get text with names and no user ids.
+- Server code that passes neither an actor nor a request is trusted, so it skips access checks. It still needs an author
+  to write: a user, or an external or system author with a name and an optional id.
+- Before hooks run after the access check, keyed by action. They may change the input, but not the subject or thread. A
+  hook that throws a `CommentsError` returns its code; any other error returns `REJECTED_BY_HOOK`.
+
+## Writes
+
+- Ids are ULIDs a client may generate. Repeating a write with the same ids, author and content returns what the first
+  attempt wrote. Reusing your own id for different content is a `CONFLICT`, and an id someone else's row holds is
+  `INVALID_INPUT`.
+- `commentCount` and `lastActivityAt` change in the same batch as the comments they describe, so they're always exact.
+- Deleting a comment clears its text and keeps its place. Deleting a thread's last comment deletes the thread.
+- Replying to a resolved thread reopens it, running the `reopenThread` hook too.
+- Bodies are capped at 16 KB, anchors and metadata at 4 KB, and mentions at 20 per comment. Mentioned users who can't
+  view the thread aren't notified; only moderators are told who was dropped.
+
+## Formats and anchors
+
+- The built-in `text` format is plain text with mention tokens such as `@[user:u_123]` (`mentionToken(id)` builds one).
+  A literal `@[` is written `\@[`. Add others with `defineFormat({ name, schema, sanitize, toText, mentions })`.
+- `elementAnchor()` pins threads to an element, found with a selector that may use only ids, data attributes, tag names
+  and structural positions. Add others with `defineAnchor({ kind, schema })`.
+
+## Events
+
+`thread.created`, `thread.updated`, `comment.created`, `comment.edited` and `comment.deleted` (both with the previous
+body), `comment.mentioned` (one per mention), `thread.resolved`, `thread.reopened`, `thread.anchorUpdated` (with the
+previous anchor), `thread.deleted`, `subject.moved`, `subject.removed` and `user.removed`. They're written to the core's
+outbox in the same batch as the change and delivered at least once. They stay on the server; `toClientEvent` turns one
+into what a viewer's browser may see.

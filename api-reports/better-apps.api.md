@@ -58,9 +58,11 @@ export type Author = {
 } | {
     type: "external";
     name: string;
+    id?: string | undefined;
 } | {
     type: "system";
     name: string;
+    id?: string | undefined;
 };
 
 // @public

@@ -9,12 +9,13 @@ export interface Actor {
 
 /**
  * Who a write is attributed to: a signed-in user, or, from server code, someone outside the identity provider, such as
- * an email sender or a sync job.
+ * an email sender or a sync job. An external or system author's `id` is one the app assigns, such as an email address,
+ * so features can tell that author's writes apart.
  */
 export type Author =
   | { type: "user"; userId: string }
-  | { type: "external"; name: string }
-  | { type: "system"; name: string }
+  | { type: "external"; name: string; id?: string | undefined }
+  | { type: "system"; name: string; id?: string | undefined }
 
 /** What features show for a user, such as a comment's author. */
 export interface IdentityUser {
