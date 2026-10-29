@@ -42,7 +42,7 @@ export {
 export { defineFeature, type BetterAppsFeature } from "./feature.js"
 export { localIdentity, type Actor, type Author, type Identity, type IdentityUser, type LocalUser } from "./identity.js"
 export type { BetterAppsOptions } from "./options.js"
-export type { DeliveryReport, ErrorContext } from "./outbox.js"
+export type { DeliverOptions, DeliveryReport, ErrorContext } from "./outbox.js"
 export type {
   DatabaseSchema,
   FeatureSchema,

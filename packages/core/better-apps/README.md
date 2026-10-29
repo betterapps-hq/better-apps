@@ -42,7 +42,7 @@ Serve `app.handler` from your server, such as a Cloudflare Worker:
 ```ts
 export default {
   fetch: (request, env, ctx) => app.handler(request, ctx),
-  scheduled: (event, env, ctx) => ctx.waitUntil(app.deliverEvents())
+  scheduled: (event, env, ctx) => ctx.waitUntil(app.deliverEvents({ waitUntil: (promise) => ctx.waitUntil(promise) }))
 }
 ```
 
@@ -110,6 +110,9 @@ await client.notes.add({ text: "Hi" })
   dates they know back into `Date`s.
 - A failed call throws a `BetterAppsClientError` with the server's `code`, `status` and `issues`, or `NETWORK_ERROR`
   when the server can't be reached.
+- Each call takes a `signal` as its last argument, such as `client.notes.add(input, { signal })`. A cancelled call
+  throws `ABORTED`. One cancelled while `headers` resolve is never sent, so a sign-out can stop calls that would
+  otherwise go out with the next person's token.
 - `baseURL`, `basePath`, `headers`, `credentials` and `fetch` change how calls are sent. Tests can pass a `fetch` that
   calls `app.handler` directly.
 - `createStore(initial)` makes the store feature clients keep their state in: `getSnapshot`, `subscribe` and `setState`,
@@ -126,6 +129,8 @@ await client.notes.add({ text: "Hi" })
 - An event every subscriber handled is removed from the outbox. One a subscriber failed on stays, reported through
   `onError`, and `app.deliverEvents()` retries it after a backoff: 30 seconds, doubling up to an hour. Call it from a
   scheduled job. Delivery is at least once, so subscribers skip event ids they've already handled.
+- When delivery has a `waitUntil`, a report `onError` is still making is handed to it too, so it isn't cut off. Pass a
+  scheduled job's own `waitUntil` to `app.deliverEvents({ waitUntil })` for the same.
 - Events nobody subscribes to aren't written. The outbox table, `betterAppsEvent`, is generated only when a feature
   subscribes to events.
 

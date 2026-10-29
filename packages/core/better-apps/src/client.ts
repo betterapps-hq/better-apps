@@ -24,10 +24,16 @@ export type Serialized<Value> = unknown extends Value
           ? { [Key in keyof Value]: Serialized<Value[Key]> }
           : Value
 
+/** Options for one call. */
+export interface CallOptions {
+  /** Cancels the call. It then rejects with an `ABORTED` error, and if it hadn't been sent yet, it never is. */
+  signal?: AbortSignal | undefined
+}
+
 /** An action as the client exposes it. The input is optional when the action accepts `undefined`. */
 export type ClientMethod<Input, Output> = undefined extends Input
-  ? (input?: Input) => Promise<Serialized<Output>>
-  : (input: Input) => Promise<Serialized<Output>>
+  ? (input?: Input, options?: CallOptions) => Promise<Serialized<Output>>
+  : (input: Input, options?: CallOptions) => Promise<Serialized<Output>>
 
 type IsServerOnly<Action> = Action extends { serverOnly?: infer Flag }
   ? [Exclude<Flag, undefined>] extends [never]
@@ -74,7 +80,7 @@ export interface ClientOptions {
 /** A client for an app's actions: `client.<feature>.<action>(input)`. Pass `typeof app` for its types. */
 export type BetterAppsClient<App = BetterApp> = ClientApi<FeaturesOf<App>> & {
   /** Calls an action by name, for code that doesn't know the feature's types. */
-  $call(feature: string, action: string, input?: unknown): Promise<unknown>
+  $call(feature: string, action: string, input?: unknown, options?: CallOptions): Promise<unknown>
 }
 
 /** An error an action call failed with. `code` is the server's, such as `NOT_FOUND`, so a UI can react to it. */
@@ -99,6 +105,26 @@ export class BetterAppsClientError extends Error {
 // Names a proxy must not answer, so the client isn't mistaken for a promise or a React element.
 const reserved = new Set(["then", "toJSON", "$$typeof", "constructor"])
 
+// Settles as `value` does, or rejects as soon as `signal` aborts, so a cancelled call stops waiting on headers, a fetch
+// or a body, even ones that ignore the signal.
+function unlessAborted<Value>(value: Value | Promise<Value>, signal: AbortSignal | undefined): Promise<Value> {
+  if (!signal) {
+    return Promise.resolve(value)
+  }
+  return new Promise<Value>((resolve, reject) => {
+    const stop = () => reject(signal.reason)
+    // Handled even after an abort, so a value that rejects late isn't left as an unhandled rejection.
+    Promise.resolve(value)
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener("abort", stop))
+    if (signal.aborted) {
+      stop()
+    } else {
+      signal.addEventListener("abort", stop, { once: true })
+    }
+  })
+}
+
 function readError(status: number, body: unknown): BetterAppsClientError {
   const error = (body as { error?: { code?: unknown; message?: unknown; issues?: unknown } } | null)?.error
   if (error && typeof error.code === "string") {
@@ -116,23 +142,50 @@ function readError(status: number, body: unknown): BetterAppsClientError {
 export function createBetterAppsClient<App = BetterApp>(options: ClientOptions = {}): BetterAppsClient<App> {
   const baseURL = (options.baseURL ?? "").replace(/\/+$/, "")
   const basePath = `/${(options.basePath ?? "/api/apps").replace(/^\/+|\/+$/g, "")}`.replace(/^\/$/, "")
-  const call = async (feature: string, action: string, input?: unknown): Promise<unknown> => {
-    const headers = new Headers(typeof options.headers === "function" ? await options.headers() : options.headers)
+  const call = async (feature: string, action: string, input?: unknown, { signal }: CallOptions = {}) => {
+    const aborted = () =>
+      new BetterAppsClientError("ABORTED", "The call was cancelled.", { status: 0, cause: signal?.reason })
+    let headers: Headers
+    try {
+      headers = new Headers(
+        typeof options.headers === "function" ? await unlessAborted(options.headers(), signal) : options.headers
+      )
+    } catch (error) {
+      // Headers that fail once the call is cancelled, such as a token refresh cut short by a sign-out, are part of it.
+      if (signal?.aborted) {
+        throw aborted()
+      }
+      throw error
+    }
+    // Headers can take a while, such as while a token refreshes. A call cancelled meanwhile, such as by a sign-out, is
+    // never sent, since its headers may now belong to someone else.
+    if (signal?.aborted) {
+      throw aborted()
+    }
     headers.set("content-type", "application/json")
     const url = `${baseURL}${basePath}/${encodeURIComponent(feature)}/${encodeURIComponent(action)}`
     const init: RequestInit = {
       method: "POST",
       headers,
       body: input === undefined ? "" : JSON.stringify(input),
-      credentials: options.credentials ?? "same-origin"
+      credentials: options.credentials ?? "same-origin",
+      signal: signal ?? null
     }
     let response: Response
+    let text: string
     try {
-      response = await (options.fetch ?? globalThis.fetch)(url, init)
+      response = await unlessAborted((options.fetch ?? globalThis.fetch)(url, init), signal)
+      text = await unlessAborted(response.text(), signal)
     } catch (error) {
+      if (signal?.aborted) {
+        throw aborted()
+      }
       throw new BetterAppsClientError("NETWORK_ERROR", "The server couldn't be reached.", { status: 0, cause: error })
     }
-    const text = await response.text()
+    // A cancelled call rejects even when its fetch ignores the signal and answers anyway.
+    if (signal?.aborted) {
+      throw aborted()
+    }
     let body: unknown = null
     try {
       body = text === "" ? null : JSON.parse(text)
@@ -156,7 +209,7 @@ export function createBetterAppsClient<App = BetterApp>(options: ClientOptions =
       {
         get: (_, action) =>
           typeof action === "string" && !reserved.has(action)
-            ? (input?: unknown) => call(feature, action, input)
+            ? (input?: unknown, callOptions?: CallOptions) => call(feature, action, input, callOptions)
             : undefined
       }
     )

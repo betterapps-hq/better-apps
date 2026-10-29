@@ -5,7 +5,7 @@ import type { BetterAppsEvent, EventDefinition } from "./events.js"
 import type { BetterAppsFeature } from "./feature.js"
 import type { Actor, Author, Identity } from "./identity.js"
 import type { BetterAppsOptions } from "./options.js"
-import { createOutbox, type DeliveryReport, type ErrorContext } from "./outbox.js"
+import { createOutbox, type DeliverOptions, type DeliveryReport, type ErrorContext } from "./outbox.js"
 import type { StandardSchemaV1 } from "./standard-schema.js"
 
 /** Options for `createBetterApps`. */
@@ -22,7 +22,8 @@ export interface CreateBetterAppsOptions<
   /**
    * Reports errors no caller sees: unexpected errors in actions called over HTTP, and subscribers that fail. The default
    * logs them with `console.error`. If it throws or rejects, that's logged too, and delivery and the action's result go
-   * on as if it hadn't. Nothing waits for a promise it returns.
+   * on as if it hadn't. A promise it returns is handed to the request's, call's or delivery run's `waitUntil` when it has
+   * one, so the report isn't cut off on Workers. Otherwise nothing waits for it.
    */
   onError?: ((error: unknown, context: ErrorContext) => void | Promise<void>) | undefined
 }
@@ -89,7 +90,7 @@ export interface BetterApp<Features extends readonly BetterAppsFeature[] = reado
    */
   handler(request: Request, context?: HandlerContext): Promise<Response>
   /** Delivers events left in the outbox by a crash or a failing subscriber. Call it from a scheduled job. */
-  deliverEvents(options?: { limit?: number | undefined }): Promise<DeliveryReport>
+  deliverEvents(options?: DeliverOptions): Promise<DeliveryReport>
   /** The database adapter, for server code and tests. */
   db: DatabaseAdapter
   options: CreateBetterAppsOptions<Features>
@@ -232,7 +233,7 @@ export function createBetterApps<const Features extends readonly BetterAppsFeatu
     } finally {
       // Events written before a failure belong to changes that committed, so they're delivered either way.
       if (events.written.length > 0) {
-        const delivery = outbox.deliver(events.written)
+        const delivery = outbox.deliver(events.written, call.waitUntil)
         let handedOff = false
         if (call.waitUntil) {
           try {

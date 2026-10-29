@@ -73,9 +73,7 @@ export interface BetterApp<Features extends readonly BetterAppsFeature[] = reado
     };
     api: BetterAppsApi<Features>;
     db: DatabaseAdapter;
-    deliverEvents(options?: {
-        limit?: number | undefined;
-    }): Promise<DeliveryReport>;
+    deliverEvents(options?: DeliverOptions): Promise<DeliveryReport>;
     handler(request: Request, context?: HandlerContext): Promise<Response>;
     // (undocumented)
     options: CreateBetterAppsOptions<Features>;
@@ -251,6 +249,12 @@ export function defineEvent<Data = unknown>(): EventDefinition<Data>;
 
 // @public
 export function defineFeature<const Feature extends BetterAppsFeature>(feature: Feature): Feature;
+
+// @public
+export interface DeliverOptions {
+    limit?: number | undefined;
+    waitUntil?: ((promise: Promise<unknown>) => void) | undefined;
+}
 
 // @public
 export interface DeliveryReport {

@@ -9,7 +9,7 @@
 //
 // @public
 export type BetterAppsClient<App = BetterApp> = ClientApi<FeaturesOf<App>> & {
-    $call(feature: string, action: string, input?: unknown): Promise<unknown>;
+    $call(feature: string, action: string, input?: unknown, options?: CallOptions): Promise<unknown>;
 };
 
 // @public
@@ -29,6 +29,11 @@ export class BetterAppsClientError extends Error {
     readonly status: number;
 }
 
+// @public
+export interface CallOptions {
+    signal?: AbortSignal | undefined;
+}
+
 // Warning: (ae-forgotten-export) The symbol "BetterAppsFeature" needs to be exported by the entry point client.d.ts
 //
 // @public
@@ -37,7 +42,7 @@ export type ClientApi<Features extends readonly BetterAppsFeature[]> = {
 };
 
 // @public
-export type ClientMethod<Input, Output> = undefined extends Input ? (input?: Input) => Promise<Serialized<Output>> : (input: Input) => Promise<Serialized<Output>>;
+export type ClientMethod<Input, Output> = undefined extends Input ? (input?: Input, options?: CallOptions) => Promise<Serialized<Output>> : (input: Input, options?: CallOptions) => Promise<Serialized<Output>>;
 
 // @public
 export interface ClientOptions {

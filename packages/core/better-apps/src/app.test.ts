@@ -447,6 +447,38 @@ describe("events", () => {
     expect(received).toEqual(["note.added"])
   })
 
+  it("hands a failed subscriber's report to waitUntil, in requests and in delivery runs", async () => {
+    const { app, onError } = setup({
+      features: [
+        subscriber(() => {
+          throw new Error("Subscriber down")
+        })
+      ]
+    })
+    const finishes: (() => void)[] = []
+    onError.mockImplementation(() => new Promise<void>((resolve) => void finishes.push(resolve)))
+    const pending: Promise<unknown>[] = []
+    const context = { waitUntil: (promise: Promise<unknown>) => void pending.push(promise) }
+    const response = await app.handler(post("/api/apps/notes/add", { text: "Hi" }), context)
+    expect(response.status).toBe(200)
+    await pending[0]
+    // The delivery, then the subscriber's report.
+    expect(pending).toHaveLength(2)
+
+    vi.useFakeTimers({ toFake: ["Date"] })
+    vi.setSystemTime(Date.now() + 60_000)
+    const scheduled: Promise<unknown>[] = []
+    expect(await app.deliverEvents({ waitUntil: (promise) => void scheduled.push(promise) })).toEqual({
+      delivered: 0,
+      failed: 1
+    })
+    expect(scheduled).toHaveLength(1)
+    for (const finish of finishes) {
+      finish()
+    }
+    await Promise.all([...pending, ...scheduled])
+  })
+
   it("waits for delivery when waitUntil throws", async () => {
     const received: string[] = []
     const { app, onError } = setup({ features: [subscriber((event) => void received.push(event.type))] })

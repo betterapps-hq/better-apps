@@ -118,7 +118,8 @@ function InvoiceComments({ invoiceId }: { invoiceId: string }) {
   Each Better Apps client has one store, so a router that hydrates `createCommentsClient(client)` and hooks under a
   `BetterAppsProvider` with that client share it.
 - The store holds what the signed-in person could see. If someone else signs in without a page load, call `reset()` or
-  create a new Better Apps client, so they never see the previous person's threads.
+  create a new Better Apps client, so they never see the previous person's threads. `reset()` also cancels calls still
+  under way, which reject with `ABORTED`; a mutation hook whose write was cancelled goes back to `idle`.
 - Hooks: `useThreads(subject, { status, order })`, `useThread(id)`, `useThreadCounts(subjectType, subjectIds)`, which
   splits lists over 50, `useSuggestMentions`, `useAnchorPosition(thread, rootRef, version)`, and a mutation hook per
   write, from `useCreateThread()` to `useDeleteThread()`, each with `mutate`, `status`, `error` and `reset`.

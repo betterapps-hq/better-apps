@@ -2,6 +2,7 @@
 import type { BetterAppsEvent } from "better-apps"
 import { createBetterAppsClient } from "better-apps/client"
 import { describe, expect, expectTypeOf, it } from "vitest"
+import { setup } from "../test/app.js"
 import { browser } from "../test/browser.js"
 import { countKey, createCommentsClient, listKey, mentionToken, type CommentsState } from "./client.js"
 import type { CommentThread } from "./index.js"
@@ -256,17 +257,20 @@ describe("reset", () => {
     expect(state.users).toEqual({})
   })
 
-  it("ignores answers to requests made before it", async () => {
+  it("cancels requests made before it and ignores their answers", async () => {
     const { api, as, comments } = browser()
     const { thread } = await api.createThread({ ...onInvoice, body: "Before the switch" }, as("bob"))
-    const loading = comments.loadThreads(onInvoice)
-    const counting = comments.loadCounts("invoice", ["inv-1"])
-    const opening = comments.loadThread(thread.id)
-    const writing = comments.createThread({ ...onInvoice, body: "Written before the switch" })
-    const refused = comments.createThread({ subjectType: "invoice", subjectId: "inv-locked", body: "Refused" })
+    const calls = [
+      comments.loadThreads(onInvoice),
+      comments.loadCounts("invoice", ["inv-1"]),
+      comments.loadThread(thread.id),
+      comments.createThread({ ...onInvoice, body: "Written before the switch" }),
+      comments.createThread({ subjectType: "invoice", subjectId: "inv-locked", body: "Refused" })
+    ]
     comments.reset()
-    await Promise.all([loading, counting, opening, writing])
-    await expect(refused).rejects.toMatchObject({ code: "FORBIDDEN" })
+    for (const call of calls) {
+      await expect(call).rejects.toMatchObject({ code: "ABORTED" })
+    }
     expect(comments.store.getSnapshot()).toEqual({
       threads: {},
       comments: {},
@@ -276,6 +280,27 @@ describe("reset", () => {
       users: {},
       pending: {}
     })
+  })
+
+  it("never sends a write waiting on its headers as the next person", async () => {
+    const { app, identity, api, as } = setup()
+    let signedIn = (_userId: "ada" | "bob") => undefined as void
+    const sent: string[] = []
+    const client = createBetterAppsClient<typeof app>({
+      baseURL: "https://app.test",
+      headers: () => new Promise((resolve) => (signedIn = (userId) => resolve(identity.headers(userId)))),
+      fetch: (url, init) => {
+        sent.push(url)
+        return app.handler(new Request(url, init))
+      }
+    })
+    const comments = createCommentsClient(client)
+    const writing = comments.createThread({ ...onInvoice, body: "Bob's draft" })
+    comments.reset()
+    signedIn("ada")
+    await expect(writing).rejects.toMatchObject({ code: "ABORTED" })
+    expect(sent).toEqual([])
+    expect((await api.listThreads(onInvoice, as("ada"))).threads).toEqual([])
   })
 
   it("tells listeners, and drops mention searches it overtakes", async () => {

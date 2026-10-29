@@ -8,6 +8,7 @@ import type { Actor } from 'better-apps';
 import type { Author } from 'better-apps';
 import type { BetterApp } from 'better-apps';
 import { BetterAppsClient } from 'better-apps/client';
+import { CallOptions } from 'better-apps/client';
 import type { FieldAttribute } from 'better-apps';
 import type { IdentityUser } from 'better-apps';
 import { RefObject } from 'react';

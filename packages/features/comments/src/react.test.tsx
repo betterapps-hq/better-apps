@@ -1,8 +1,10 @@
 // @vitest-environment happy-dom
 import { BetterAppsProvider } from "@better-apps/react"
 import { act, renderHook, waitFor } from "@testing-library/react"
+import { createBetterAppsClient } from "better-apps/client"
 import { useRef, type ReactNode } from "react"
 import { describe, expect, it, vi } from "vitest"
+import { setup } from "../test/app.js"
 import { browser } from "../test/browser.js"
 import {
   countKey,
@@ -73,6 +75,73 @@ describe("comments hooks", () => {
     expect(result.current.error).toMatchObject({ code: "FORBIDDEN" })
     act(() => result.current.reset())
     expect(result.current).toMatchObject({ status: "idle", error: null })
+  })
+
+  it("show a write a reset cancelled as never having run", async () => {
+    const { wrapper } = rendered()
+    const { result } = renderHook(() => ({ create: useCreateThread(), comments: useComments() }), { wrapper })
+    let writing: Promise<unknown> = Promise.resolve()
+    act(() => {
+      writing = result.current.create.mutate({ ...onInvoice, body: "Hi" }).catch((error: unknown) => error)
+    })
+    expect(result.current.create.status).toBe("pending")
+    await act(async () => {
+      result.current.comments.reset()
+      expect(await writing).toMatchObject({ code: "ABORTED" })
+    })
+    expect(result.current.create).toMatchObject({ status: "idle", error: null })
+  })
+
+  it("describe only the latest run, ignoring one that settles after a reset", async () => {
+    const { wrapper } = rendered()
+    const { result } = renderHook(() => useCreateThread(), { wrapper })
+    let writing: Promise<unknown> = Promise.resolve()
+    act(() => {
+      writing = result.current.mutate({ ...onInvoice, body: "Hi" })
+    })
+    act(() => result.current.reset())
+    await act(async () => {
+      await writing
+    })
+    expect(result.current).toMatchObject({ status: "idle", error: null })
+  })
+
+  it("keep the newer run's state when an older one settles after it", async () => {
+    const { app, identity } = setup()
+    const held: (() => void)[] = []
+    const client = createBetterAppsClient<typeof app>({
+      baseURL: "https://app.test",
+      headers: identity.headers("bob"),
+      fetch: async (url, init) => {
+        await new Promise<void>((resolve) => held.push(resolve))
+        return app.handler(new Request(url, init))
+      }
+    })
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <BetterAppsProvider client={client}>{children}</BetterAppsProvider>
+    )
+    const { result } = renderHook(() => useCreateThread(), { wrapper })
+    let older: Promise<unknown> = Promise.resolve()
+    let newer: Promise<unknown> = Promise.resolve()
+    act(() => {
+      older = result.current
+        .mutate({ subjectType: "invoice", subjectId: "inv-locked", body: "Refused" })
+        .catch((error: unknown) => error)
+    })
+    act(() => {
+      newer = result.current.mutate({ ...onInvoice, body: "Saved" })
+    })
+    await waitFor(() => expect(held).toHaveLength(2))
+    await act(async () => {
+      held[1]?.()
+      await newer
+    })
+    expect(result.current).toMatchObject({ status: "success", error: null })
+    await act(async () => {
+      held[0]?.()
+      expect(await older).toMatchObject({ code: "FORBIDDEN" })
+    })
+    expect(result.current).toMatchObject({ status: "success", error: null })
   })
 
   it("load a thread with its comments, and reply", async () => {

@@ -1,7 +1,7 @@
 // The framework-free browser half of comments: a store of threads and comments that any framework binds to, with
 // optimistic writes under client-generated ids and live updates through `applyEvent`. It imports no server code.
 import type { BetterApp, IdentityUser } from "better-apps"
-import { createStore, type BetterAppsClient, type Serialized, type Store } from "better-apps/client"
+import { createStore, type BetterAppsClient, type CallOptions, type Serialized, type Store } from "better-apps/client"
 import type {
   CountThreadsInput,
   GetThreadInput,
@@ -165,13 +165,15 @@ export function createCommentsClient<App = BetterApp>(client: BetterAppsClient<A
 }
 
 function createCommentsClientFor<Types extends CommentsTypes>(
-  call: (feature: string, action: string, input?: unknown) => Promise<unknown>
+  call: (feature: string, action: string, input: unknown, options: CallOptions) => Promise<unknown>
 ) {
   type Thread = CommentThread & Types["threadFields"]
   type Message = Comment & Types["commentFields"]
   type State = CommentsState<Thread, Message>
   const store: Store<State> = createStore(empty as State)
-  const run = (action: string, input: unknown) => call("comments", action, input)
+  // reset() cancels calls still under way, so one waiting on its headers never goes out as the next person.
+  let calls = new AbortController()
+  const run = (action: string, input: unknown) => call("comments", action, input, { signal: calls.signal })
   const applied: string[] = []
   const resetListeners = new Set<() => void>()
   const update = (change: (state: State) => State) => store.setState(change)
@@ -570,8 +572,15 @@ function createCommentsClientFor<Types extends CommentsTypes>(
      */
     async suggestMentions(input: SuggestMentionsInput<Types["subjectType"]>): Promise<IdentityUser[]> {
       const started = generation
-      const users = (await run("suggestMentions", input)) as IdentityUser[]
-      return started === generation ? users : []
+      try {
+        const users = (await run("suggestMentions", input)) as IdentityUser[]
+        return started === generation ? users : []
+      } catch (error) {
+        if (started !== generation) {
+          return []
+        }
+        throw error
+      }
     },
 
     /**
@@ -617,10 +626,12 @@ function createCommentsClientFor<Types extends CommentsTypes>(
 
     /**
      * Empties the store, such as when the signed-in person changes without a page load. Lists and threads that are on
-     * screen load again for the new person.
+     * screen load again for the new person. Calls still under way are cancelled and reject with an `ABORTED` error.
      */
     reset() {
       generation += 1
+      calls.abort()
+      calls = new AbortController()
       applied.length = 0
       store.setState(() => empty as State)
       for (const listener of Array.from(resetListeners)) {

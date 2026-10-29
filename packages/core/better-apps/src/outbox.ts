@@ -11,6 +11,14 @@ export interface DeliveryReport {
   failed: number
 }
 
+/** Options for a delivery run from a scheduled job. */
+export interface DeliverOptions {
+  /** The most events to deliver. The default is 100. */
+  limit?: number | undefined
+  /** Keeps reports of failed subscribers running after the run returns, such as a scheduled Worker's `waitUntil`. */
+  waitUntil?: ((promise: Promise<unknown>) => void) | undefined
+}
+
 /** Where an error the caller doesn't see came from. */
 export interface ErrorContext {
   feature?: string | undefined
@@ -25,6 +33,8 @@ export interface EventScope {
   now: Date
   silent: boolean
 }
+
+type WaitUntil = (promise: Promise<unknown>) => void
 
 // A delivery holds an event this long, so a crashed run's events become available again.
 const leaseMs = 5 * 60_000
@@ -55,7 +65,7 @@ export function createOutbox(options: {
   db: DatabaseAdapter
   features: readonly BetterAppsFeature[]
   identity: Identity
-  onError: (error: unknown, context: ErrorContext) => void
+  onError: (error: unknown, context: ErrorContext, waitUntil?: WaitUntil) => void
 }) {
   const { db, identity, onError } = options
   const subscribers = new Map<string, Map<string, { feature: BetterAppsFeature; handle: EventHandler }[]>>()
@@ -125,7 +135,7 @@ export function createOutbox(options: {
   }
 
   // Claims an event, runs its subscribers, and removes it once they all succeed. Returns the events they emitted.
-  async function deliverOne(id: string, report: DeliveryReport): Promise<string[]> {
+  async function deliverOne(id: string, report: DeliveryReport, waitUntil?: WaitUntil): Promise<string[]> {
     const now = new Date()
     const row = await db.incrementOne({
       model: eventModel,
@@ -161,35 +171,38 @@ export function createOutbox(options: {
       report.delivered += 1
     } catch (error) {
       report.failed += 1
-      onError(error, { feature: event.feature, event })
+      onError(error, { feature: event.feature, event }, waitUntil)
       const retryAt = new Date(Date.now() + backoffMs(Number(row.attempts)))
       const lastError = (error instanceof Error ? error.message : String(error)).slice(0, 1000)
       await db
         .update({ model: eventModel, where: [{ field: "id", value: id }], update: { availableAt: retryAt, lastError } })
-        .catch((updateError: unknown) => onError(updateError, { feature: event.feature, event }))
+        .catch((updateError: unknown) => onError(updateError, { feature: event.feature, event }, waitUntil))
     }
     return emitted
   }
 
-  /** Delivers the given events, then any they cause. It never throws; failures are reported through `onError`. */
-  async function deliver(ids: readonly string[]): Promise<DeliveryReport> {
+  /**
+   * Delivers the given events, then any they cause. It never throws; failures are reported through `onError`, whose
+   * reports are handed to `waitUntil` so they aren't cut off when the run ends.
+   */
+  async function deliver(ids: readonly string[], waitUntil?: WaitUntil): Promise<DeliveryReport> {
     const report: DeliveryReport = { delivered: 0, failed: 0 }
     const queue = [...ids]
     for (let count = 0; queue.length > 0 && count < maxDeliveriesPerRun; count += 1) {
       const id = queue.shift() as string
       try {
-        queue.push(...(await deliverOne(id, report)))
+        queue.push(...(await deliverOne(id, report, waitUntil)))
       } catch (error) {
         // The outbox itself couldn't be read or written. The event stays for the next run.
         report.failed += 1
-        onError(error, {})
+        onError(error, {}, waitUntil)
       }
     }
     return report
   }
 
   /** Delivers events that are due: new ones a crash left behind, and failed ones whose backoff has passed. */
-  async function deliverPending({ limit = 100 }: { limit?: number | undefined } = {}): Promise<DeliveryReport> {
+  async function deliverPending({ limit = 100, waitUntil }: DeliverOptions = {}): Promise<DeliveryReport> {
     if (subscribers.size === 0) {
       return { delivered: 0, failed: 0 }
     }
@@ -203,7 +216,10 @@ export function createOutbox(options: {
       limit,
       select: ["id"]
     })
-    return deliver(due.map((row) => row.id))
+    return deliver(
+      due.map((row) => row.id),
+      waitUntil
+    )
   }
 
   return { track, deliver, deliverPending }
