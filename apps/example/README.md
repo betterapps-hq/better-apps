@@ -2,8 +2,9 @@
 
 A [TanStack Start](https://tanstack.com/start) app that runs
 [Better Apps](../../packages/better-apps/better-apps/README.md) features on SQLite, wired with
-[`@better-apps/tanstack-start`](../../packages/better-apps/tanstack-start/README.md). It has no sign-in:
-`localIdentity()` makes every request act as one local user.
+[`@better-apps/tanstack-start`](../../packages/better-apps/tanstack-start/README.md). People sign in with
+[Better Auth](https://www.better-auth.com), and
+[`@better-apps/better-auth`](../../packages/better-apps/better-auth/README.md) tells features who they are.
 
 Build the packages it uses once, then start it:
 
@@ -29,16 +30,21 @@ Then open <http://127.0.0.1:4190>. `build` and `preview` run the production buil
   load a comments store through the bound `client()` and return its snapshot, and the router in `src/router.tsx` carries
   the store to the browser, so the first paint has the threads and the browser doesn't fetch them again.
 - `src/better-apps.server.ts` creates the app and its Start bindings. `src/routes/api/apps/$.ts` serves the actions.
+- **Sign-in** is Better Auth's email and password sign-in, in `src/auth.server.ts`, served at `/api/auth`. On its first
+  start the app signs up three demo people, Ada, Grace and Alan, with the password `better-apps-example`, and the
+  sign-in page has a button for each. Notes and comments are for signed-in people; the header shows who's signed in.
+  Signing in or out reloads the page, so nothing loaded for one person stays in the browser.
 - `src/start.ts` only lets same-origin requests call server functions.
 
 ## Database
 
 The app stores its data in `.data/example.db`, which it creates on start. Set `DATABASE_FILE` to use another file, or
-`:memory:` for a database that lasts until the server stops. Delete the file to start over.
+`:memory:` for a database that lasts until the server stops. Delete the file to start over. Set `BETTER_AUTH_SECRET` and
+`BETTER_AUTH_URL` anywhere but your own machine.
 
 Tables come from migrations in `drizzle/`, which the app applies on start with Drizzle's migrator. The migrations cover
-the app's tables and the features' tables, which `better-apps generate` writes to `src/db/better-apps-schema.ts`. After
-adding a feature or changing a table, run:
+the app's tables, Better Auth's in `src/db/auth-schema.ts`, and the features' tables, which `better-apps generate`
+writes to `src/db/better-apps-schema.ts`. After adding a feature or changing a table, run:
 
 ```sh
 pnpm --filter @better-apps/example db:generate

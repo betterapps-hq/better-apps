@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path"
 import { DatabaseSync, type SQLInputValue } from "node:sqlite"
 import { drizzle } from "drizzle-orm/sqlite-proxy"
 import { migrate } from "drizzle-orm/sqlite-proxy/migrator"
+import * as authTables from "./auth-schema"
 import * as featureTables from "./better-apps-schema"
 import * as appTables from "./schema"
 
@@ -46,7 +47,7 @@ function transaction<T>(run: () => T): T {
 export const db = drizzle(
   async (sql, params, method) => query(sql, params, method),
   async (queries) => transaction(() => queries.map(({ sql, params, method }) => query(sql, params, method))),
-  { schema: { ...appTables, ...featureTables } }
+  { schema: { ...appTables, ...authTables, ...featureTables } }
 )
 
 const seedInvoices: appTables.Invoice[] = [

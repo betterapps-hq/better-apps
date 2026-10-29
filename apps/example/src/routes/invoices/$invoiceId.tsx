@@ -1,10 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router"
 import { useRef, useState, type ReactNode } from "react"
+import { SignInPrompt } from "../../account"
 import { loadInvoiceComments } from "../../comments.functions"
 import { BackLink, StatusLabel } from "../../components"
 import { formatDate, formatMoney } from "../../format"
 import { AnchorPins, InvoiceComments, type PinTarget } from "../../invoice-comments"
 import { getInvoice } from "../../invoices.functions"
+import { useViewer } from "../../viewer"
 
 export const Route = createFileRoute("/invoices/$invoiceId")({
   loader: async ({ params, context }) => {
@@ -33,6 +35,7 @@ interface Detail {
 
 function InvoiceDetail() {
   const invoice = Route.useLoaderData()
+  const viewer = useViewer()
   const details = useRef<HTMLDListElement>(null)
   const composer = useRef<HTMLTextAreaElement>(null)
   const [target, setTarget] = useState<PinTarget | null>(null)
@@ -67,29 +70,38 @@ function InvoiceDetail() {
                 <dt>{label}</dt>
                 <dd>
                   <span>{value}</span>
-                  <button
-                    type="button"
-                    className="text-button"
-                    onClick={() => commentOn({ field, label })}
-                    aria-label={`Comment on ${label}`}
-                  >
-                    Comment
-                  </button>
+                  {viewer && (
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => commentOn({ field, label })}
+                      aria-label={`Comment on ${label}`}
+                    >
+                      Comment
+                    </button>
+                  )}
                 </dd>
               </div>
             ))}
           </dl>
-          <AnchorPins subject={subject} root={details} labels={labels} />
+          {viewer && <AnchorPins subject={subject} root={details} labels={labels} />}
         </div>
       </article>
-      <InvoiceComments
-        subject={subject}
-        root={details}
-        labels={labels}
-        target={target}
-        onTargetChange={setTarget}
-        composerRef={composer}
-      />
+      {viewer ? (
+        <InvoiceComments
+          subject={subject}
+          root={details}
+          labels={labels}
+          target={target}
+          onTargetChange={setTarget}
+          composerRef={composer}
+        />
+      ) : (
+        <section className="comments" aria-labelledby="comments-title">
+          <h2 id="comments-title">Comments</h2>
+          <SignInPrompt>to see and add comments.</SignInPrompt>
+        </section>
+      )}
     </div>
   )
 }

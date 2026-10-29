@@ -4,6 +4,7 @@ import { loadCommentCounts } from "../../comments.functions"
 import { StatusLabel } from "../../components"
 import { formatDate, formatMoney } from "../../format"
 import { listInvoices } from "../../invoices.functions"
+import { useViewer } from "../../viewer"
 
 export const Route = createFileRoute("/invoices/")({
   loader: async ({ context }) => {
@@ -23,10 +24,9 @@ export const Route = createFileRoute("/invoices/")({
 
 function Invoices() {
   const invoices = Route.useLoaderData()
-  const counts = useThreadCounts(
-    "invoice",
-    invoices.map((invoice) => invoice.id)
-  )
+  // Comments are for signed-in people, so the counts are too.
+  const signedIn = useViewer() !== null
+  const counts = useThreadCounts("invoice", signedIn ? invoices.map((invoice) => invoice.id) : [])
   return (
     <>
       <h1>Invoices</h1>
@@ -41,9 +41,11 @@ function Invoices() {
                 Due
               </th>
               <th scope="col">Status</th>
-              <th scope="col" className="optional">
-                Comments
-              </th>
+              {signedIn && (
+                <th scope="col" className="optional">
+                  Comments
+                </th>
+              )}
               <th scope="col" className="numeric">
                 Amount
               </th>
@@ -64,7 +66,7 @@ function Invoices() {
                 <td>
                   <StatusLabel status={invoice.status} />
                 </td>
-                <td className="optional">{openThreads(counts[invoice.id]?.open)}</td>
+                {signedIn && <td className="optional">{openThreads(counts[invoice.id]?.open)}</td>}
                 <td className="numeric">{formatMoney(invoice.amount, invoice.currency)}</td>
               </tr>
             ))}

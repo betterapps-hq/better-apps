@@ -1,5 +1,6 @@
 import { createRootRouteWithContext, HeadContent, Link, Scripts } from "@tanstack/react-router"
 import type { ReactNode } from "react"
+import { Account } from "../account"
 import type { Comments } from "../app-types"
 import { getViewer } from "../viewer.functions"
 import styles from "../styles.css?url"
@@ -57,6 +58,7 @@ function RootDocument({ children }: RootDocumentProps) {
                 </li>
               </ul>
             </nav>
+            <Account />
           </div>
         </header>
         <main id="main" className="container" tabIndex={-1}>

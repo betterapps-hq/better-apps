@@ -346,6 +346,64 @@ tbody th {
   color: var(--muted);
 }
 
+.account {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 0.75rem;
+}
+
+.sign-in-form {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 24rem;
+}
+
+.sign-in-form label {
+  font-weight: 600;
+}
+
+.sign-in-form button {
+  justify-self: start;
+  margin-top: 0.5rem;
+}
+
+input[type="email"],
+input[type="password"] {
+  width: 100%;
+  font: inherit;
+  padding: 0.5rem;
+  color: inherit;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.demo-people {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 36rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.demo-people li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
 /* The invoice beside its comments on wide screens, above them on narrow ones. */
 .invoice-page {
   display: grid;

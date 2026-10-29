@@ -77,6 +77,8 @@ The identity adapter reads the signed-in user from a standard `Request`, so one 
 `getActor(request)` returns `{ userId, orgId, roles }` or `null`. `getActorsFor(userIds, orgId)` builds actors for other
 users in one call, leaving out non-members. Optional `getUsers` and `searchUsers` look up names and suggestions.
 `localIdentity()` is for apps without sign-in: every request acts as one local user, outside any organization.
+[`@better-apps/better-auth`](../better-auth/README.md), [`@better-apps/clerk`](../clerk/README.md) and
+[`@better-apps/workos`](../workos/README.md) read users from those providers.
 
 ## HTTP
 

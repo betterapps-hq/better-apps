@@ -31,7 +31,10 @@ const notes = defineFeature({
   },
   actions: {
     list: defineAction({
-      handler: async ({ db, identity }): Promise<Note[]> => {
+      handler: async ({ db, identity, actor }): Promise<Note[]> => {
+        if (!actor) {
+          throw new BetterAppsError("UNAUTHENTICATED", "Sign in to read notes.")
+        }
         const rows = await db.findMany<NoteRow>({
           model: "note",
           sortBy: [
