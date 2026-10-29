@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { createDatabaseAdapter, defineFeature, getFeatureTables, type DatabaseAdapter } from "./index.js"
+import { createDatabaseAdapter, defineFeature, eventModel, getFeatureTables, type DatabaseAdapter } from "./index.js"
 
 const comments = defineFeature({
   id: "comments",
@@ -42,8 +42,33 @@ describe("getFeatureTables", () => {
     expect(getFeatureTables([comments, threads]).comment?.indexes).toEqual([{ fields: ["subjectType", "subjectId"] }])
   })
 
-  it("adds no tables of its own", () => {
+  it("adds no tables of its own while no feature subscribes to events", () => {
     expect(getFeatureTables([defineFeature({ id: "presence" })])).toEqual({})
+  })
+
+  it("adds the event outbox when a feature subscribes to events", () => {
+    const audit = defineFeature({ id: "audit", on: { comments: { "comment.created": () => undefined } } })
+    const { [eventModel]: outbox } = getFeatureTables([comments, audit])
+    expect(outbox?.modelName).toBe(eventModel)
+    expect(Object.keys(outbox?.fields ?? {})).toEqual([
+      "feature",
+      "type",
+      "data",
+      "actor",
+      "author",
+      "silent",
+      "createdAt",
+      "availableAt",
+      "attempts",
+      "lastError"
+    ])
+  })
+
+  it.each(["betterAppsEvent", "better_apps_event"])("rejects %s, which the outbox reserves", (modelName) => {
+    const feature = defineFeature({ id: "events", schema: { log: { modelName, fields: {} } } })
+    expect(() => getFeatureTables([feature])).toThrow(
+      `can't declare a "${modelName}" table. Better Apps reserves that name.`
+    )
   })
 
   it("keeps a custom model name", () => {

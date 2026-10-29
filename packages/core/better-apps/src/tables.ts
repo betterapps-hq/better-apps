@@ -1,5 +1,6 @@
+import { eventModel, eventTables } from "./events.js"
 import type { BetterAppsFeature } from "./feature.js"
-import type { DatabaseSchema, TableIndex } from "./schema.js"
+import type { DatabaseSchema, FeatureSchema, TableIndex } from "./schema.js"
 import { toSnakeCase } from "./string.js"
 
 // Better Auth's runtime adapters always define these models, and its generators write them as these snake_case tables.
@@ -20,9 +21,22 @@ function mergeIndexes(...collections: readonly (readonly TableIndex[] | undefine
   return indexes
 }
 
+function addTables(tables: DatabaseSchema, schema: FeatureSchema): void {
+  for (const [key, table] of Object.entries(schema)) {
+    const existing = tables[key]
+    tables[key] = {
+      modelName: table.modelName || existing?.modelName || key,
+      fields: { ...existing?.fields, ...table.fields },
+      indexes: mergeIndexes(existing?.indexes, table.indexes),
+      disableMigrations: table.disableMigration ?? existing?.disableMigrations
+    }
+  }
+}
+
 /**
- * Merges the tables of every feature. Features may extend a table another feature declares; later fields win.
- * Unlike Better Auth's `getAuthTables`, no built-in tables are added.
+ * Merges the tables of every feature. Features may extend a table another feature declares; later fields win. The
+ * core adds its event outbox when any feature subscribes to events. Unlike Better Auth's `getAuthTables`, no user or
+ * session tables are added.
  */
 export function getFeatureTables(features: readonly BetterAppsFeature[]): DatabaseSchema {
   const tables: DatabaseSchema = {}
@@ -39,15 +53,17 @@ export function getFeatureTables(features: readonly BetterAppsFeature[]): Databa
             `The "${feature.id}" feature can't declare a "${name}" table. Better Auth reserves that name.`
           )
         }
-      }
-      const existing = tables[key]
-      tables[key] = {
-        modelName: table.modelName || existing?.modelName || key,
-        fields: { ...existing?.fields, ...table.fields },
-        indexes: mergeIndexes(existing?.indexes, table.indexes),
-        disableMigrations: table.disableMigration ?? existing?.disableMigrations
+        if (name && toSnakeCase(name) === toSnakeCase(eventModel)) {
+          throw new Error(
+            `The "${feature.id}" feature can't declare a "${name}" table. Better Apps reserves that name.`
+          )
+        }
       }
     }
+    addTables(tables, feature.schema ?? {})
+  }
+  if (features.some((feature) => Object.keys(feature.on ?? {}).length > 0)) {
+    addTables(tables, eventTables)
   }
   return tables
 }

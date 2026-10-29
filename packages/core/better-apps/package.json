@@ -2,7 +2,7 @@
   "name": "better-apps",
   "version": "0.0.0",
   "private": true,
-  "description": "Composable app features that declare their own database schema, generated for your ORM.",
+  "description": "App features with their own tables, actions and events, for any framework and auth provider.",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,

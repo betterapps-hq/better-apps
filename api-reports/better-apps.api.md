@@ -5,8 +5,125 @@
 ```ts
 
 // @public
-export interface BetterAppsFeature {
+export interface ActionContext<Input> {
+    actor: Actor | null;
+    author: Author | null;
+    db: DatabaseAdapter;
+    emit(type: string, data: unknown): void;
+    // (undocumented)
+    identity: Identity;
+    input: Input;
+    now: Date;
+    request: Request | null;
+    silent: boolean;
+    source: "http" | "api";
+}
+
+// @public
+export interface ActionDefinition<Schema extends StandardSchemaV1 | undefined = StandardSchemaV1 | undefined, Output = unknown> {
+    // (undocumented)
+    handler(context: ActionContext<ActionInput<Schema>>): Output | Promise<Output>;
+    input?: Schema;
+    serverOnly?: boolean | undefined;
+}
+
+// @public
+export type ActionInput<Schema> = [Schema] extends [StandardSchemaV1] ? InferSchemaOutput<Schema> : unknown;
+
+// @public
+export interface Actor {
+    orgId: string | null;
+    roles: readonly string[];
+    // (undocumented)
+    userId: string;
+}
+
+// @public
+export interface ApiCallOptions {
+    actor?: Actor | null | undefined;
+    author?: Author | undefined;
+    createdAt?: Date | undefined;
+    request?: Request | undefined;
+    silent?: boolean | undefined;
+    waitUntil?: ((promise: Promise<unknown>) => void) | undefined;
+}
+
+// @public
+export type ApiMethod<Input, Output> = undefined extends Input ? (input?: Input, options?: ApiCallOptions) => Promise<Output> : (input: Input, options?: ApiCallOptions) => Promise<Output>;
+
+// @public
+export type Author = {
+    type: "user";
+    userId: string;
+} | {
+    type: "external";
+    name: string;
+} | {
+    type: "system";
+    name: string;
+};
+
+// @public
+export interface BetterApp<Features extends readonly BetterAppsFeature[] = readonly BetterAppsFeature[]> {
+    $Infer: {
+        Api: BetterAppsApi<Features>;
+        Events: BetterAppsEvents<Features>;
+    };
+    api: BetterAppsApi<Features>;
+    db: DatabaseAdapter;
+    deliverEvents(options?: {
+        limit?: number | undefined;
+    }): Promise<DeliveryReport>;
+    handler(request: Request, context?: HandlerContext): Promise<Response>;
+    // (undocumented)
+    options: CreateBetterAppsOptions<Features>;
+}
+
+// @public
+export type BetterAppsApi<Features extends readonly BetterAppsFeature[]> = {
+    [Feature in Features[number] as Feature["id"]]: FeatureApi<Feature>;
+};
+
+// @public
+export class BetterAppsError extends Error {
+    constructor(code: ErrorCode, message?: string, options?: {
+        status?: number | undefined;
+        issues?: readonly StandardSchemaIssue[] | undefined;
+        cause?: unknown;
+    });
+    // (undocumented)
+    readonly code: ErrorCode;
+    readonly issues: InputIssue[] | undefined;
+    readonly status: number;
+}
+
+// @public
+export interface BetterAppsEvent<Data = unknown> {
+    // (undocumented)
+    actor: Actor | null;
+    // (undocumented)
+    author: Author | null;
+    // (undocumented)
+    createdAt: Date;
+    // (undocumented)
+    data: Data;
+    feature: string;
     id: string;
+    silent: boolean;
+    // (undocumented)
+    type: string;
+}
+
+// @public
+export type BetterAppsEvents<Features extends readonly BetterAppsFeature[]> = FeatureEvent<Features[number]>;
+
+// @public
+export interface BetterAppsFeature {
+    actions?: Readonly<Record<string, ActionDefinition>> | undefined;
+    events?: Readonly<Record<string, EventDefinition>> | undefined;
+    id: string;
+    on?: Readonly<Record<string, Readonly<Record<string, EventHandler>>>> | undefined;
+    options?: unknown;
     schema?: FeatureSchema | undefined;
 }
 
@@ -17,11 +134,34 @@ export interface BetterAppsOptions {
 }
 
 // @public
+export type CallInput<Action> = Action extends {
+    input?: infer Schema;
+} ? [NonNullable<Schema>] extends [never] ? unknown : NonNullable<Schema> extends StandardSchemaV1 ? InferSchemaInput<NonNullable<Schema>> : unknown : unknown;
+
+// @public
+export type CallOutput<Action> = Action extends {
+    handler: (...args: never[]) => infer Output;
+} ? Awaited<Output> : never;
+
+// @public
 export interface CountGroup {
     // (undocumented)
     count: number;
     // (undocumented)
     group: Row;
+}
+
+// @public
+export function createBetterApps<const Features extends readonly BetterAppsFeature[]>(options: CreateBetterAppsOptions<Features>): BetterApp<Features>;
+
+// @public
+export interface CreateBetterAppsOptions<Features extends readonly BetterAppsFeature[] = readonly BetterAppsFeature[]> extends BetterAppsOptions {
+    basePath?: string | undefined;
+    // (undocumented)
+    features: Features;
+    identity: Identity;
+    maxBodySize?: number | undefined;
+    onError?: ((error: unknown, context: ErrorContext) => void | Promise<void>) | undefined;
 }
 
 // @public
@@ -98,7 +238,71 @@ export type DatabaseAdapterFactory = (options: {
 export type DatabaseSchema = Record<string, TableSchema>;
 
 // @public
+export function defineAction<Schema extends StandardSchemaV1 | undefined = undefined, Output = unknown>(action: ActionDefinition<Schema, Output>): ActionDefinition<Schema, Output>;
+
+// @public
+export function defineEvent<Data = unknown>(): EventDefinition<Data>;
+
+// @public
 export function defineFeature<const Feature extends BetterAppsFeature>(feature: Feature): Feature;
+
+// @public
+export interface DeliveryReport {
+    delivered: number;
+    failed: number;
+}
+
+// @public
+export type ErrorCode = "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND" | "INVALID_INPUT" | "CONFLICT" | "LIMIT_EXCEEDED" | "RATE_LIMITED" | (string & {});
+
+// @public
+export interface ErrorContext {
+    // (undocumented)
+    action?: string | undefined;
+    // (undocumented)
+    event?: BetterAppsEvent | undefined;
+    // (undocumented)
+    feature?: string | undefined;
+}
+
+// @public
+export interface EventContext {
+    db: DatabaseAdapter;
+    emit(type: string, data: unknown): void;
+    // (undocumented)
+    identity: Identity;
+}
+
+// @public
+export interface EventDefinition<Data = unknown> {
+    readonly "~data"?: Data | undefined;
+}
+
+// @public
+export type EventHandler = {
+    handle(event: BetterAppsEvent, context: EventContext): void | Promise<void>;
+}["handle"];
+
+// @public
+export const eventModel = "betterAppsEvent";
+
+// @public
+export type FeatureApi<Feature> = Feature extends {
+    actions: infer Actions;
+} ? {
+    [Name in keyof Actions]: ApiMethod<CallInput<Actions[Name]>, CallOutput<Actions[Name]>>;
+} : Record<never, never>;
+
+// @public
+export type FeatureEvent<Feature> = Feature extends {
+    id: infer Id extends string;
+    events: infer Events;
+} ? {
+    [Type in keyof Events & string]: BetterAppsEvent<Events[Type] extends EventDefinition<infer Data> ? Data : unknown> & {
+        feature: Id;
+        type: Type;
+    };
+}[keyof Events & string] : never;
 
 // @public
 export type FeatureSchema = {
@@ -145,6 +349,64 @@ export type FieldValue = string | number | boolean | Date | null | undefined | s
 export function getFeatureTables(features: readonly BetterAppsFeature[]): DatabaseSchema;
 
 // @public
+export interface HandlerContext {
+    waitUntil?(promise: Promise<unknown>): void;
+}
+
+// @public
+export interface Identity {
+    getActor(request: Request): Promise<Actor | null>;
+    getActorsFor(userIds: readonly string[], orgId: string | null): Promise<Actor[]>;
+    getUsers?(userIds: readonly string[]): Promise<IdentityUser[]>;
+    searchUsers?(query: string, options: {
+        orgId: string | null;
+        limit?: number | undefined;
+    }): Promise<IdentityUser[]>;
+    userTable?: string | undefined;
+}
+
+// @public
+export interface IdentityUser {
+    // (undocumented)
+    email?: string | null | undefined;
+    // (undocumented)
+    id: string;
+    // (undocumented)
+    image?: string | null | undefined;
+    // (undocumented)
+    name: string | null;
+}
+
+// @public
+export type InferSchemaInput<Schema extends StandardSchemaV1> = NonNullable<Schema["~standard"]["types"]>["input"];
+
+// @public
+export type InferSchemaOutput<Schema extends StandardSchemaV1> = NonNullable<Schema["~standard"]["types"]>["output"];
+
+// @public
+export interface InputIssue {
+    // (undocumented)
+    message: string;
+    // (undocumented)
+    path?: (string | number)[] | undefined;
+}
+
+// @public
+export function localIdentity(user?: LocalUser): Identity;
+
+// @public
+export interface LocalUser {
+    // (undocumented)
+    email?: string | null | undefined;
+    id?: string | undefined;
+    // (undocumented)
+    image?: string | null | undefined;
+    name?: string | undefined;
+    // (undocumented)
+    roles?: readonly string[] | undefined;
+}
+
+// @public
 export type Row = Record<string, unknown>;
 
 // @public
@@ -153,6 +415,45 @@ export interface SortBy {
     direction: "asc" | "desc";
     // (undocumented)
     field: string;
+}
+
+// @public
+export interface StandardSchemaIssue {
+    // (undocumented)
+    readonly message: string;
+    // (undocumented)
+    readonly path?: readonly (PropertyKey | {
+        readonly key: PropertyKey;
+    })[] | undefined;
+}
+
+// @public
+export interface StandardSchemaProps<Input = unknown, Output = Input> {
+    // (undocumented)
+    readonly types?: {
+        readonly input: Input;
+        readonly output: Output;
+    } | undefined;
+    // (undocumented)
+    readonly validate: (value: unknown) => StandardSchemaResult<Output> | Promise<StandardSchemaResult<Output>>;
+    // (undocumented)
+    readonly vendor: string;
+    // (undocumented)
+    readonly version: 1;
+}
+
+// @public
+export type StandardSchemaResult<Output> = {
+    readonly value: Output;
+    readonly issues?: undefined;
+} | {
+    readonly issues: readonly StandardSchemaIssue[];
+};
+
+// @public
+export interface StandardSchemaV1<Input = unknown, Output = Input> {
+    // (undocumented)
+    readonly "~standard": StandardSchemaProps<Input, Output>;
 }
 
 // @public
