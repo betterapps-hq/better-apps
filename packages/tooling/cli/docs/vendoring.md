@@ -43,6 +43,18 @@ Omit the version to take the latest release. Review the vendored diff, which con
 attributes they use, type checks fail in the vendored files or `src/replacements/`. Update the replacement, or Better
 Apps' schema types, to match.
 
+`src/schema.test.ts` type-checks the generated schema for SQLite, PostgreSQL and MySQL, has drizzle-kit create the
+tables, and runs the adapter against the SQLite ones. A release that writes a broken schema fails there.
+
+## Fixes to the generated code
+
+`src/generate.ts` fixes upstream bugs in the code a generator returns, since the vendored files can't change:
+
+- The Drizzle generator passes `{ mode: "json" }` to MySQL's `text` and `json` columns, which Drizzle's MySQL columns
+  don't take, so the schema failed type checks. The option is dropped. Drizzle ignored it, so the columns are the same.
+
+Remove a fix once upstream ships it.
+
 ## Adding a file
 
 Add its upstream path to `files` in `scripts/sync-better-auth.ts` and rerun the sync. The sync reports any imports the

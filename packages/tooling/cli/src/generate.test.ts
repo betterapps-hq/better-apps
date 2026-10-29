@@ -1,5 +1,6 @@
 import { drizzleAdapter } from "@better-apps/drizzle"
 import { defineFeature, type DatabaseAdapterFactory } from "better-apps"
+import { drizzle as drizzleMysql } from "drizzle-orm/mysql-proxy"
 import { drizzle } from "drizzle-orm/pg-proxy"
 import { drizzle as drizzleSqlite } from "drizzle-orm/sqlite-proxy"
 import { describe, expect, it } from "vitest"
@@ -44,6 +45,24 @@ describe("generateSchema", () => {
     )
     const { code } = await generateSchema({ database: sqlite, features: [comments] })
     expect(code).toContain('export const comments = sqliteTable(\n  "comments",')
+  })
+
+  it("writes MySQL lists and JSON without the mode Drizzle's MySQL columns don't take", async () => {
+    const mysql = drizzleAdapter(
+      drizzleMysql(async () => ({ rows: [] })),
+      { provider: "mysql" }
+    )
+    const notes = defineFeature({
+      id: "notes",
+      schema: { note: { fields: { tags: { type: "string[]" }, data: { type: "json" } } } }
+    })
+    const { code } = await generateSchema({ database: mysql, features: [notes] })
+    expect(code).toContain('tags: text("tags")')
+    expect(code).toContain('data: json("data")')
+    expect(code).not.toContain("mode")
+    expect((await generateSchema({ database: mysql, features: [comments] })).code).toContain(
+      'export const comment = mysqlTable(\n  "comment",'
+    )
   })
 
   it("names unsupported adapters", async () => {

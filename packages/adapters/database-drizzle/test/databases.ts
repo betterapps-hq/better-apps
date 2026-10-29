@@ -45,8 +45,7 @@ export const comments = defineFeature({
   }
 })
 
-// The tables follow what `better-apps generate` writes for each dialect. Its MySQL schema passes `{ mode: "json" }` to
-// `text` and `json`, which Drizzle ignores, so those columns are declared here without it.
+// The tables follow what `better-apps generate` writes for each dialect.
 const comment = sqliteTable("comment", {
   id: text("id").primaryKey(),
   subjectId: text("subject_id").notNull(),
