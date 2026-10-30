@@ -40,7 +40,7 @@
   "devDependencies": {
     "@repo/oxlint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
-    "@types/node": "24.13.2",
+    "@types/node": "24.19.2",
     "@vitest/coverage-v8": "5.0.5",
     "@workos-inc/node": "12.0.0",
     "typescript": "catalog:",

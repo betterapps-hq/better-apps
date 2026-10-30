@@ -45,7 +45,7 @@
     "@neondatabase/serverless": "1.2.0",
     "@repo/oxlint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
-    "@types/node": "24.13.2",
+    "@types/node": "24.19.2",
     "@types/pg": "8.23.1",
     "@vitest/coverage-v8": "5.0.5",
     "drizzle-orm": "0.45.4",

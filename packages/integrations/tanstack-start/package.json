@@ -45,7 +45,7 @@
     "@repo/typescript-config": "workspace:*",
     "@tanstack/react-start": "^1.169.4",
     "@tanstack/start-storage-context": "1.167.41",
-    "@types/node": "24.13.2",
+    "@types/node": "24.19.2",
     "@vitest/coverage-v8": "5.0.5",
     "drizzle-orm": "0.45.4",
     "react": "19.3.1",

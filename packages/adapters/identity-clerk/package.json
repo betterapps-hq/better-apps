@@ -41,7 +41,7 @@
     "@clerk/backend": "3.26.3",
     "@repo/oxlint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
-    "@types/node": "24.13.2",
+    "@types/node": "24.19.2",
     "@vitest/coverage-v8": "5.0.5",
     "typescript": "catalog:",
     "vitest": "5.0.5"
