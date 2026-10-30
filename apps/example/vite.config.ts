@@ -1,7 +1,10 @@
 import { tanstackStart } from "@tanstack/react-start/plugin/vite"
 import react from "@vitejs/plugin-react"
-import { defineConfig } from "vite"
+import { defineConfig, lazyPlugins } from "vite-plus"
 
 export default defineConfig({
-  plugins: [tanstackStart({ router: { quoteStyle: "double", semicolons: false } }), react({ compiler: true })]
+  plugins: lazyPlugins(() => [
+    tanstackStart({ router: { quoteStyle: "double", semicolons: false } }),
+    react({ compiler: true })
+  ])
 })

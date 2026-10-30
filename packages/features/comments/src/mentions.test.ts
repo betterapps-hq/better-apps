@@ -1,6 +1,6 @@
 import { mentions, mentionToken } from "@better-apps/mentions"
 import { createTestApp } from "@better-apps/testing"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it } from "vite-plus/test"
 import { options, subjects, users, type UserId } from "../test/app.js"
 import { commentMentions, comments } from "./index.js"
 

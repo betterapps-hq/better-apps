@@ -1,7 +1,7 @@
 import { act, render, renderHook, screen } from "@testing-library/react"
 import { createBetterAppsClient, createStore } from "better-apps/client"
 import type { ReactNode } from "react"
-import { describe, expect, it, vi } from "vitest"
+import { describe, expect, it, vi } from "vite-plus/test"
 import { BetterAppsProvider, useBetterApps, useStore } from "./index.js"
 
 describe("useBetterApps", () => {

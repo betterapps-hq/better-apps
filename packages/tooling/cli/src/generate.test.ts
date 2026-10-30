@@ -3,7 +3,7 @@ import { defineFeature, type DatabaseAdapterFactory } from "better-apps"
 import { drizzle as drizzleMysql } from "drizzle-orm/mysql-proxy"
 import { drizzle } from "drizzle-orm/pg-proxy"
 import { drizzle as drizzleSqlite } from "drizzle-orm/sqlite-proxy"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it } from "vite-plus/test"
 import { generateSchema } from "./index.js"
 
 const comments = defineFeature({

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it } from "vite-plus/test"
 import { createDatabaseAdapter, defineFeature, eventModel, getFeatureTables, type DatabaseAdapter } from "./index.js"
 
 const comments = defineFeature({

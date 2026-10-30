@@ -2,7 +2,7 @@ import { createTestApp, type TestIdentity } from "@better-apps/testing"
 import { createServerEntry } from "@tanstack/react-start/server"
 import { runWithStartContext, type StartStorageContext } from "@tanstack/start-storage-context"
 import { defineAction, defineEvent, defineFeature, type BetterAppsEvent } from "better-apps"
-import { describe, expect, it, vi } from "vitest"
+import { describe, expect, it, vi } from "vite-plus/test"
 import { z } from "zod"
 import { createStartBindings, type StartRequestContext, type WaitUntil } from "./index.js"
 

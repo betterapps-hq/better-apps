@@ -9,7 +9,7 @@ import {
   type Row,
   type StandardSchemaV1
 } from "better-apps"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it } from "vite-plus/test"
 import { createStatements, createTestApp, testDatabase, testIdentity, testUserHeader } from "./index.js"
 
 const tasks = defineFeature({

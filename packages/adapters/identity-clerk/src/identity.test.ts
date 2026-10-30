@@ -1,5 +1,5 @@
 import { createClerkClient } from "@clerk/backend"
-import { describe, expect, it, vi } from "vitest"
+import { describe, expect, it, vi } from "vite-plus/test"
 import { clerkIdentity, type ClerkIdentityClient, type ClerkUser } from "./index.js"
 
 interface DirectoryUser {

@@ -25,11 +25,9 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "check:types": "pnpm build && tsc --noEmit",
-    "lint": "oxlint --max-warnings=0",
     "prepack": "pnpm build",
-    "test": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test": "vp test run",
+    "test:coverage": "vp test run --coverage"
   },
   "dependencies": {
     "better-apps": "workspace:*"
@@ -38,13 +36,13 @@
     "better-auth": "^1.7.9"
   },
   "devDependencies": {
-    "@repo/oxlint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
     "@types/node": "24.19.2",
-    "@vitest/coverage-v8": "5.0.5",
+    "@vitest/coverage-v8": "catalog:",
     "better-auth": "1.7.14",
     "typescript": "catalog:",
-    "vitest": "5.0.5"
+    "vitest": "catalog:",
+    "vite-plus": "catalog:"
   },
   "repository": {
     "type": "git",

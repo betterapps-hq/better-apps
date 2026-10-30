@@ -25,11 +25,9 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "check:types": "pnpm build && tsc --noEmit",
-    "lint": "oxlint --max-warnings=0",
     "prepack": "pnpm build",
-    "test": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test": "vp test run",
+    "test:coverage": "vp test run --coverage"
   },
   "dependencies": {
     "better-apps": "workspace:*"
@@ -41,18 +39,18 @@
   },
   "devDependencies": {
     "@better-apps/testing": "workspace:*",
-    "@repo/oxlint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
     "@tanstack/react-start": "^1.169.4",
     "@tanstack/start-storage-context": "1.167.41",
     "@types/node": "24.19.2",
-    "@vitest/coverage-v8": "5.0.5",
+    "@vitest/coverage-v8": "catalog:",
     "drizzle-orm": "0.45.4",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "typescript": "catalog:",
-    "vitest": "5.0.5",
-    "zod": "4.6.7"
+    "vitest": "catalog:",
+    "zod": "4.6.7",
+    "vite-plus": "catalog:"
   },
   "repository": {
     "type": "git",

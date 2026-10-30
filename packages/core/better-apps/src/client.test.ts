@@ -1,4 +1,4 @@
-import { describe, expect, expectTypeOf, it, vi } from "vitest"
+import { describe, expect, expectTypeOf, it, vi } from "vite-plus/test"
 import { memoryDatabase } from "../test/memory-database.js"
 import {
   BetterAppsClientError,

@@ -29,12 +29,10 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "check:types": "pnpm build && tsc --noEmit",
-    "lint": "oxlint --max-warnings=0",
     "prepack": "pnpm build",
     "sync:better-auth": "node scripts/sync-better-auth.ts",
-    "test": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test": "vp test run",
+    "test:coverage": "vp test run --coverage"
   },
   "dependencies": {
     "better-apps": "workspace:*"
@@ -49,16 +47,16 @@
   },
   "devDependencies": {
     "@better-apps/drizzle": "workspace:*",
-    "@repo/oxlint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
     "@types/node": "24.19.2",
-    "@vitest/coverage-v8": "5.0.5",
+    "@vitest/coverage-v8": "catalog:",
     "drizzle-kit": "0.31.11",
     "drizzle-orm": "0.45.4",
     "prettier": "3.9.10",
     "ts-morph": "28.0.0",
     "typescript": "catalog:",
-    "vitest": "5.0.5"
+    "vitest": "catalog:",
+    "vite-plus": "catalog:"
   },
   "repository": {
     "type": "git",

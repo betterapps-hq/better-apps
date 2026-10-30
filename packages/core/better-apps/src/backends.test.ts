@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it } from "vite-plus/test"
 import { configureBackends, getBackend } from "./backends.js"
 
 declare module "./backends.js" {

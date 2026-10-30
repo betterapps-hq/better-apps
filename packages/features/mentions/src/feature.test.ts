@@ -1,6 +1,6 @@
 import { createTestApp, type TestUser } from "@better-apps/testing"
 import { defineAction, defineEvent, defineFeature, getFeatureTables } from "better-apps"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it } from "vite-plus/test"
 import { defineMentionSource, mentionModel, mentions, mentionToken, type Mention } from "./index.js"
 
 const users = [

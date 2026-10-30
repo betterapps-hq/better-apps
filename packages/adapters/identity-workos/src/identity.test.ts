@@ -1,5 +1,5 @@
 import { WorkOS } from "@workos-inc/node"
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vite-plus/test"
 import { workosIdentity, type WorkOSIdentityClient, type WorkOSMembership, type WorkOSUser } from "./index.js"
 
 const cookiePassword = "a-cookie-password-that-is-at-least-32-characters"

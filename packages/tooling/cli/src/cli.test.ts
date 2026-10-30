@@ -2,7 +2,7 @@ import { linkSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test"
 import { run, type CliContext } from "./cli.js"
 
 const fixtures = fileURLToPath(new URL("../test/fixtures/", import.meta.url))

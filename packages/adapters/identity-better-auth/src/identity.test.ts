@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite"
 import { betterAuth, type BetterAuthOptions } from "better-auth"
 import { getMigrations } from "better-auth/db/migration"
 import { organization } from "better-auth/plugins/organization"
-import { describe, expect, it, vi } from "vitest"
+import { describe, expect, it, vi } from "vite-plus/test"
 import { betterAuthIdentity } from "./index.js"
 
 const baseURL = "https://app.test"

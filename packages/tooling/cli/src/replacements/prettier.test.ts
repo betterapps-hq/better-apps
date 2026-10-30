@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it } from "vite-plus/test"
 import prettier, { createFormatter } from "./prettier.js"
 
 const missing = Object.assign(new Error("Cannot find package 'prettier' imported from cli"), {

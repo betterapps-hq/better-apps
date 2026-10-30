@@ -1,6 +1,6 @@
 import { testIdentity } from "@better-apps/testing"
 import type { Actor } from "better-apps"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it } from "vite-plus/test"
 import { checkMentions, mentionToken, parseMentions, replaceMentions, suggestMentions } from "./index.js"
 
 const identity = testIdentity([

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { readdirSync, readFileSync } from "node:fs"
 import { relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it } from "vite-plus/test"
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url))
 const vendorRoot = resolve(packageRoot, "src/vendor/better-auth")

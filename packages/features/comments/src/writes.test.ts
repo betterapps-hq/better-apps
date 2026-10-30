@@ -1,5 +1,5 @@
 import { mentionToken } from "@better-apps/mentions"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it } from "vite-plus/test"
 import { expectCode, setup } from "../test/app.js"
 import { ulid, type Comment, type CommentThread } from "./index.js"
 

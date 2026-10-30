@@ -8,12 +8,10 @@
     "node": ">=24"
   },
   "scripts": {
-    "dev": "vite dev --host 127.0.0.1 --port 4190",
-    "build": "vite build",
-    "preview": "vite preview --host 127.0.0.1 --port 4191",
-    "lint": "oxlint --max-warnings=0",
-    "check:types": "tsc --noEmit",
-    "db:generate": "better-apps generate --output src/db/better-apps-schema.ts && drizzle-kit generate && oxfmt src/db/better-apps-schema.ts drizzle"
+    "dev": "vp dev --host 127.0.0.1 --port 4190",
+    "build": "vp build",
+    "preview": "vp preview --host 127.0.0.1 --port 4191",
+    "db:generate": "better-apps generate --output src/db/better-apps-schema.ts && drizzle-kit generate && vp fmt src/db/better-apps-schema.ts drizzle"
   },
   "dependencies": {
     "@better-apps/anchors": "workspace:*",
@@ -33,7 +31,6 @@
   },
   "devDependencies": {
     "@better-apps/cli": "workspace:*",
-    "@repo/oxlint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
     "@types/node": "24.19.2",
     "@types/react": "^19.3.0",
@@ -41,8 +38,8 @@
     "@vitejs/plugin-react": "^6.1.2",
     "drizzle-kit": "0.31.11",
     "oxc-transform-react": "0.155.0",
-    "oxfmt": "^0.74.0",
     "typescript": "catalog:",
-    "vite": "^8.3.5"
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
   }
 }

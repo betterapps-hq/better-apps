@@ -2,7 +2,7 @@
 import { mentionToken } from "@better-apps/mentions"
 import type { BetterAppsEvent } from "better-apps"
 import { createBetterAppsClient } from "better-apps/client"
-import { describe, expect, expectTypeOf, it } from "vitest"
+import { describe, expect, expectTypeOf, it } from "vite-plus/test"
 import { setup } from "../test/app.js"
 import { browser } from "../test/browser.js"
 import { countKey, createCommentsClient, listKey, type CommentsState } from "./client.js"

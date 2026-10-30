@@ -19,7 +19,7 @@ import {
 import { drizzle as drizzleMysql } from "drizzle-orm/mysql-proxy"
 import { drizzle as drizzlePg } from "drizzle-orm/pg-proxy"
 import { drizzle as drizzleSqlite } from "drizzle-orm/sqlite-proxy"
-import { afterAll, beforeAll, describe, expect, it } from "vitest"
+import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test"
 import { generateSchema } from "./index.js"
 
 const projects = defineFeature({

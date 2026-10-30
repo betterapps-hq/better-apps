@@ -3,7 +3,7 @@ import { BetterAppsProvider } from "@better-apps/react"
 import { act, renderHook, waitFor } from "@testing-library/react"
 import { createBetterAppsClient } from "better-apps/client"
 import type { ReactNode } from "react"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it } from "vite-plus/test"
 import { setup } from "../test/app.js"
 import { browser } from "../test/browser.js"
 import {

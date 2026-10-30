@@ -9,7 +9,7 @@ A [TanStack Start](https://tanstack.com/start) app that runs
 Build the packages it uses once, then start it:
 
 ```sh
-pnpm turbo run build --filter=@better-apps/example^...
+pnpm exec vp run --cache --filter "@better-apps/example^..." build
 pnpm --filter @better-apps/example dev
 ```
 

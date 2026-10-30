@@ -1,5 +1,5 @@
 import { mentionToken } from "@better-apps/mentions"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it } from "vite-plus/test"
 import { checkFields, jsonBytes, stableJson } from "./content.js"
 import { decodeCursor, encodeCursor } from "./cursor.js"
 import { isUlid, textFormat, ulid } from "./index.js"

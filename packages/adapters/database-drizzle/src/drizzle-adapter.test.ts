@@ -1,6 +1,6 @@
 import { createDatabaseAdapter, type DatabaseAdapter, type Row } from "better-apps"
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core"
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest"
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vite-plus/test"
 import { comments, databases, type TestDatabase } from "../test/databases.js"
 import { drizzleAdapter, type DrizzleAdapterConfig } from "./index.js"
 

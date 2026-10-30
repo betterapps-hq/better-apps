@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act, renderHook, waitFor } from "@testing-library/react"
 import { useRef } from "react"
-import { describe, expect, it, vi } from "vitest"
+import { describe, expect, it, vi } from "vite-plus/test"
 import { useAnchorPosition } from "./react.js"
 
 describe("useAnchorPosition", () => {

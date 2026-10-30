@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it } from "vite-plus/test"
 import { fromDriverDate, toDriverDate } from "./date-columns.js"
 
 const date = new Date("2026-01-02T03:04:05.678Z")

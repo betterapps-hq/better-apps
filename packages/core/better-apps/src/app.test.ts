@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest"
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vite-plus/test"
 import { memoryDatabase, type MemoryDatabase } from "../test/memory-database.js"
 import {
   BetterAppsError,

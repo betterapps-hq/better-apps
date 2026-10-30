@@ -1,4 +1,0 @@
-{
-  "extends": ["../../packages/tooling/oxlint-config/base.json"],
-  "ignorePatterns": ["src/routeTree.gen.ts", "src/db/better-apps-schema.ts"]
-}

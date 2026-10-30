@@ -26,12 +26,10 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "check:types": "pnpm build && tsc --noEmit",
-    "lint": "oxlint --max-warnings=0",
     "prepack": "pnpm build",
-    "test": "vitest run",
-    "test:coverage": "vitest run --coverage",
-    "test:servers": "docker compose -f test/compose.yaml up --detach --wait && vitest run --mode servers",
+    "test": "vp test run",
+    "test:coverage": "vp test run --coverage",
+    "test:servers": "docker compose -f test/compose.yaml up --detach --wait && vp test run --mode servers",
     "test:servers:down": "docker compose -f test/compose.yaml down",
     "upstream:changes": "node scripts/upstream-changes.ts"
   },
@@ -43,17 +41,17 @@
   },
   "devDependencies": {
     "@neondatabase/serverless": "1.2.0",
-    "@repo/oxlint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
     "@types/node": "24.19.2",
     "@types/pg": "8.23.1",
-    "@vitest/coverage-v8": "5.0.5",
+    "@vitest/coverage-v8": "catalog:",
     "drizzle-orm": "0.45.4",
     "miniflare": "4.20260730.0",
     "mysql2": "3.24.6",
     "pg": "8.23.1",
     "typescript": "catalog:",
-    "vitest": "5.0.5"
+    "vitest": "catalog:",
+    "vite-plus": "catalog:"
   },
   "repository": {
     "type": "git",
