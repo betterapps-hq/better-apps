@@ -81,9 +81,6 @@ export interface ListOptions {
 export type LoadState = "idle" | "loading" | "ready" | "error";
 
 // @public
-export function mentionToken(userId: string): string;
-
-// @public
 export interface Mutation<Input, Output> {
     // (undocumented)
     error: Error | null;

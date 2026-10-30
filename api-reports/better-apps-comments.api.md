@@ -14,6 +14,7 @@ import { EventDefinition } from 'better-apps';
 import { FeatureSchema } from 'better-apps';
 import type { FieldAttribute } from 'better-apps';
 import { IdentityUser } from 'better-apps';
+import { MentionSource } from '@better-apps/mentions';
 import { StandardSchemaIssue } from 'better-apps';
 import { StandardSchemaV1 } from 'better-apps';
 import type { SubjectArgs } from 'better-apps';
@@ -133,6 +134,9 @@ export const commentEvents: {
     userId: string;
     }>;
 };
+
+// @public
+export const commentMentions: MentionSource;
 
 // @public (undocumented)
 export const commentModel = "comment";
@@ -528,9 +532,6 @@ export interface ListThreadsInput<SubjectType extends string = string, AnchorKin
     subjectType: SubjectType;
     where?: Record<string, string | number | boolean | null> | undefined;
 }
-
-// @public
-export function mentionToken(userId: string): string;
 
 // @public
 export type ReplyInput<Types extends CommentsTypes = CommentsTypes> = Types["content"] & {

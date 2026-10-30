@@ -1,7 +1,8 @@
+import { mentionToken } from "@better-apps/mentions"
 import { describe, expect, it } from "vitest"
 import { checkFields, jsonBytes, stableJson } from "./content.js"
 import { decodeCursor, encodeCursor } from "./cursor.js"
-import { isUlid, mentionToken, textFormat, ulid } from "./index.js"
+import { isUlid, textFormat, ulid } from "./index.js"
 
 describe("ulid", () => {
   it("encodes the time first, so ids sort by creation", () => {

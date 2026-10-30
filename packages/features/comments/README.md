@@ -95,11 +95,32 @@ as "Former user".
 
 ## Formats and anchors
 
-- The built-in `text` format is plain text with mention tokens such as `@[user:u_123]` (`mentionToken(id)` builds one).
-  A literal `@[` is written `\@[`. Add others with `defineFormat({ name, schema, sanitize, toText, mentions })`.
+- The built-in `text` format is plain text with mention tokens such as `@[user:u_123]`, from
+  [`@better-apps/mentions`](../mentions/README.md) (`mentionToken(id)` builds one). A literal `@[` is written `\@[`. Add
+  others with `defineFormat({ name, schema, sanitize, toText, mentions })`.
 - Anchors come from [`@better-apps/anchors`](../anchors/README.md). `elementAnchor()` pins threads to an element, found
   with a selector that may use only ids, data attributes, tag names and structural positions. Add others with
   `defineAnchor({ kind, schema })`.
+
+## Mentions
+
+Mention checks and suggestions come from `@better-apps/mentions`, so every feature that mentions people treats them the
+same. To let each user list the comments that mention them, add the mentions feature with comments as a source:
+
+```ts
+import { commentMentions, comments } from "@better-apps/comments"
+import { mentions } from "@better-apps/mentions"
+
+createBetterApps({
+  database,
+  identity,
+  subjects,
+  features: [comments(options), mentions({ sources: [commentMentions] })]
+})
+```
+
+Each mention's record is the comment, `comments.comment`, and its group the thread. Edits drop users a comment no longer
+mentions, and deleting a comment or thread removes its mentions.
 
 ## In the browser
 

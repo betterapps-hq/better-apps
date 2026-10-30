@@ -1,6 +1,7 @@
+import { mentionToken } from "@better-apps/mentions"
 import { describe, expect, it } from "vitest"
 import { expectCode, setup } from "../test/app.js"
-import { mentionToken, ulid, type Comment, type CommentThread } from "./index.js"
+import { ulid, type Comment, type CommentThread } from "./index.js"
 
 const onInvoice = { subjectType: "invoice", subjectId: "inv-1" } as const
 

@@ -1,3 +1,4 @@
+import { checkMentions } from "@better-apps/mentions"
 import type { Author, WriteOperation } from "better-apps"
 import { accessTo, isDeclaredVisibility, orgOf, requireView, subjectOf } from "./access.js"
 import { checkAnchor, checkContent, checkFields, checkMetadata, stableJson, type CheckedContent } from "./content.js"
@@ -16,7 +17,7 @@ import type {
 import {
   authorIdOf,
   callerOf,
-  checkMentions,
+  mentionScope,
   forbid,
   loadThread,
   requireAuthor,
@@ -185,7 +186,7 @@ export async function createThread(config: Config, context: Context) {
     ...fields
   }
   const comment = commentRow(commentId, thread, author, content, now, commentFields)
-  const mentions = await checkMentions(config, context, thread, content.mentions, authorId)
+  const mentions = await checkMentions(mentionScope(config, context, thread), content.mentions, authorId)
   context.emit("thread.created", { ...eventData(thread), comment })
   context.emit("comment.created", { ...eventData(thread), comment })
   emitMentions(context, thread, comment, mentions.allowed)
@@ -256,7 +257,7 @@ export async function reply(config: Config, context: Context) {
   const reopened = reopens ? { status: "open" as const, resolvedAt: null, resolvedBy: null } : {}
   const updated: CommentThread = { ...thread, ...reopened, commentCount: thread.commentCount + 1, lastActivityAt }
   const comment = commentRow(id, thread, author, content, now, fields)
-  const mentions = await checkMentions(config, context, thread, content.mentions, authorId)
+  const mentions = await checkMentions(mentionScope(config, context, thread), content.mentions, authorId)
   context.emit("comment.created", { ...eventData(updated), comment })
   emitMentions(context, updated, comment, mentions.allowed)
   if (reopens) {
@@ -320,7 +321,7 @@ export async function editComment(config: Config, context: Context) {
   }
   const previous = await checkContent(config.formats, comment.format, comment.body).catch(() => null)
   const added = content.mentions.filter((id) => !previous?.mentions.includes(id))
-  const mentions = await checkMentions(config, context, thread, added, comment.authorId)
+  const mentions = await checkMentions(mentionScope(config, context, thread), added, comment.authorId)
   const edited: Comment = {
     ...comment,
     format: content.format,

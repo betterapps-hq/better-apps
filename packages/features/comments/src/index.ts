@@ -17,7 +17,8 @@ export {
   type ThreadCounts,
   type WriteResult
 } from "./feature.js"
-export { defineFormat, mentionToken, textFormat, type BodyFormat } from "./formats.js"
+export { defineFormat, textFormat, type BodyFormat } from "./formats.js"
+export { commentMentions } from "./mentions.js"
 export type {
   BeforeHooks,
   CommentRules,

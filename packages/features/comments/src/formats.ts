@@ -1,3 +1,4 @@
+import { parseMentions, replaceMentions } from "@better-apps/mentions"
 import type { StandardSchemaV1 } from "better-apps"
 
 /**
@@ -24,9 +25,6 @@ export function defineFormat<const Name extends string, Body>(format: BodyFormat
   return format
 }
 
-// A mention is `@[user:<id>]`. A literal `@[` is written `\@[`, which this matches first so it's never read as one.
-const tokens = /\\@\[|@\[user:([^\]\s]{1,255})\]/g
-
 const textSchema: StandardSchemaV1<unknown, string> = {
   "~standard": {
     version: 1,
@@ -38,23 +36,14 @@ const textSchema: StandardSchemaV1<unknown, string> = {
   }
 }
 
-/** Builds the token that mentions a user in a `text` body. */
-export function mentionToken(userId: string): string {
-  return `@[user:${userId}]`
-}
-
-/** Plain text with mention tokens such as `@[user:u_123]`. It holds no markup, so there's nothing to sanitize away. */
+/**
+ * Plain text with mention tokens such as `@[user:u_123]`, built with `mentionToken` from `@better-apps/mentions`. It
+ * holds no markup, so there's nothing to sanitize away.
+ */
 export const textFormat: BodyFormat<"text", string> = defineFormat({
   name: "text",
   schema: textSchema,
   sanitize: (body) => body.replace(/\r\n?/g, "\n").trim(),
-  toText: (body, names) =>
-    names
-      ? body.replace(tokens, (token, userId: string | undefined) =>
-          userId === undefined ? "@[" : `@${names(userId) ?? "Former user"}`
-        )
-      : body,
-  mentions: (body) => [
-    ...new Set([...body.matchAll(tokens)].flatMap(([, userId]) => (userId === undefined ? [] : [userId])))
-  ]
+  toText: (body, names) => (names ? replaceMentions(body, names) : body),
+  mentions: parseMentions
 })

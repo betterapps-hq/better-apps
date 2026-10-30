@@ -26,7 +26,7 @@ import type { ClientEvent } from "./reads.js"
 import type { Comment, CommentThread } from "./schema.js"
 import { ulid } from "./ulid.js"
 
-export { mentionToken, textFormat } from "./formats.js"
+export { textFormat } from "./formats.js"
 export { isUlid, ulid } from "./ulid.js"
 
 type CommentsFeatureOf<App> =

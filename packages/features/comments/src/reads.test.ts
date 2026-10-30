@@ -1,7 +1,8 @@
+import { mentionToken } from "@better-apps/mentions"
 import type { BetterAppsEvent } from "better-apps"
 import { describe, expect, it } from "vitest"
 import { expectCode, invoices, setup } from "../test/app.js"
-import { mentionToken, type Comment, type CommentThread } from "./index.js"
+import type { Comment, CommentThread } from "./index.js"
 
 const onInvoice = { subjectType: "invoice", subjectId: "inv-1" } as const
 const seed = { author: { type: "system", name: "Seed" } } as const

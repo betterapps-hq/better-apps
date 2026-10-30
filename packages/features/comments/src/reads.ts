@@ -1,10 +1,20 @@
+import { suggestMentions as suggestUsers } from "@better-apps/mentions"
 import type { Actor, BetterAppsEvent, IdentityUser, Where } from "better-apps"
-import { accessTo, canViewThread as canView, mentionable, orgOf, requireView, subjectOf, visibleTo } from "./access.js"
+import { accessTo, canViewThread as canView, orgOf, requireView, subjectOf, visibleTo } from "./access.js"
 import { limits } from "./content.js"
 import { decodeCursor, encodeCursor } from "./cursor.js"
 import { CommentsError } from "./errors.js"
 import type { CommentEventData, ThreadEventData } from "./events.js"
-import { callerOf, forbid, loadThread, lookupUsers, threadAccess, type Config, type Context } from "./runtime.js"
+import {
+  callerOf,
+  forbid,
+  loadThread,
+  lookupUsers,
+  mentionScope,
+  threadAccess,
+  type Config,
+  type Context
+} from "./runtime.js"
 import { commentModel, threadModel, type Comment, type CommentThread } from "./schema.js"
 
 /** A page of threads, with the users they name. */
@@ -250,21 +260,7 @@ export async function suggestMentions(config: Config, context: Context): Promise
   const { access } = await threadAccess(config, context, thread)
   requireView(access)
   forbid(access.comment, "You can't comment here.")
-  const { searchUsers } = context.identity
-  if (!searchUsers) {
-    return []
-  }
-  const orgId = thread.orgId === "" ? null : thread.orgId
-  // Asks for more than it returns, since some may be filtered out.
-  const found = await searchUsers.call(context.identity, input.query, { orgId, limit: limits.suggestions * 3 })
-  const actors = await context.identity.getActorsFor(
-    found.map((user) => user.id),
-    orgId
-  )
-  const allowed = new Set(
-    (await mentionable(config.subjects, context.subjects, actors, thread)).map((actor) => actor.userId)
-  )
-  return found.filter((user) => allowed.has(user.id)).slice(0, limits.suggestions)
+  return suggestUsers(mentionScope(config, context, thread), input.query, limits.suggestions)
 }
 
 /** Whether someone can see a thread, for other features' recipient checks, such as notifications. */
