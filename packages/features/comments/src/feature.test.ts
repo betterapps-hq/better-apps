@@ -1,15 +1,8 @@
+import { defineAnchor, elementAnchor } from "@better-apps/anchors"
 import { createTestApp } from "@better-apps/testing"
 import { getFeatureTables } from "better-apps"
 import { describe, expect, expectTypeOf, it } from "vitest"
-import {
-  comments,
-  defineAnchor,
-  defineFormat,
-  elementAnchor,
-  textFormat,
-  type Comment,
-  type CommentThread
-} from "./index.js"
+import { comments, defineFormat, textFormat, type Comment, type CommentThread } from "./index.js"
 
 const invoice = { canComment: () => true }
 

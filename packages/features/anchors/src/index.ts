@@ -1,12 +1,13 @@
 import type { StandardSchemaV1 } from "better-apps"
 
 /**
- * Where inside a subject a thread sits. The server checks and stores the position as JSON, with the content version it
- * was made against; each viewer's browser finds the spot and decides for itself whether it still fits.
+ * A kind of spot inside a subject, such as an element on a page, that a feature pins things to: a comment thread or an
+ * annotation. The server checks and stores the spot as JSON, with the content version it was made against; each
+ * viewer's browser finds it and decides for itself whether it still fits.
  */
 export interface AnchorKind<Kind extends string = string, Value = unknown> {
   kind: Kind
-  /** Checks a stored position. Anchors are capped at 4 KB. */
+  /** Checks a spot before it's stored. Keep anchors small: features cap them, such as comments at 4 KB. */
   schema: StandardSchemaV1<unknown, Value>
 }
 
@@ -106,7 +107,7 @@ function readElementAnchor(value: unknown): ElementAnchor | string {
   return anchor
 }
 
-/** Pins threads to an element on a page, such as a preview deploy. Each browser finds the element with `querySelector`. */
+/** Pins to an element on a page, such as a preview deploy. Each browser finds the element with `querySelector`. */
 export function elementAnchor(): AnchorKind<"element", ElementAnchor> {
   return defineAnchor<"element", ElementAnchor>({
     kind: "element",

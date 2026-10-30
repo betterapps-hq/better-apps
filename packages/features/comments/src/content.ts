@@ -1,5 +1,5 @@
+import type { AnchorKind } from "@better-apps/anchors"
 import type { FieldAttribute, StandardSchemaV1 } from "better-apps"
-import type { AnchorKind } from "./anchors.js"
 import { CommentsError } from "./errors.js"
 import type { BodyFormat } from "./formats.js"
 

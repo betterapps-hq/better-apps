@@ -16,6 +16,7 @@
     "db:generate": "better-apps generate --output src/db/better-apps-schema.ts && drizzle-kit generate && oxfmt src/db/better-apps-schema.ts drizzle"
   },
   "dependencies": {
+    "@better-apps/anchors": "workspace:*",
     "@better-apps/better-auth": "workspace:*",
     "@better-apps/comments": "workspace:*",
     "@better-apps/drizzle": "workspace:*",

@@ -1,8 +1,8 @@
-// Where an anchored thread sits on the page in front of a viewer. Each browser works this out for itself and reports
+// Where an anchored record sits on the page in front of a viewer. Each browser works this out for itself and reports
 // nothing back, because viewers of different deploys or layouts would disagree.
-import { isSafeSelector, type ElementAnchor } from "./anchors.js"
+import { isSafeSelector, type ElementAnchor } from "./index.js"
 
-/** Where a thread's anchor is on this page. */
+/** Where an anchor is on this page. */
 export type AnchorResolution =
   | {
       /** `outdated` means the spot was found, but the content version differs from the one the anchor was made on. */
@@ -12,26 +12,29 @@ export type AnchorResolution =
       x: number
       y: number
     }
-  /** The spot isn't on this page, so the UI lists the thread separately rather than losing it. */
+  /** The spot isn't on this page, so the UI lists the record separately rather than losing it. */
   | { status: "detached" }
 
-interface AnchoredThread {
+/** A record pinned to a spot, such as a comment thread, with the anchor as it's stored. */
+export interface Anchored {
+  /** `null` for a record on the whole subject. */
   anchorKind: string | null
   anchor: unknown
+  /** The content version the anchor was made against, such as a deploy. */
   anchorVersion: string | null
 }
 
 /**
- * Finds an anchored thread's spot inside `root`, the element that holds the subject's content. Returns `null` for a
- * thread on the whole subject. `version` is the content version on screen, such as the deploy being viewed.
+ * Finds an anchored record's spot inside `root`, the element that holds the subject's content. Returns `null` for a
+ * record on the whole subject. `version` is the content version on screen, such as the deploy being viewed.
  */
-export function resolveAnchor(thread: AnchoredThread, root: Element, version?: string | null): AnchorResolution | null {
-  if (thread.anchorKind === null) {
+export function resolveAnchor(anchored: Anchored, root: Element, version?: string | null): AnchorResolution | null {
+  if (anchored.anchorKind === null) {
     return null
   }
-  const anchor = thread.anchor as ElementAnchor | null
+  const anchor = anchored.anchor as ElementAnchor | null
   // Stored anchors are data: only a selector the server would accept is ever queried, and it's never inserted as HTML.
-  if (thread.anchorKind !== "element" || typeof anchor?.selector !== "string" || !isSafeSelector(anchor.selector)) {
+  if (anchored.anchorKind !== "element" || typeof anchor?.selector !== "string" || !isSafeSelector(anchor.selector)) {
     return { status: "detached" }
   }
   const element = root.querySelector(anchor.selector)
@@ -40,7 +43,7 @@ export function resolveAnchor(thread: AnchoredThread, root: Element, version?: s
   }
   const box = element.getBoundingClientRect()
   const frame = root.getBoundingClientRect()
-  const outdated = Boolean(version && thread.anchorVersion && version !== thread.anchorVersion)
+  const outdated = Boolean(version && anchored.anchorVersion && version !== anchored.anchorVersion)
   return {
     status: outdated ? "outdated" : "attached",
     element,

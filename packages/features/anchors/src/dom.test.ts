@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { elementAnchorFor, resolveAnchor, selectorFor } from "./anchor-dom.js"
+import { elementAnchorFor, resolveAnchor, selectorFor } from "./dom.js"
 
 function page(html: string) {
   const root = document.createElement("main")

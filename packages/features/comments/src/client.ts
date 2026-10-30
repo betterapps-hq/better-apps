@@ -26,7 +26,6 @@ import type { ClientEvent } from "./reads.js"
 import type { Comment, CommentThread } from "./schema.js"
 import { ulid } from "./ulid.js"
 
-export { elementAnchorFor, resolveAnchor, selectorFor, type AnchorResolution } from "./anchor-dom.js"
 export { mentionToken, textFormat } from "./formats.js"
 export { isUlid, ulid } from "./ulid.js"
 

@@ -1,4 +1,3 @@
-export { defineAnchor, elementAnchor, isSafeSelector, type AnchorKind, type ElementAnchor } from "./anchors.js"
 export { limits } from "./content.js"
 export { CommentsError, type CommentsErrorCode } from "./errors.js"
 export {

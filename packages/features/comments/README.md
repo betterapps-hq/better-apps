@@ -8,7 +8,8 @@ D1 as on any other SQL database.
 ## Usage
 
 ```ts
-import { comments, CommentsError, elementAnchor } from "@better-apps/comments"
+import { elementAnchor } from "@better-apps/anchors"
+import { comments, CommentsError } from "@better-apps/comments"
 import { createBetterApps } from "better-apps"
 
 export const app = createBetterApps({
@@ -96,8 +97,9 @@ as "Former user".
 
 - The built-in `text` format is plain text with mention tokens such as `@[user:u_123]` (`mentionToken(id)` builds one).
   A literal `@[` is written `\@[`. Add others with `defineFormat({ name, schema, sanitize, toText, mentions })`.
-- `elementAnchor()` pins threads to an element, found with a selector that may use only ids, data attributes, tag names
-  and structural positions. Add others with `defineAnchor({ kind, schema })`.
+- Anchors come from [`@better-apps/anchors`](../anchors/README.md). `elementAnchor()` pins threads to an element, found
+  with a selector that may use only ids, data attributes, tag names and structural positions. Add others with
+  `defineAnchor({ kind, schema })`.
 
 ## In the browser
 
@@ -128,11 +130,10 @@ function InvoiceComments({ invoiceId }: { invoiceId: string }) {
   create a new Better Apps client, so they never see the previous person's threads. `reset()` also cancels calls still
   under way, which reject with `ABORTED`; a mutation hook whose write was cancelled goes back to `idle`.
 - Hooks: `useThreads(subject, { status, order })`, `useThread(id)`, `useThreadCounts(subjectType, subjectIds)`, which
-  splits lists over 50, `useSuggestMentions`, `useAnchorPosition(thread, rootRef, version)`, and a mutation hook per
-  write, from `useCreateThread()` to `useDeleteThread()`, each with `mutate`, `status`, `error` and `reset`.
-- `resolveAnchor(thread, root, version)` finds an element anchor on the page: `attached` with a position, `outdated`
-  when the content version on screen differs from the anchor's, or `detached`. `elementAnchorFor(element, root, point)`
-  builds one from a click, with a selector from `selectorFor`.
+  splits lists over 50, `useSuggestMentions`, and a mutation hook per write, from `useCreateThread()` to
+  `useDeleteThread()`, each with `mutate`, `status`, `error` and `reset`.
+- To place a pin, pass a thread to `useAnchorPosition` from `@better-apps/anchors/react`, or `resolveAnchor` from
+  `@better-apps/anchors/dom`.
 - Dates in core fields are `Date`s again in the store. Dates in additional fields stay ISO strings.
 
 ## Events

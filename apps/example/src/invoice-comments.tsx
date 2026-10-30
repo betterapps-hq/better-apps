@@ -1,7 +1,7 @@
+import { elementAnchorFor } from "@better-apps/anchors/dom"
+import { useAnchorPosition } from "@better-apps/anchors/react"
 import {
-  elementAnchorFor,
   textFormat,
-  useAnchorPosition,
   useCreateThread,
   useDeleteComment,
   useReopenThread,

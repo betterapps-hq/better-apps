@@ -5,29 +5,17 @@
 ```ts
 
 import type { Actor } from 'better-apps';
+import type { AnchorKind } from '@better-apps/anchors';
 import type { Author } from 'better-apps';
 import type { BetterApp } from 'better-apps';
 import { BetterAppsClient } from 'better-apps/client';
 import { CallOptions } from 'better-apps/client';
 import type { FieldAttribute } from 'better-apps';
 import type { IdentityUser } from 'better-apps';
-import { RefObject } from 'react';
 import { Serialized } from 'better-apps/client';
 import type { StandardSchemaV1 } from 'better-apps';
 import { Store } from 'better-apps/client';
 import type { SubjectArgs } from 'better-apps';
-
-// @public
-export type AnchorResolution = {
-    status: "attached" | "outdated";
-    element: Element;
-    x: number;
-    y: number;
-}
-/** The spot isn't on this page, so the UI lists the thread separately rather than losing it. */
-| {
-    status: "detached";
-};
 
 // Warning: (ae-forgotten-export) The symbol "CommentsFeatureOf" needs to be exported by the entry point react.d.ts
 // Warning: (ae-forgotten-export) The symbol "TypesOf" needs to be exported by the entry point react.d.ts
@@ -75,14 +63,6 @@ export function createCommentsClient<App = BetterApp>(client: BetterAppsClient<A
 // @public
 export type DehydratedComments = Serialized<CommentsState>;
 
-// Warning: (ae-forgotten-export) The symbol "ElementAnchor" needs to be exported by the entry point react.d.ts
-//
-// @public
-export function elementAnchorFor(element: Element, root: Element, point?: {
-    clientX: number;
-    clientY: number;
-}): ElementAnchor;
-
 // @public
 export function isUlid(value: unknown): value is string;
 
@@ -114,14 +94,6 @@ export interface Mutation<Input, Output> {
     // (undocumented)
     status: "idle" | "pending" | "success" | "error";
 }
-
-// Warning: (ae-forgotten-export) The symbol "AnchoredThread" needs to be exported by the entry point react.d.ts
-//
-// @public
-export function resolveAnchor(thread: AnchoredThread, root: Element, version?: string | null): AnchorResolution | null;
-
-// @public
-export function selectorFor(element: Element, root: Element): string;
 
 // @public
 export interface Subject<SubjectType extends string = string> {
@@ -188,13 +160,6 @@ export interface ThreadsResult<Thread> {
 
 // @public
 export function ulid(time?: number): string;
-
-// @public
-export function useAnchorPosition(thread: {
-    anchorKind: string | null;
-    anchor: unknown;
-    anchorVersion: string | null;
-} | undefined, root: RefObject<Element | null>, version?: string | null): AnchorResolution | null;
 
 // @public
 export function useComments<App = BetterApp>(): {
@@ -312,18 +277,18 @@ export const useUpdateThread: () => Mutation<UpdateThreadInput<TypesOf<CommentsO
 
 // Warnings were encountered during analysis:
 //
-// dist/client.d.ts:15:5 - (ae-forgotten-export) The symbol "CommentsOptions" needs to be exported by the entry point react.d.ts
-// dist/react.d.ts:20:5 - (ae-forgotten-export) The symbol "CreateThreadInput" needs to be exported by the entry point react.d.ts
-// dist/react.d.ts:25:5 - (ae-forgotten-export) The symbol "ReplyInput" needs to be exported by the entry point react.d.ts
-// dist/react.d.ts:30:5 - (ae-forgotten-export) The symbol "EditCommentInput" needs to be exported by the entry point react.d.ts
-// dist/react.d.ts:34:5 - (ae-forgotten-export) The symbol "CommentTarget" needs to be exported by the entry point react.d.ts
-// dist/react.d.ts:38:5 - (ae-forgotten-export) The symbol "ThreadTarget" needs to be exported by the entry point react.d.ts
-// dist/react.d.ts:40:5 - (ae-forgotten-export) The symbol "UpdateThreadInput" needs to be exported by the entry point react.d.ts
-// dist/react.d.ts:41:5 - (ae-forgotten-export) The symbol "UpdateAnchorInput" needs to be exported by the entry point react.d.ts
-// dist/react.d.ts:45:5 - (ae-forgotten-export) The symbol "SuggestMentionsInput" needs to be exported by the entry point react.d.ts
-// dist/react.d.ts:46:5 - (ae-forgotten-export) The symbol "ClientEvent" needs to be exported by the entry point react.d.ts
-// dist/react.d.ts:68:5 - (ae-forgotten-export) The symbol "ThreadOf" needs to be exported by the entry point react.d.ts
-// dist/react.d.ts:69:5 - (ae-forgotten-export) The symbol "MessageOf" needs to be exported by the entry point react.d.ts
+// dist/client.d.ts:14:5 - (ae-forgotten-export) The symbol "CommentsOptions" needs to be exported by the entry point react.d.ts
+// dist/react.d.ts:18:5 - (ae-forgotten-export) The symbol "CreateThreadInput" needs to be exported by the entry point react.d.ts
+// dist/react.d.ts:23:5 - (ae-forgotten-export) The symbol "ReplyInput" needs to be exported by the entry point react.d.ts
+// dist/react.d.ts:28:5 - (ae-forgotten-export) The symbol "EditCommentInput" needs to be exported by the entry point react.d.ts
+// dist/react.d.ts:32:5 - (ae-forgotten-export) The symbol "CommentTarget" needs to be exported by the entry point react.d.ts
+// dist/react.d.ts:36:5 - (ae-forgotten-export) The symbol "ThreadTarget" needs to be exported by the entry point react.d.ts
+// dist/react.d.ts:38:5 - (ae-forgotten-export) The symbol "UpdateThreadInput" needs to be exported by the entry point react.d.ts
+// dist/react.d.ts:39:5 - (ae-forgotten-export) The symbol "UpdateAnchorInput" needs to be exported by the entry point react.d.ts
+// dist/react.d.ts:43:5 - (ae-forgotten-export) The symbol "SuggestMentionsInput" needs to be exported by the entry point react.d.ts
+// dist/react.d.ts:44:5 - (ae-forgotten-export) The symbol "ClientEvent" needs to be exported by the entry point react.d.ts
+// dist/react.d.ts:66:5 - (ae-forgotten-export) The symbol "ThreadOf" needs to be exported by the entry point react.d.ts
+// dist/react.d.ts:67:5 - (ae-forgotten-export) The symbol "MessageOf" needs to be exported by the entry point react.d.ts
 
 // (No @packageDocumentation comment for this package)
 

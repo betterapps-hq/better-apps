@@ -1,8 +1,9 @@
+import { elementAnchor } from "@better-apps/anchors"
 // A test app with comments on invoices, where each invoice belongs to an organization and may be locked, and on public
 // pages anyone can read. An `audit` feature records every comments event it's delivered.
 import { createTestApp, type TestUser } from "@better-apps/testing"
 import { defineFeature, type BetterAppsEvent, type EventHandler, type SubjectDefinition } from "better-apps"
-import { commentEvents, comments, CommentsError, elementAnchor, type CommentsOptions } from "../src/index.js"
+import { commentEvents, comments, CommentsError, type CommentsOptions } from "../src/index.js"
 
 export const users = [
   { id: "ada", name: "Ada Lovelace", email: "ada@acme.test", orgId: "acme", roles: ["admin"] },

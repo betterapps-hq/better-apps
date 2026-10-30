@@ -1,4 +1,5 @@
-import { comments, elementAnchor } from "@better-apps/comments"
+import { elementAnchor } from "@better-apps/anchors"
+import { comments } from "@better-apps/comments"
 import { BetterAppsError, defineAction, defineFeature, type SubjectDefinition } from "better-apps"
 import { z } from "zod"
 

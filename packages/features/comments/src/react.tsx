@@ -2,8 +2,7 @@
 import { useBetterApps, useStore } from "@better-apps/react"
 import type { BetterApp, IdentityUser } from "better-apps"
 import { BetterAppsClientError, type BetterAppsClient } from "better-apps/client"
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react"
-import { resolveAnchor, type AnchorResolution } from "./anchor-dom.js"
+import { useCallback, useEffect, useRef, useState } from "react"
 import {
   countKey,
   createCommentsClient,
@@ -274,46 +273,4 @@ export function useSuggestMentions(target: { threadId: string } | Subject) {
     [comments, targetKey]
   )
   return { suggestions, error, search }
-}
-
-/**
- * Where an anchored thread sits inside `root`, kept current as the page resizes, scrolls or changes. `version` is the
- * content version on screen; a different one marks the anchor `outdated`.
- */
-export function useAnchorPosition(
-  thread: { anchorKind: string | null; anchor: unknown; anchorVersion: string | null } | undefined,
-  root: RefObject<Element | null>,
-  version?: string | null
-): AnchorResolution | null {
-  const [resolution, setResolution] = useState<AnchorResolution | null>(null)
-  const anchorKey = thread ? JSON.stringify([thread.anchorKind, thread.anchor, thread.anchorVersion]) : ""
-  const anchored = useMemo(
-    () => (anchorKey === "" ? undefined : (JSON.parse(anchorKey) as [string | null, unknown, string | null])),
-    [anchorKey]
-  )
-  useEffect(() => {
-    const element = root.current
-    const view = element?.ownerDocument.defaultView
-    if (!anchored || !element || !view) {
-      return
-    }
-    const [anchorKind, anchor, anchorVersion] = anchored
-    const measure = () => setResolution(resolveAnchor({ anchorKind, anchor, anchorVersion }, element, version))
-    // Measured after layout, then again whenever the page resizes, scrolls or changes.
-    const frame = view.requestAnimationFrame(measure)
-    const resized = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure)
-    resized?.observe(element)
-    const changed = typeof MutationObserver === "undefined" ? null : new MutationObserver(measure)
-    changed?.observe(element, { childList: true, subtree: true, attributes: true })
-    view.addEventListener("resize", measure)
-    view.addEventListener("scroll", measure, true)
-    return () => {
-      view.cancelAnimationFrame(frame)
-      resized?.disconnect()
-      changed?.disconnect()
-      view.removeEventListener("resize", measure)
-      view.removeEventListener("scroll", measure, true)
-    }
-  }, [anchored, root, version])
-  return anchored ? resolution : null
 }

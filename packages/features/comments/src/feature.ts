@@ -1,3 +1,4 @@
+import type { AnchorKind } from "@better-apps/anchors"
 import {
   defineAction,
   defineFeature,
@@ -6,7 +7,6 @@ import {
   type IdentityUser,
   type StandardSchemaV1
 } from "better-apps"
-import type { AnchorKind } from "./anchors.js"
 import { commentEvents } from "./events.js"
 import { textFormat, type BodyFormat } from "./formats.js"
 import { inputs } from "./inputs.js"

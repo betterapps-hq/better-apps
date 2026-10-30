@@ -1,5 +1,5 @@
+import type { AnchorKind } from "@better-apps/anchors"
 import type { Actor, Author, StandardSchemaV1, SubjectArgs } from "better-apps"
-import type { AnchorKind } from "./anchors.js"
 import type { BodyFormat } from "./formats.js"
 import type { AdditionalFields, CommentThread, InferFields } from "./schema.js"
 

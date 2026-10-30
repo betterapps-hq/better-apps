@@ -1,3 +1,4 @@
+import type { AnchorKind } from "@better-apps/anchors"
 import {
   BetterAppsError,
   type ActionContext,
@@ -7,7 +8,6 @@ import {
   type StandardSchemaV1
 } from "better-apps"
 import { accessTo, mentionable, nothing, orgOf, subjectOf, type Access, type Caller } from "./access.js"
-import type { AnchorKind } from "./anchors.js"
 import { CommentsError } from "./errors.js"
 import type { BodyFormat } from "./formats.js"
 import type { BeforeHooks, CommentRules, HookArgs } from "./options.js"

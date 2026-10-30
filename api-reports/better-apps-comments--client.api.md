@@ -5,6 +5,7 @@
 ```ts
 
 import type { Actor } from 'better-apps';
+import type { AnchorKind } from '@better-apps/anchors';
 import type { Author } from 'better-apps';
 import type { BetterApp } from 'better-apps';
 import { BetterAppsClient } from 'better-apps/client';
@@ -15,18 +16,6 @@ import { Serialized } from 'better-apps/client';
 import type { StandardSchemaV1 } from 'better-apps';
 import { Store } from 'better-apps/client';
 import type { SubjectArgs } from 'better-apps';
-
-// @public
-export type AnchorResolution = {
-    status: "attached" | "outdated";
-    element: Element;
-    x: number;
-    y: number;
-}
-/** The spot isn't on this page, so the UI lists the thread separately rather than losing it. */
-| {
-    status: "detached";
-};
 
 // Warning: (ae-forgotten-export) The symbol "CommentsFeatureOf" needs to be exported by the entry point client.d.ts
 // Warning: (ae-forgotten-export) The symbol "TypesOf" needs to be exported by the entry point client.d.ts
@@ -74,14 +63,6 @@ export function createCommentsClient<App = BetterApp>(client: BetterAppsClient<A
 // @public
 export type DehydratedComments = Serialized<CommentsState>;
 
-// Warning: (ae-forgotten-export) The symbol "ElementAnchor" needs to be exported by the entry point client.d.ts
-//
-// @public
-export function elementAnchorFor(element: Element, root: Element, point?: {
-    clientX: number;
-    clientY: number;
-}): ElementAnchor;
-
 // @public
 export function isUlid(value: unknown): value is string;
 
@@ -101,14 +82,6 @@ export type LoadState = "idle" | "loading" | "ready" | "error";
 
 // @public
 export function mentionToken(userId: string): string;
-
-// Warning: (ae-forgotten-export) The symbol "AnchoredThread" needs to be exported by the entry point client.d.ts
-//
-// @public
-export function resolveAnchor(thread: AnchoredThread, root: Element, version?: string | null): AnchorResolution | null;
-
-// @public
-export function selectorFor(element: Element, root: Element): string;
 
 // @public
 export interface Subject<SubjectType extends string = string> {
@@ -160,7 +133,7 @@ export function ulid(time?: number): string;
 
 // Warnings were encountered during analysis:
 //
-// dist/client.d.ts:15:5 - (ae-forgotten-export) The symbol "CommentsOptions" needs to be exported by the entry point client.d.ts
+// dist/client.d.ts:14:5 - (ae-forgotten-export) The symbol "CommentsOptions" needs to be exported by the entry point client.d.ts
 
 // (No @packageDocumentation comment for this package)
 

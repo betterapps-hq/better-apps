@@ -6,6 +6,7 @@
 
 import { ActionDefinition } from 'better-apps';
 import { Actor } from 'better-apps';
+import type { AnchorKind } from '@better-apps/anchors';
 import type { Author } from 'better-apps';
 import { BetterAppsError } from 'better-apps';
 import { BetterAppsEvent } from 'better-apps';
@@ -24,13 +25,6 @@ export interface AdditionalFields {
     comment?: Readonly<Record<string, FieldAttribute>> | undefined;
     // (undocumented)
     thread?: Readonly<Record<string, FieldAttribute>> | undefined;
-}
-
-// @public
-export interface AnchorKind<Kind extends string = string, Value = unknown> {
-    // (undocumented)
-    kind: Kind;
-    schema: StandardSchemaV1<unknown, Value>;
 }
 
 // @public
@@ -469,31 +463,12 @@ export type CreateThreadInput<Types extends CommentsTypes = CommentsTypes> = Typ
 };
 
 // @public
-export function defineAnchor<const Kind extends string, Value>(anchor: AnchorKind<Kind, Value>): AnchorKind<Kind, Value>;
-
-// @public
 export function defineFormat<const Name extends string, Body>(format: BodyFormat<Name, Body>): BodyFormat<Name, Body>;
 
 // @public
 export type EditCommentInput<Types extends CommentsTypes = CommentsTypes> = Types["content"] & {
     commentId: string;
 };
-
-// @public
-export interface ElementAnchor {
-    offset?: {
-        x: number;
-        y: number;
-    } | undefined;
-    selector: string;
-    viewport?: {
-        width: number;
-        height: number;
-    } | undefined;
-}
-
-// @public
-export function elementAnchor(): AnchorKind<"element", ElementAnchor>;
 
 // @public
 export interface GetThreadInput {
@@ -520,9 +495,6 @@ export interface HookArgs<Input> {
 export type InferFields<Fields> = {
     -readonly [Name in keyof Fields]: Fields[Name] extends FieldAttribute ? Fields[Name]["required"] extends false ? FieldValueOf<Fields[Name]> | null : FieldValueOf<Fields[Name]> : never;
 };
-
-// @public
-export function isSafeSelector(selector: string): boolean;
 
 // @public
 export function isUlid(value: unknown): value is string;
