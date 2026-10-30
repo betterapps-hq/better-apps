@@ -163,11 +163,12 @@ The Better Apps Vite plugin builds the manifest during `vite build`:
 
 ## 4. Choosing the backend
 
-- **Mechanism:** each capability package imports its backend through one internal specifier (`#adapter`), mapped by
-  custom export conditions in its `package.json`. The build plugin adds the chosen backend's condition, for example
-  `better-apps-cloudflare`, to Vite's `resolve.conditions`. The default condition is the local adapter. [U: untested]
-- **The deploy service picks the backend.** `better-apps deploy` asks the service which backend each environment uses
-  and builds with it. Each environment builds separately anyway (D3). In v1 the answer is always Cloudflare.
+- **Mechanism:** each capability defaults to its Cloudflare adapter, which finds bindings by names derived from the
+  declaration, such as `STORAGE_AVATARS` for `defineBucket("avatars")`. Apps override any capability in one place with
+  `configureBackends` from `better-apps`. See [better-apps-storage-realtime.md](better-apps-storage-realtime.md) §5.
+- **The deploy service picks the backend.** In v1 the answer is always Cloudflare, so it deploys with the derived
+  binding names and writes no wiring. A second cloud would have it write a `configureBackends` call for that cloud's
+  adapters. Each environment builds separately anyway (D3).
 - **Local dev runs the Cloudflare adapters on Cloudflare's local runtime,** through the Cloudflare Vite plugin. The
   Better Apps integration adds that plugin and configures it from the declarations, so dev matches production. Local
   adapters (in memory, SQLite, the filesystem) cover unit tests and machines without that runtime. [U: whether the
@@ -264,8 +265,9 @@ A second cloud is a new adapter set in Better Apps, plus support in the deploy s
 3. **Capabilities (D5):**
    - How Better Apps' schema layer (forked from Better Auth's) feeds `@better-apps/sql` migrations, and how a feature
      reaches the app's `main` database through its handle (rule 4) instead of declaring its own.
-   - Durable Object classes must be exported from the Worker entry. The integration would generate an entry that
-     re-exports Start's server entry plus one class per room [U].
+   - Durable Object classes: answered in [better-apps-storage-realtime.md](better-apps-storage-realtime.md) §6. Each
+     room gets its own class, `roomDurableObject(room)`, exported from the Worker entry; the integration generates those
+     exports, bindings and migrations from the manifest.
    - Dev discovery: restarting on a new declaration, and inline bindings for the Cloudflare Vite plugin (§6 #2).
    - Custom domains through Cloudflare for SaaS, and usage metering for billing: not researched.
    - Package and function names (`@better-apps/sql`, `defineDatabase` and the rest) aren't settled.

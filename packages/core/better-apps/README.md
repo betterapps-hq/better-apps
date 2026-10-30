@@ -173,6 +173,23 @@ await client.notes.add({ text: "Hi" })
 - Events nobody subscribes to aren't written. The outbox table, `betterAppsEvent`, is generated only when a feature
   subscribes to events.
 
+## Backends
+
+Capability packages, such as [`@better-apps/storage`](../storage/README.md), declare cloud resources in code and run
+them through adapters. Each uses its Cloudflare adapter unless the app chooses another, once, in a server module its
+server entry imports:
+
+```ts
+import { memoryStorage } from "@better-apps/storage/local"
+import { configureBackends } from "better-apps"
+
+configureBackends({ storage: { adapter: memoryStorage() } })
+```
+
+- Each call merges into the current choice. A capability left out keeps its adapter, and one set to `undefined` goes
+  back to Cloudflare's.
+- Capability packages add their key to the `Backends` interface, and read it with `getBackend`.
+
 ## Tables
 
 - Several features can extend the same table. Later fields win, and indexes are merged.
