@@ -1,14 +1,5 @@
 import type { Actor, BetterAppsEvent, IdentityUser, Where } from "better-apps"
-import {
-  accessTo,
-  canViewMany,
-  canViewThread as canView,
-  mentionable,
-  orgOf,
-  requireView,
-  subjectOf,
-  visibleTo
-} from "./access.js"
+import { accessTo, canViewThread as canView, mentionable, orgOf, requireView, subjectOf, visibleTo } from "./access.js"
 import { limits } from "./content.js"
 import { decodeCursor, encodeCursor } from "./cursor.js"
 import { CommentsError } from "./errors.js"
@@ -72,17 +63,18 @@ export async function listThreads(config: Config, context: Context): Promise<Thr
     limit?: number | undefined
   }
   const { subjectType, subjectId } = input
-  const subject = subjectOf(config.subjects, subjectType)
+  const rules = subjectOf(config.subjects, subjectType)
   const caller = callerOf(context)
-  const access = await accessTo(subject, caller, subjectType, subjectId, "default")
+  const ref = { subjectType, subjectId }
+  const access = await accessTo(rules, context.subjects, caller, ref, "default")
   let visibilities: string[] = ["default"]
   if (caller.trusted) {
-    visibilities = ["default", ...Object.keys(subject.visibility ?? {})]
+    visibilities = ["default", ...Object.keys(rules.visibility ?? {})]
   } else if (caller.actor && access.view) {
-    visibilities = await visibleTo(subject, { actor: caller.actor, subjectType, subjectId })
+    visibilities = await visibleTo(rules, { actor: caller.actor, subjectType, subjectId })
   }
-  requireView(access, subject, caller)
-  const orgId = await orgOf(subject, caller, subjectType, subjectId)
+  requireView(access)
+  const orgId = await orgOf(context.subjects, caller, ref)
   const where: Where[] = [
     { field: "orgId", value: orgId },
     { field: "subjectType", value: subjectType },
@@ -133,8 +125,8 @@ export async function listThreads(config: Config, context: Context): Promise<Thr
 export async function getThread(config: Config, context: Context): Promise<ThreadWithComments> {
   const input = context.input as { threadId: string; cursor?: string | undefined; limit?: number | undefined }
   const thread = await loadThread(context, input.threadId)
-  const { subject, caller, access } = await threadAccess(config, context, thread)
-  requireView(access, subject, caller)
+  const { caller, access } = await threadAccess(config, context, thread)
+  requireView(access)
   const limit = pageSize(input.limit, limits.commentsPerPage)
   const after = input.cursor === undefined ? undefined : decodeCursor(input.cursor)
   const rows = await context.db.findMany<Comment>({
@@ -168,35 +160,29 @@ export async function countThreads(
 ): Promise<Record<string, { open: number; total: number }>> {
   const input = context.input as { subjectType: string; subjectIds: string[]; status?: "open" | "resolved" | undefined }
   const { subjectType } = input
-  const subject = subjectOf(config.subjects, subjectType)
+  const rules = subjectOf(config.subjects, subjectType)
   const caller = callerOf(context)
   const subjectIds = [...new Set(input.subjectIds)]
   const { actor } = caller
-  let allowed: readonly boolean[]
-  if (caller.trusted) {
-    allowed = subjectIds.map(() => true)
-  } else if (actor) {
-    allowed = await canViewMany(
-      subject,
-      subjectIds.map((subjectId) => ({ actor, subjectType, subjectId }))
-    )
-  } else if (subject.publicRead) {
-    allowed = subjectIds.map(() => true)
-  } else {
-    throw new CommentsError("UNAUTHENTICATED", "Sign in to see these comments.")
+  let allowed: readonly boolean[] = subjectIds.map(() => true)
+  if (!caller.trusted) {
+    allowed = await context.subjects.canViewMany(subjectIds.map((subjectId) => ({ actor, subjectType, subjectId })))
+    if (!actor && !allowed.includes(true)) {
+      throw new CommentsError("UNAUTHENTICATED", "Sign in to see these comments.")
+    }
   }
   const viewable = subjectIds.filter((_, index) => allowed[index])
-  const allVisibilities = ["default", ...Object.keys(subject.visibility ?? {})]
+  const allVisibilities = ["default", ...Object.keys(rules.visibility ?? {})]
   const visibleOn = async (subjectId: string) => {
     if (caller.trusted) {
       return allVisibilities
     }
-    return actor ? visibleTo(subject, { actor, subjectType, subjectId }) : ["default"]
+    return actor ? visibleTo(rules, { actor, subjectType, subjectId }) : ["default"]
   }
   const details = await Promise.all(
     viewable.map(async (subjectId) => ({
       subjectId,
-      orgId: await orgOf(subject, caller, subjectType, subjectId),
+      orgId: await orgOf(context.subjects, caller, { subjectType, subjectId }),
       visible: new Set(await visibleOn(subjectId))
     }))
   )
@@ -239,12 +225,12 @@ export async function suggestMentions(config: Config, context: Context): Promise
   } else {
     const subjectType = input.subjectType as string
     const subjectId = input.subjectId as string
-    const subject = subjectOf(config.subjects, subjectType)
+    subjectOf(config.subjects, subjectType)
     const now = context.now
     // Suggestions for a new thread are checked as if it were a default thread on the subject.
     thread = {
       id: "",
-      orgId: await orgOf(subject, callerOf(context), subjectType, subjectId),
+      orgId: await orgOf(context.subjects, callerOf(context), { subjectType, subjectId }),
       subjectType,
       subjectId,
       visibility: "default",
@@ -261,8 +247,8 @@ export async function suggestMentions(config: Config, context: Context): Promise
       metadata: null
     }
   }
-  const { subject, caller, access } = await threadAccess(config, context, thread)
-  requireView(access, subject, caller)
+  const { access } = await threadAccess(config, context, thread)
+  requireView(access)
   forbid(access.comment, "You can't comment here.")
   const { searchUsers } = context.identity
   if (!searchUsers) {
@@ -275,7 +261,9 @@ export async function suggestMentions(config: Config, context: Context): Promise
     found.map((user) => user.id),
     orgId
   )
-  const allowed = new Set((await mentionable(subject, actors, thread)).map((actor) => actor.userId))
+  const allowed = new Set(
+    (await mentionable(config.subjects, context.subjects, actors, thread)).map((actor) => actor.userId)
+  )
   return found.filter((user) => allowed.has(user.id)).slice(0, limits.suggestions)
 }
 
@@ -288,12 +276,7 @@ export async function canViewThread(config: Config, context: Context): Promise<b
       model: threadModel,
       where: [{ field: "id", value: input.threadId ?? "" }]
     }))
-  if (!thread || !Object.hasOwn(config.subjects, thread.subjectType)) {
-    return false
-  }
-  const subject = subjectOf(config.subjects, thread.subjectType)
-  const orgId = await orgOf(subject, { actor: input.actor, trusted: false }, thread.subjectType, thread.subjectId)
-  return canView(subject, input.actor, thread, orgId)
+  return thread ? canView(config.subjects, context.subjects, input.actor, thread) : false
 }
 
 /** An event a browser may see, from `toClientEvent`. */
@@ -339,12 +322,7 @@ export async function toClientEvent(config: Config, context: Context): Promise<C
   if (event.type === "comment.mentioned" && viewer?.userId !== data.userId) {
     return null
   }
-  if (!Object.hasOwn(config.subjects, data.thread.subjectType)) {
-    return null
-  }
-  const subject = subjectOf(config.subjects, data.thread.subjectType)
-  const orgId = await orgOf(subject, { actor: viewer, trusted: false }, data.thread.subjectType, data.thread.subjectId)
-  if (!(await canView(subject, viewer, data.thread, orgId))) {
+  if (!(await canView(config.subjects, context.subjects, viewer, data.thread))) {
     return null
   }
   const thread = viewer ? data.thread : publicThread(data.thread)

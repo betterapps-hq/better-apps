@@ -1,6 +1,6 @@
-import type { Actor } from "better-apps"
+import type { Actor, SubjectArgs, SubjectRef, Subjects } from "better-apps"
 import { CommentsError } from "./errors.js"
-import type { SubjectArgs, SubjectType } from "./options.js"
+import type { CommentRules } from "./options.js"
 import type { CommentThread } from "./schema.js"
 
 /** What a caller may do with a subject's threads in one visibility. */
@@ -8,6 +8,8 @@ export interface Access {
   view: boolean
   comment: boolean
   moderate: boolean
+  /** Whether the caller is signed out and the subject isn't public, so signing in might help. */
+  signInMayHelp: boolean
 }
 
 /** Who a call acts as. Server code that names no actor is trusted, so access checks pass. */
@@ -16,48 +18,42 @@ export interface Caller {
   trusted: boolean
 }
 
-const everything: Access = { view: true, comment: true, moderate: true }
-const nothing: Access = { view: false, comment: false, moderate: false }
+const everything: Access = { view: true, comment: true, moderate: true, signInMayHelp: false }
 
-/** The subject type registered under a name, or `INVALID_INPUT`. */
-export function subjectOf(subjects: Readonly<Record<string, SubjectType>>, subjectType: string): SubjectType {
-  if (!Object.hasOwn(subjects, subjectType)) {
+/** Access that allows nothing. */
+export const nothing: Access = { view: false, comment: false, moderate: false, signInMayHelp: false }
+
+/** The comment rules registered for a subject type, or `INVALID_INPUT`. */
+export function subjectOf(rules: Readonly<Record<string, CommentRules>>, subjectType: string): CommentRules {
+  if (!Object.hasOwn(rules, subjectType)) {
     throw new CommentsError("INVALID_INPUT", `Comments aren't set up for the "${subjectType}" subject type.`)
   }
-  return subjects[subjectType] as SubjectType
+  return rules[subjectType] as CommentRules
 }
 
 /** The organization that owns a subject, or `""` when the app has none. */
-export async function orgOf(subject: SubjectType, caller: Caller, subjectType: string, subjectId: string) {
-  if (!subject.getOrgId) {
-    if (caller.actor && caller.actor.orgId !== null) {
-      throw new Error(
-        `The "${subjectType}" subject type needs getOrgId, because the identity adapter reports organizations.`
-      )
-    }
-    return ""
-  }
-  return (await subject.getOrgId({ subjectType, subjectId })) ?? ""
+export async function orgOf(subjects: Subjects, caller: Caller, ref: SubjectRef): Promise<string> {
+  return (await subjects.getOrgId(ref, caller.actor)) ?? ""
 }
 
 /** Whether a visibility is `default` or one the subject type declares. */
-export function isDeclaredVisibility(subject: SubjectType, visibility: string): boolean {
-  return visibility === "default" || (subject.visibility !== undefined && Object.hasOwn(subject.visibility, visibility))
+export function isDeclaredVisibility(rules: CommentRules, visibility: string): boolean {
+  return visibility === "default" || (rules.visibility !== undefined && Object.hasOwn(rules.visibility, visibility))
 }
 
 /** The visibilities an actor can see on a subject, `default` first. */
-export async function visibleTo(subject: SubjectType, args: SubjectArgs): Promise<string[]> {
-  const declared = Object.entries(subject.visibility ?? {})
+export async function visibleTo(rules: CommentRules, args: SubjectArgs): Promise<string[]> {
+  const declared = Object.entries(rules.visibility ?? {})
   const passed = await Promise.all(declared.map(async ([, check]) => check(args)))
   return ["default", ...declared.flatMap(([name], index) => (passed[index] ? [name] : []))]
 }
 
 /** What a caller may do with the threads of a subject in one visibility. */
 export async function accessTo(
-  subject: SubjectType,
+  rules: CommentRules,
+  subjects: Subjects,
   caller: Caller,
-  subjectType: string,
-  subjectId: string,
+  ref: SubjectRef,
   visibility: string
 ): Promise<Access> {
   if (caller.trusted) {
@@ -65,58 +61,91 @@ export async function accessTo(
   }
   const { actor } = caller
   if (!actor) {
-    return { ...nothing, view: subject.publicRead === true && visibility === "default" }
+    const isPublic = await subjects.isPublic(ref)
+    return { ...nothing, view: isPublic && visibility === "default", signInMayHelp: !isPublic }
   }
-  const args = { actor, subjectType, subjectId }
-  const check = visibility === "default" ? undefined : subject.visibility?.[visibility]
-  const [view, visible] = await Promise.all([subject.canView(args), check ? check(args) : visibility === "default"])
+  const args = { actor, ...ref }
+  const check = visibility === "default" ? undefined : rules.visibility?.[visibility]
+  const [view, visible] = await Promise.all([
+    subjects.canView(actor, ref),
+    check ? check(args) : visibility === "default"
+  ])
   if (!view || !visible) {
     return nothing
   }
-  const [comment, moderate] = await Promise.all([subject.canComment(args), subject.canModerate?.(args) ?? false])
-  return { view: true, comment, moderate }
+  const [comment, moderate] = await Promise.all([rules.canComment(args), rules.canModerate?.(args) ?? false])
+  return { view: true, comment, moderate, signInMayHelp: false }
 }
 
 /** Refuses a read the caller can't make: `UNAUTHENTICATED` when signing in might help, else `NOT_FOUND`. */
-export function requireView(access: Access, subject: SubjectType, caller: Caller): void {
+export function requireView(access: Access): void {
   if (!access.view) {
-    throw caller.actor === null && !caller.trusted && !subject.publicRead
+    throw access.signInMayHelp
       ? new CommentsError("UNAUTHENTICATED", "Sign in to see these comments.")
       : new CommentsError("NOT_FOUND", "That thread doesn't exist, or you can't see it.")
   }
 }
 
-/** `canView` for many pairs, through `canViewMany` when the subject type has it. */
-export async function canViewMany(subject: SubjectType, pairs: readonly SubjectArgs[]): Promise<readonly boolean[]> {
-  if (pairs.length === 0) {
-    return []
+/**
+ * The one rule for whether people can see threads: a thread's organization must be its subject's current one, the
+ * viewer must be able to see the subject, and must pass the thread's visibility check. Reads, mentions, notifications
+ * and live updates all use it. Each subject's `canViewMany` runs once.
+ */
+export async function canViewThreads(
+  rules: Readonly<Record<string, CommentRules>>,
+  subjects: Subjects,
+  pairs: readonly { actor: Actor | null; thread: CommentThread }[]
+): Promise<boolean[]> {
+  // Threads on a subject type comments are no longer set up for can't be seen.
+  const known = pairs.map(({ thread }) => Object.hasOwn(rules, thread.subjectType) && subjects.has(thread.subjectType))
+  const orgs = new Map<string, Promise<string>>()
+  const orgOfThread = async (actor: Actor | null, { subjectType, subjectId }: CommentThread) => {
+    const key = JSON.stringify([subjectType, subjectId])
+    const org = orgs.get(key) ?? orgOf(subjects, { actor, trusted: false }, { subjectType, subjectId })
+    orgs.set(key, org)
+    return org
   }
-  return subject.canViewMany
-    ? subject.canViewMany(pairs)
-    : Promise.all(pairs.map(async (pair) => subject.canView(pair)))
+  const sameOrg = await Promise.all(
+    pairs.map(async ({ actor, thread }, index) => known[index] && (await orgOfThread(actor, thread)) === thread.orgId)
+  )
+  const candidates = pairs.flatMap((pair, index) => (sameOrg[index] ? [index] : []))
+  const viewers = await subjects.canViewMany(
+    candidates.map((index) => {
+      const { actor, thread } = pairs[index] as (typeof pairs)[number]
+      return { actor, subjectType: thread.subjectType, subjectId: thread.subjectId }
+    })
+  )
+  const allowed = pairs.map(() => false)
+  await Promise.all(
+    candidates.map(async (index, position) => {
+      const { actor, thread } = pairs[index] as (typeof pairs)[number]
+      if (!viewers[position]) {
+        return
+      }
+      if (thread.visibility === "default") {
+        allowed[index] = true
+        return
+      }
+      const declared = rules[thread.subjectType]?.visibility ?? {}
+      const check = Object.hasOwn(declared, thread.visibility) ? declared[thread.visibility] : undefined
+      allowed[index] =
+        actor !== null &&
+        check !== undefined &&
+        Boolean(await check({ actor, subjectType: thread.subjectType, subjectId: thread.subjectId }))
+    })
+  )
+  return allowed
 }
 
-/**
- * The one rule for whether someone can see a thread: its organization must be its subject's, `canView` must pass, and
- * the actor must pass the thread's visibility check. Reads, mentions, notifications and live updates all use it.
- */
+/** Whether someone can see a thread, by the rule `canViewThreads` applies. */
 export async function canViewThread(
-  subject: SubjectType,
+  rules: Readonly<Record<string, CommentRules>>,
+  subjects: Subjects,
   actor: Actor | null,
-  thread: CommentThread,
-  subjectOrgId: string
+  thread: CommentThread
 ): Promise<boolean> {
-  if (thread.orgId !== subjectOrgId) {
-    return false
-  }
-  const access = await accessTo(
-    subject,
-    { actor, trusted: false },
-    thread.subjectType,
-    thread.subjectId,
-    thread.visibility
-  )
-  return access.view
+  const [allowed] = await canViewThreads(rules, subjects, [{ actor, thread }])
+  return allowed === true
 }
 
 /**
@@ -124,24 +153,20 @@ export async function canViewThread(
  * can view the thread, checked with one `canViewMany` call.
  */
 export async function mentionable(
-  subject: SubjectType,
+  rules: Readonly<Record<string, CommentRules>>,
+  subjects: Subjects,
   actors: readonly Actor[],
   thread: CommentThread
 ): Promise<Actor[]> {
-  if (subject.canMention) {
-    const allowed = await Promise.all(actors.map(async (actor) => subject.canMention?.({ actor, thread })))
+  const { canMention } = subjectOf(rules, thread.subjectType)
+  if (canMention) {
+    const allowed = await Promise.all(actors.map(async (actor) => canMention({ actor, thread })))
     return actors.filter((_, index) => allowed[index])
   }
-  const { subjectType, subjectId, visibility } = thread
-  const viewers = await canViewMany(
-    subject,
-    actors.map((actor) => ({ actor, subjectType, subjectId }))
+  const allowed = await canViewThreads(
+    rules,
+    subjects,
+    actors.map((actor) => ({ actor, thread }))
   )
-  const check = visibility === "default" ? undefined : subject.visibility?.[visibility]
-  const candidates = actors.filter((_, index) => viewers[index])
-  if (!check) {
-    return visibility === "default" ? candidates : []
-  }
-  const visible = await Promise.all(candidates.map(async (actor) => check({ actor, subjectType, subjectId })))
-  return candidates.filter((_, index) => visible[index])
+  return actors.filter((_, index) => allowed[index])
 }

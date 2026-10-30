@@ -7,6 +7,7 @@ import type { Actor, Author, Identity } from "./identity.js"
 import type { BetterAppsOptions } from "./options.js"
 import { createOutbox, type DeliverOptions, type DeliveryReport, type ErrorContext } from "./outbox.js"
 import type { StandardSchemaV1 } from "./standard-schema.js"
+import { createSubjects, type SubjectDefinition, type Subjects } from "./subjects.js"
 
 /** Options for `createBetterApps`. */
 export interface CreateBetterAppsOptions<
@@ -15,6 +16,11 @@ export interface CreateBetterAppsOptions<
   features: Features
   /** Reads the signed-in user, such as `localIdentity()` or a provider's adapter. */
   identity: Identity
+  /**
+   * The kinds of records features attach things to, such as `invoice`, keyed by name, with who can see them. Features
+   * that attach to records check these rules, so each subject type is declared once for all of them.
+   */
+  subjects?: Readonly<Record<string, SubjectDefinition>> | undefined
   /** The path `app.handler` is mounted on. The default is `/api/apps`. */
   basePath?: string | undefined
   /** The largest request body `app.handler` reads, in bytes. The default is 1 MiB. */
@@ -93,6 +99,8 @@ export interface BetterApp<Features extends readonly BetterAppsFeature[] = reado
   deliverEvents(options?: DeliverOptions): Promise<DeliveryReport>
   /** The database adapter, for server code and tests. */
   db: DatabaseAdapter
+  /** Who can see the app's subjects, so server code checks access the way features do. */
+  subjects: Subjects
   options: CreateBetterAppsOptions<Features>
   /** Types for the client and for subscribers. Use them with `typeof app.$Infer`; the values are empty. */
   $Infer: { Api: BetterAppsApi<Features>; Events: BetterAppsEvents<Features> }
@@ -161,6 +169,31 @@ function errorResponse(error: BetterAppsError): Response {
 const internalError = () =>
   Response.json({ error: { code: "INTERNAL_ERROR", message: "Something went wrong." } }, { status: 500 })
 
+/** The subject types the app and its features declare, checked against the ones features use. */
+function declareSubjects(options: CreateBetterAppsOptions): Map<string, SubjectDefinition> {
+  const declared = new Map(Object.entries(options.subjects ?? {}))
+  for (const feature of options.features) {
+    for (const [subjectType, subject] of Object.entries(feature.subjects ?? {})) {
+      if (declared.has(subjectType)) {
+        throw new Error(
+          `The "${feature.id}" feature declares the "${subjectType}" subject type, which is already declared.`
+        )
+      }
+      declared.set(subjectType, subject)
+    }
+  }
+  for (const feature of options.features) {
+    for (const subjectType of feature.usesSubjects ?? []) {
+      if (!declared.has(subjectType)) {
+        throw new Error(
+          `The "${feature.id}" feature uses the "${subjectType}" subject type, but nothing declares it. Add it to the app's subjects.`
+        )
+      }
+    }
+  }
+  return declared
+}
+
 /** Creates an app from a database adapter, an identity adapter and the features it enables. */
 export function createBetterApps<const Features extends readonly BetterAppsFeature[]>(
   options: CreateBetterAppsOptions<Features>
@@ -193,7 +226,8 @@ export function createBetterApps<const Features extends readonly BetterAppsFeatu
       // The runtime refused it, such as after its context ended, so the report runs on without it.
     }
   }
-  const outbox = createOutbox({ db, features, identity, onError })
+  const subjects = createSubjects(declareSubjects(options), { db, identity })
+  const outbox = createOutbox({ db, features, identity, subjects, onError })
 
   const actions = new Map<string, Map<string, { feature: BetterAppsFeature; action: ActionDefinition }>>()
   for (const feature of features) {
@@ -222,6 +256,7 @@ export function createBetterApps<const Features extends readonly BetterAppsFeatu
         actor: call.actor,
         author: call.author,
         identity,
+        subjects,
         now: call.now,
         silent: call.silent,
         source: call.source,
@@ -326,6 +361,7 @@ export function createBetterApps<const Features extends readonly BetterAppsFeatu
     handler,
     deliverEvents: outbox.deliverPending,
     db,
+    subjects,
     options,
     $Infer: {} as BetterApp<Features>["$Infer"]
   }

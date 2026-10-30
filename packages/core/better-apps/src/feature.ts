@@ -1,6 +1,7 @@
 import type { ActionDefinition } from "./action.js"
 import type { EventDefinition, EventHandler } from "./events.js"
 import type { FeatureSchema } from "./schema.js"
+import type { SubjectDefinition } from "./subjects.js"
 
 /** An app feature, such as comments or audit history: its tables, actions and events. */
 export interface BetterAppsFeature {
@@ -14,6 +15,13 @@ export interface BetterAppsFeature {
   events?: Readonly<Record<string, EventDefinition>> | undefined
   /** Handlers for other features' events, keyed by the emitting feature's id, then the event type. */
   on?: Readonly<Record<string, Readonly<Record<string, EventHandler>>>> | undefined
+  /**
+   * Subject types for the feature's own records, keyed by name, such as `comments.comment`, so other features can
+   * attach to them with the same access rules.
+   */
+  subjects?: Readonly<Record<string, SubjectDefinition>> | undefined
+  /** Subject types the feature works with. Creating the app fails when neither the app nor a feature declares one. */
+  usesSubjects?: readonly string[] | undefined
   /** The feature's configuration, kept for inference and for other features to read. */
   options?: unknown
 }

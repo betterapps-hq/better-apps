@@ -1,42 +1,22 @@
-import type { Actor, Author, StandardSchemaV1 } from "better-apps"
+import type { Actor, Author, StandardSchemaV1, SubjectArgs } from "better-apps"
 import type { AnchorKind } from "./anchors.js"
 import type { BodyFormat } from "./formats.js"
 import type { AdditionalFields, CommentThread, InferFields } from "./schema.js"
 
-/** Which subject an access check is about, and who is asking. */
-export interface SubjectArgs {
-  actor: Actor
-  subjectType: string
-  subjectId: string
-}
-
 type Check<Args> = (args: Args) => boolean | Promise<boolean>
 
 /**
- * A kind of record that can have comments, such as `invoice`. The app answers who may see and act on its threads;
- * comments enforce the answers on every action.
+ * How comments work on one subject type, such as `invoice`. Who can see a subject, and so its threads, comes from the
+ * app's subject type; these rules add who can comment, moderate and see restricted threads. Comments enforce them on
+ * every action.
  */
-export interface SubjectType {
-  /** Whether the actor can see the subject's threads. */
-  canView: Check<SubjectArgs>
+export interface CommentRules {
   /** Whether the actor can create threads, reply, and resolve or reopen threads. */
   canComment: Check<SubjectArgs>
   /** Whether the actor can delete any comment or thread, move any anchor and change a thread's visibility. Nobody, by default. */
   canModerate?: Check<SubjectArgs> | undefined
-  /**
-   * `canView` for many actor and subject pairs at once, for count badges and mention checks, in the same order. Apps
-   * whose check is a query answer it in one. The default runs `canView` for each pair, concurrently.
-   */
-  canViewMany?: ((pairs: readonly SubjectArgs[]) => readonly boolean[] | Promise<readonly boolean[]>) | undefined
-  /**
-   * The organization that owns the subject, stored on each thread so subject ids repeated across organizations never
-   * mix. Required when the identity adapter reports organizations.
-   */
-  getOrgId?: ((args: { subjectType: string; subjectId: string }) => string | null | Promise<string | null>) | undefined
   /** Extra visibilities, such as `staff`, each with a check saying who can see threads in it. */
   visibility?: Readonly<Record<string, Check<SubjectArgs>>> | undefined
-  /** Lets signed-out visitors read threads with the `default` visibility, as text with names and no user ids. */
-  publicRead?: boolean | undefined
   /** A schema that lets clients write a thread's `metadata`. Without one, only server code writes it. */
   metadata?: StandardSchemaV1<unknown, Record<string, unknown>> | undefined
   /** Whether a user can be mentioned in a thread. The default is whether they can view it. */
@@ -74,8 +54,11 @@ export interface BeforeHooks<Types extends CommentsTypes = CommentsTypes> {
 
 /** How comments are set up in an app. */
 export interface CommentsOptions {
-  /** The kinds of records that can have comments. Register at least one. */
-  subjects: Readonly<Record<string, SubjectType>>
+  /**
+   * The subject types that can have comments, keyed by name, with who can comment on each. The app declares each one in
+   * its own `subjects`, with who can see it. Register at least one.
+   */
+  subjects: Readonly<Record<string, CommentRules>>
   /** Anchor kinds threads may use. Without any, threads are always on the whole subject. */
   anchors?: readonly AnchorKind[] | undefined
   /** Body formats besides the built-in `text`. */

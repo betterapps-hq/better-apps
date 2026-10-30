@@ -1,6 +1,7 @@
 import type { DatabaseAdapter } from "./database.js"
 import type { Actor, Author, Identity } from "./identity.js"
 import type { InferSchemaInput, InferSchemaOutput, StandardSchemaV1 } from "./standard-schema.js"
+import type { Subjects } from "./subjects.js"
 
 /** What an action handler receives. */
 export interface ActionContext<Input> {
@@ -13,6 +14,8 @@ export interface ActionContext<Input> {
   /** Who the call's writes are attributed to: the actor, or an author server code names. `null` without either. */
   author: Author | null
   identity: Identity
+  /** Who can see the app's subjects, for checking access to what the action attaches to. */
+  subjects: Subjects
   /** When the call counts as happening: now, or the original time server code passes as `createdAt` for an import. */
   now: Date
   /** Whether server code asked for the call's events to be marked silent, so notifications skip them. */

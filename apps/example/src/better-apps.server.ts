@@ -4,7 +4,7 @@ import { createStartBindings } from "@better-apps/tanstack-start"
 import { createBetterApps } from "better-apps"
 import { auth } from "./auth.server"
 import { db } from "./db/database.server"
-import { features } from "./features"
+import { features, subjects } from "./features"
 
 /** Who requests act for: the person signed in with Better Auth. */
 export const identity = betterAuthIdentity(auth)
@@ -13,6 +13,7 @@ export const identity = betterAuthIdentity(auth)
 export const app = createBetterApps({
   database: drizzleAdapter(db, { provider: "sqlite" }),
   identity,
+  subjects,
   features
 })
 

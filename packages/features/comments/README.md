@@ -1,9 +1,9 @@
 # @better-apps/comments
 
 Comment threads on any record an app owns, such as an invoice, a ticket or a preview deploy, optionally pinned to a spot
-inside it. Comments store only the record's type and id; the app's callbacks say who can see and act on its threads.
-Every write is one atomic batch through [`@better-apps/drizzle`](../drizzle/README.md), on Cloudflare D1 as on any other
-SQL database.
+inside it. Comments store only the record's type and id; the app's subject types say who can see it, and the rules here
+who can comment. Every write is one atomic batch through [`@better-apps/drizzle`](../drizzle/README.md), on Cloudflare
+D1 as on any other SQL database.
 
 ## Usage
 
@@ -14,12 +14,16 @@ import { createBetterApps } from "better-apps"
 export const app = createBetterApps({
   database,
   identity,
+  subjects: {
+    invoice: {
+      getOrgId: ({ subjectId }) => invoices.orgOf(subjectId),
+      canView: ({ actor, subjectId }) => invoices.canRead(actor, subjectId)
+    }
+  },
   features: [
     comments({
       subjects: {
         invoice: {
-          getOrgId: ({ subjectId }) => invoices.orgOf(subjectId),
-          canView: ({ actor, subjectId }) => invoices.canRead(actor, subjectId),
           canComment: ({ actor, subjectId }) => invoices.canEdit(actor, subjectId),
           canModerate: ({ actor }) => actor.roles.includes("admin"),
           visibility: { staff: ({ actor }) => actor.roles.includes("staff") }
@@ -63,12 +67,15 @@ as "Former user".
 
 ## Access
 
-- Each subject type supplies `canView` and `canComment`, and optionally `canModerate`, `canViewMany`, `getOrgId`, extra
-  visibilities such as `staff`, `publicRead`, a `metadata` schema and `canMention`.
-- One rule decides whether someone can see a thread: its organization must be its subject's, `canView` must pass, and
-  the actor must pass the thread's visibility check. Reads, mentions and live updates all use it.
+- The app declares each subject type in `createBetterApps`, with `canView`, `getOrgId` and `publicRead` (see
+  [Subjects](../better-apps/README.md#subjects)). Comments add `canComment` for each, and optionally `canModerate`,
+  extra visibilities such as `staff`, a `metadata` schema and `canMention`.
+- One rule decides whether someone can see a thread: its organization must be its subject's, the subject's `canView`
+  must pass, and the actor must pass the thread's visibility check. Reads, mentions and live updates all use it.
+- Threads and comments are subject types too, `comments.thread` and `comments.comment` (`commentSubjectTypes`), so other
+  features can attach to them. Whoever can see a thread can see it and its comments.
 - `NOT_FOUND` means the caller can't see it, and `FORBIDDEN` that they can see it but can't do this. Signed-out callers
-  get `UNAUTHENTICATED`, except signed-out readers of `publicRead` subjects, who get text with names and no user ids.
+  get `UNAUTHENTICATED`, except signed-out readers of public subjects, who get text with names and no user ids.
 - Server code that passes neither an actor nor a request is trusted, so it skips access checks. It still needs an author
   to write: a user, or an external or system author with a name and an optional id.
 - Before hooks run after the access check, keyed by action. They may change the input, but not the subject or thread. A

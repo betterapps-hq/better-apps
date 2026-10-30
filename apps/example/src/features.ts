@@ -1,5 +1,5 @@
 import { comments, elementAnchor } from "@better-apps/comments"
-import { BetterAppsError, defineAction, defineFeature } from "better-apps"
+import { BetterAppsError, defineAction, defineFeature, type SubjectDefinition } from "better-apps"
 import { z } from "zod"
 
 /** A note as the home page shows it. */
@@ -71,13 +71,17 @@ const notes = defineFeature({
 const invoiceExists = async (id: string) => (await import("./invoices.server")).invoiceExists(id)
 
 /**
- * Comment threads on invoices, optionally pinned to one of an invoice's details. Anyone signed in can read and discuss
- * any invoice that exists; a real app would check the invoice's owner or organization here.
+ * The records features attach to. Anyone signed in can see any invoice that exists; a real app would check the
+ * invoice's owner or organization here.
  */
+export const subjects = {
+  invoice: { canView: ({ subjectId }) => invoiceExists(subjectId) }
+} satisfies Record<string, SubjectDefinition>
+
+/** Comment threads on invoices, optionally pinned to one of an invoice's details. Anyone who can see one can discuss it. */
 const invoiceComments = comments({
   subjects: {
     invoice: {
-      canView: ({ subjectId }) => invoiceExists(subjectId),
       canComment: ({ subjectId }) => invoiceExists(subjectId),
       canModerate: ({ actor }) => actor.roles.includes("admin")
     }

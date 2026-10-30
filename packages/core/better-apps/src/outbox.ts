@@ -2,6 +2,7 @@ import type { DatabaseAdapter, Row, WriteOperation } from "./database.js"
 import { eventModel, type BetterAppsEvent, type EventHandler } from "./events.js"
 import type { BetterAppsFeature } from "./feature.js"
 import type { Actor, Author, Identity } from "./identity.js"
+import type { Subjects } from "./subjects.js"
 
 /** How a delivery run went. */
 export interface DeliveryReport {
@@ -65,9 +66,10 @@ export function createOutbox(options: {
   db: DatabaseAdapter
   features: readonly BetterAppsFeature[]
   identity: Identity
+  subjects: Subjects
   onError: (error: unknown, context: ErrorContext, waitUntil?: WaitUntil) => void
 }) {
-  const { db, identity, onError } = options
+  const { db, identity, subjects, onError } = options
   const subscribers = new Map<string, Map<string, { feature: BetterAppsFeature; handle: EventHandler }[]>>()
   for (const feature of options.features) {
     for (const [emitter, handlers] of Object.entries(feature.on ?? {})) {
@@ -161,7 +163,7 @@ export function createOutbox(options: {
           silent: event.silent
         })
         try {
-          await handle(event, { db: scope.db, identity, emit: scope.emit })
+          await handle(event, { db: scope.db, identity, subjects, emit: scope.emit })
           await scope.flush()
         } finally {
           emitted.push(...scope.written)

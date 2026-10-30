@@ -4,11 +4,11 @@ import { checkAnchor, checkContent, checkFields, checkMetadata, stableJson, type
 import { CommentsError } from "./errors.js"
 import { inputs } from "./inputs.js"
 import type {
+  CommentRules,
   CommentTarget,
   CreateThreadInput,
   EditCommentInput,
   ReplyInput,
-  SubjectType,
   ThreadTarget,
   UpdateAnchorInput,
   UpdateThreadInput
@@ -80,9 +80,9 @@ function commentRow(
 }
 
 /** Metadata from a write, checked: server code writes any, clients only what the subject type's schema allows. */
-async function writableMetadata(context: Context, subject: SubjectType, metadata: Record<string, unknown> | null) {
-  forbid(context.source === "api" || subject.metadata !== undefined, "Only server code can write this metadata.")
-  return checkMetadata(context.source === "api" ? undefined : subject.metadata, metadata)
+async function writableMetadata(context: Context, rules: CommentRules, metadata: Record<string, unknown> | null) {
+  forbid(context.source === "api" || rules.metadata !== undefined, "Only server code can write this metadata.")
+  return checkMetadata(context.source === "api" ? undefined : rules.metadata, metadata)
 }
 
 export async function createThread(config: Config, context: Context) {
@@ -90,14 +90,15 @@ export async function createThread(config: Config, context: Context) {
   const caller = callerOf(context)
   const original = context.input as CreateThreadInput
   const { subjectType, subjectId } = original
-  const subject = subjectOf(config.subjects, subjectType)
-  const orgId = await orgOf(subject, caller, subjectType, subjectId)
+  const rules = subjectOf(config.subjects, subjectType)
+  const ref = { subjectType, subjectId }
+  const orgId = await orgOf(context.subjects, caller, ref)
   const requireAccess = async (visibility: string) => {
-    if (!isDeclaredVisibility(subject, visibility)) {
+    if (!isDeclaredVisibility(rules, visibility)) {
       throw new CommentsError("INVALID_INPUT", `The "${subjectType}" subject type has no "${visibility}" visibility.`)
     }
-    const access = await accessTo(subject, caller, subjectType, subjectId, visibility)
-    requireView(access, subject, caller)
+    const access = await accessTo(rules, context.subjects, caller, ref, visibility)
+    requireView(access)
     forbid(access.comment, "You can't comment here.")
     return access
   }
@@ -119,7 +120,7 @@ export async function createThread(config: Config, context: Context) {
   const metadata =
     input.metadata === null || input.metadata === undefined
       ? null
-      : await writableMetadata(context, subject, input.metadata)
+      : await writableMetadata(context, rules, input.metadata)
   const anchor = await checkAnchor(config.anchors, input.anchor)
   const content = await checkContent(config.formats, input.format, input.body)
   const authorId = authorIdOf(author)
@@ -184,7 +185,7 @@ export async function createThread(config: Config, context: Context) {
     ...fields
   }
   const comment = commentRow(commentId, thread, author, content, now, commentFields)
-  const mentions = await checkMentions(context, subject, thread, content.mentions, authorId)
+  const mentions = await checkMentions(config, context, thread, content.mentions, authorId)
   context.emit("thread.created", { ...eventData(thread), comment })
   context.emit("comment.created", { ...eventData(thread), comment })
   emitMentions(context, thread, comment, mentions.allowed)
@@ -212,8 +213,8 @@ export async function reply(config: Config, context: Context) {
   const author = requireAuthor(context)
   const original = context.input as ReplyInput
   const thread = await loadThread(context, original.threadId)
-  const { subject, caller, access } = await threadAccess(config, context, thread)
-  requireView(access, subject, caller)
+  const { access } = await threadAccess(config, context, thread)
+  requireView(access)
   forbid(access.comment, "You can't reply here.")
   const hookArgs = { actor: context.actor, author, thread }
   const input = {
@@ -255,7 +256,7 @@ export async function reply(config: Config, context: Context) {
   const reopened = reopens ? { status: "open" as const, resolvedAt: null, resolvedBy: null } : {}
   const updated: CommentThread = { ...thread, ...reopened, commentCount: thread.commentCount + 1, lastActivityAt }
   const comment = commentRow(id, thread, author, content, now, fields)
-  const mentions = await checkMentions(context, subject, thread, content.mentions, authorId)
+  const mentions = await checkMentions(config, context, thread, content.mentions, authorId)
   context.emit("comment.created", { ...eventData(updated), comment })
   emitMentions(context, updated, comment, mentions.allowed)
   if (reopens) {
@@ -299,8 +300,8 @@ export async function editComment(config: Config, context: Context) {
   const original = context.input as EditCommentInput
   const comment = await loadComment(context, original.commentId)
   const thread = await loadThread(context, comment.threadId)
-  const { subject, caller, access } = await threadAccess(config, context, thread)
-  requireView(access, subject, caller)
+  const { caller, access } = await threadAccess(config, context, thread)
+  requireView(access)
   forbid(caller.trusted || (wrote(author, comment) && access.comment), "Only the author can edit this comment.")
   if (comment.deletedAt || comment.body === null) {
     throw new CommentsError("INVALID_INPUT", "A deleted comment can't be edited.")
@@ -319,7 +320,7 @@ export async function editComment(config: Config, context: Context) {
   }
   const previous = await checkContent(config.formats, comment.format, comment.body).catch(() => null)
   const added = content.mentions.filter((id) => !previous?.mentions.includes(id))
-  const mentions = await checkMentions(context, subject, thread, added, comment.authorId)
+  const mentions = await checkMentions(config, context, thread, added, comment.authorId)
   const edited: Comment = {
     ...comment,
     format: content.format,
@@ -353,8 +354,8 @@ export async function deleteComment(config: Config, context: Context) {
   const original = context.input as CommentTarget
   const comment = await loadComment(context, original.commentId)
   const thread = await loadThread(context, comment.threadId)
-  const { subject, caller, access } = await threadAccess(config, context, thread)
-  requireView(access, subject, caller)
+  const { access } = await threadAccess(config, context, thread)
+  requireView(access)
   forbid(access.moderate || (wrote(author, comment) && access.comment), "You can't delete this comment.")
   if (comment.deletedAt) {
     return { comment, threadDeleted: false }
@@ -422,8 +423,8 @@ async function changeStatus(config: Config, context: Context, status: "open" | "
   const author = requireAuthor(context)
   const original = context.input as ThreadTarget
   const thread = await loadThread(context, original.threadId)
-  const { subject, caller, access } = await threadAccess(config, context, thread)
-  requireView(access, subject, caller)
+  const { access } = await threadAccess(config, context, thread)
+  requireView(access)
   forbid(access.comment, status === "resolved" ? "You can't resolve this thread." : "You can't reopen this thread.")
   const hook = status === "resolved" ? config.hooks.resolveThread : config.hooks.reopenThread
   await runHook(hook, { actor: context.actor, author, thread, input: original }, inputs.thread)
@@ -453,8 +454,8 @@ export async function updateThread(config: Config, context: Context) {
   const author = requireAuthor(context)
   const original = context.input as UpdateThreadInput
   const thread = await loadThread(context, original.threadId)
-  const { subject, caller, access } = await threadAccess(config, context, thread)
-  requireView(access, subject, caller)
+  const { rules, access } = await threadAccess(config, context, thread)
+  requireView(access)
   forbid(access.moderate || (createdByCaller(thread, author) && access.comment), "You can't change this thread.")
   const input = {
     ...(await runHook(
@@ -466,11 +467,11 @@ export async function updateThread(config: Config, context: Context) {
   }
   const change: Record<string, unknown> = checkFields(config.threadFields, input.fields)
   if (input.metadata !== undefined) {
-    change.metadata = input.metadata === null ? null : await writableMetadata(context, subject, input.metadata)
+    change.metadata = input.metadata === null ? null : await writableMetadata(context, rules, input.metadata)
   }
   if (input.visibility !== undefined && input.visibility !== thread.visibility) {
     forbid(access.moderate, "Only moderators can change who sees a thread.")
-    if (!isDeclaredVisibility(subject, input.visibility)) {
+    if (!isDeclaredVisibility(rules, input.visibility)) {
       throw new CommentsError(
         "INVALID_INPUT",
         `The "${thread.subjectType}" subject type has no "${input.visibility}" visibility.`
@@ -498,8 +499,8 @@ export async function updateAnchor(config: Config, context: Context) {
   const author = requireAuthor(context)
   const original = context.input as UpdateAnchorInput
   const thread = await loadThread(context, original.threadId)
-  const { subject, caller, access } = await threadAccess(config, context, thread)
-  requireView(access, subject, caller)
+  const { access } = await threadAccess(config, context, thread)
+  requireView(access)
   forbid(access.moderate || (createdByCaller(thread, author) && access.comment), "You can't move this thread.")
   const input = await runHook(
     config.hooks.updateAnchor,
@@ -521,8 +522,8 @@ export async function deleteThread(config: Config, context: Context) {
   const author = requireAuthor(context)
   const original = context.input as ThreadTarget
   const thread = await loadThread(context, original.threadId)
-  const { subject, caller, access } = await threadAccess(config, context, thread)
-  requireView(access, subject, caller)
+  const { access } = await threadAccess(config, context, thread)
+  requireView(access)
   forbid(access.moderate, "Only moderators can delete a thread.")
   await runHook(config.hooks.deleteThread, { actor: context.actor, author, thread, input: original }, inputs.thread)
   context.emit("thread.deleted", eventData(thread))

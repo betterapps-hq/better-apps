@@ -34,6 +34,7 @@ import {
 } from "./reads.js"
 import type { Config, Context } from "./runtime.js"
 import { commentModel, commentsSchema, threadModel, type Comment, type CommentThread } from "./schema.js"
+import { commentSubjects } from "./subjects.js"
 import { moveSubject, recountThreads, removeSubject, removeUser, type UpkeepStep } from "./upkeep.js"
 import {
   createThread,
@@ -144,8 +145,9 @@ const unchecked = <Input>(): StandardSchemaV1<Input, Input> => ({
 })
 
 /**
- * Comment threads on records the app owns, optionally pinned to a spot inside them. Register at least one subject
- * type; anchor kinds, body formats, before hooks and additional fields are optional.
+ * Comment threads on records the app owns, optionally pinned to a spot inside them. Set up at least one of the app's
+ * subject types; anchor kinds, body formats, before hooks and additional fields are optional. Threads and comments are
+ * subject types too, `comments.thread` and `comments.comment`, so other features can attach to them.
  */
 export function comments<const Options extends CommentsOptions>(options: Options) {
   type Types = TypesOf<Options>
@@ -173,6 +175,8 @@ export function comments<const Options extends CommentsOptions>(options: Options
     id: "comments",
     schema: commentsSchema(options.additionalFields),
     events: commentEvents,
+    subjects: commentSubjects(config),
+    usesSubjects: Object.keys(options.subjects),
     options,
     actions: {
       listThreads: action<ListThreadsInput<Types["subjectType"], Kind>, ThreadPage<Thread>>(

@@ -1,6 +1,7 @@
 import type { DatabaseAdapter } from "./database.js"
 import type { Actor, Author, Identity } from "./identity.js"
 import type { FeatureSchema } from "./schema.js"
+import type { Subjects } from "./subjects.js"
 
 /** An event as subscribers receive it. */
 export interface BetterAppsEvent<Data = unknown> {
@@ -33,6 +34,8 @@ export interface EventContext {
   /** The app's database. A `batch` also writes the events the subscriber has emitted so far. */
   db: DatabaseAdapter
   identity: Identity
+  /** Who can see the app's subjects, such as for checking who an event may reach. */
+  subjects: Subjects
   /** Emits one of the subscribing feature's own events, delivered after this one. */
   emit(type: string, data: unknown): void
 }

@@ -15,6 +15,7 @@ import { RefObject } from 'react';
 import { Serialized } from 'better-apps/client';
 import type { StandardSchemaV1 } from 'better-apps';
 import { Store } from 'better-apps/client';
+import type { SubjectArgs } from 'better-apps';
 
 // @public
 export type AnchorResolution = {

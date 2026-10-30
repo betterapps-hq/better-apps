@@ -201,9 +201,7 @@ describe("access", () => {
   })
 
   it("needs getOrgId when the identity reports organizations", async () => {
-    const { api, as } = setup({
-      subjects: { invoice: { canView: () => true, canComment: () => true } }
-    })
+    const { api, as } = setup({}, { invoice: { canView: () => true } })
     await expect(api.createThread({ ...onInvoice, body: "Hi" }, as("bob"))).rejects.toThrow(
       'The "invoice" subject type needs getOrgId, because the identity adapter reports organizations.'
     )
@@ -288,16 +286,10 @@ describe("mentions", () => {
   })
 
   it("uses canMention when the subject type has it", async () => {
-    const { api, as, events } = setup({
-      subjects: {
-        invoice: {
-          getOrgId: () => "acme",
-          canView: () => true,
-          canComment: () => true,
-          canMention: ({ actor }) => actor.userId === "sam"
-        }
-      }
-    })
+    const { api, as, events } = setup(
+      { subjects: { invoice: { canComment: () => true, canMention: ({ actor }) => actor.userId === "sam" } } },
+      { invoice: { getOrgId: () => "acme", canView: () => true } }
+    )
     await api.createThread({ ...onInvoice, body: `${mentionToken("ada")} ${mentionToken("sam")}` }, as("bob"))
     expect(events("comment.mentioned").map((event) => (event.data as { userId: string }).userId)).toEqual(["sam"])
   })
@@ -413,25 +405,26 @@ describe("thread actions", () => {
   })
 
   it("lets clients write metadata a subject type's schema allows", async () => {
-    const { post } = setup({
-      subjects: {
-        invoice: {
-          getOrgId: () => "acme",
-          canView: () => true,
-          canComment: () => true,
-          metadata: {
-            "~standard": {
-              version: 1,
-              vendor: "test",
-              validate: (value) =>
-                typeof (value as { color?: unknown }).color === "string"
-                  ? { value: value as Record<string, unknown> }
-                  : { issues: [{ message: "Needs a color." }] }
+    const { post } = setup(
+      {
+        subjects: {
+          invoice: {
+            canComment: () => true,
+            metadata: {
+              "~standard": {
+                version: 1,
+                vendor: "test",
+                validate: (value) =>
+                  typeof (value as { color?: unknown }).color === "string"
+                    ? { value: value as Record<string, unknown> }
+                    : { issues: [{ message: "Needs a color." }] }
+              }
             }
           }
         }
-      }
-    })
+      },
+      { invoice: { getOrgId: () => "acme", canView: () => true } }
+    )
     const created = await post("createThread", { ...onInvoice, body: "x", metadata: { color: "red" } }, "bob")
     const { thread } = (await created.json()) as { thread: CommentThread }
     expect(thread.metadata).toEqual({ color: "red" })

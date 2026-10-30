@@ -17,6 +17,7 @@ export interface ActionContext<Input> {
     request: Request | null;
     silent: boolean;
     source: "http" | "api";
+    subjects: Subjects;
 }
 
 // @public
@@ -77,6 +78,7 @@ export interface BetterApp<Features extends readonly BetterAppsFeature[] = reado
     handler(request: Request, context?: HandlerContext): Promise<Response>;
     // (undocumented)
     options: CreateBetterAppsOptions<Features>;
+    subjects: Subjects;
 }
 
 // @public
@@ -125,6 +127,8 @@ export interface BetterAppsFeature {
     on?: Readonly<Record<string, Readonly<Record<string, EventHandler>>>> | undefined;
     options?: unknown;
     schema?: FeatureSchema | undefined;
+    subjects?: Readonly<Record<string, SubjectDefinition>> | undefined;
+    usesSubjects?: readonly string[] | undefined;
 }
 
 // @public
@@ -162,6 +166,7 @@ export interface CreateBetterAppsOptions<Features extends readonly BetterAppsFea
     identity: Identity;
     maxBodySize?: number | undefined;
     onError?: ((error: unknown, context: ErrorContext) => void | Promise<void>) | undefined;
+    subjects?: Readonly<Record<string, SubjectDefinition>> | undefined;
 }
 
 // @public
@@ -251,6 +256,9 @@ export function defineEvent<Data = unknown>(): EventDefinition<Data>;
 export function defineFeature<const Feature extends BetterAppsFeature>(feature: Feature): Feature;
 
 // @public
+export function defineSubject(subject: SubjectDefinition): SubjectDefinition;
+
+// @public
 export interface DeliverOptions {
     limit?: number | undefined;
     waitUntil?: ((promise: Promise<unknown>) => void) | undefined;
@@ -281,6 +289,7 @@ export interface EventContext {
     emit(type: string, data: unknown): void;
     // (undocumented)
     identity: Identity;
+    subjects: Subjects;
 }
 
 // @public
@@ -464,6 +473,52 @@ export type StandardSchemaResult<Output> = {
 export interface StandardSchemaV1<Input = unknown, Output = Input> {
     // (undocumented)
     readonly "~standard": StandardSchemaProps<Input, Output>;
+}
+
+// @public
+export interface SubjectArgs extends SubjectRef {
+    // (undocumented)
+    actor: Actor;
+}
+
+// @public
+export interface SubjectCheck extends SubjectRef {
+    // (undocumented)
+    actor: Actor | null;
+}
+
+// @public
+export interface SubjectContext {
+    // (undocumented)
+    db: DatabaseAdapter;
+    // (undocumented)
+    identity: Identity;
+    subjects: Subjects;
+}
+
+// @public
+export interface SubjectDefinition {
+    canView: (args: SubjectArgs, context: SubjectContext) => boolean | Promise<boolean>;
+    canViewMany?: ((pairs: readonly SubjectArgs[], context: SubjectContext) => readonly boolean[] | Promise<readonly boolean[]>) | undefined;
+    getOrgId?: ((ref: SubjectRef, context: SubjectContext) => string | null | Promise<string | null>) | undefined;
+    publicRead?: boolean | ((ref: SubjectRef, context: SubjectContext) => boolean | Promise<boolean>) | undefined;
+}
+
+// @public
+export interface SubjectRef {
+    // (undocumented)
+    subjectId: string;
+    // (undocumented)
+    subjectType: string;
+}
+
+// @public
+export interface Subjects {
+    canView(actor: Actor | null, ref: SubjectRef): Promise<boolean>;
+    canViewMany(checks: readonly SubjectCheck[]): Promise<boolean[]>;
+    getOrgId(ref: SubjectRef, actor?: Actor | null): Promise<string | null>;
+    has(subjectType: string): boolean;
+    isPublic(ref: SubjectRef): Promise<boolean>;
 }
 
 // @public

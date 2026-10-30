@@ -67,9 +67,48 @@ Run `better-apps generate` from `@better-apps/cli` to write the schema file that
   ArkType schema, checks the input. `serverOnly` actions are only reachable through `app.api`.
 - `events` declares the events it emits, with `defineEvent`. `on` handles other features' events, keyed by the emitting
   feature's id and the event type, so features never import each other.
+- `subjects` declares subject types for the feature's own records, so other features can attach to them, and
+  `usesSubjects` lists the subject types it needs.
 
 An action's handler receives its checked `input`, the `db` adapter, the `actor`, the `author`, the `identity` adapter,
-`now`, `silent`, `source` (`http` or `api`), the `request` and `emit`.
+`subjects`, `now`, `silent`, `source` (`http` or `api`), the `request` and `emit`.
+
+## Subjects
+
+Features attach things to records the app owns, such as comments, reactions or attachments on an invoice. The app
+declares each kind of record once, as a subject type, with who can see one. Every feature checks the same rules.
+
+```ts
+export const app = createBetterApps({
+  database,
+  identity,
+  subjects: {
+    invoice: {
+      getOrgId: ({ subjectId }) => invoices.orgOf(subjectId),
+      canView: ({ actor, subjectId }) => invoices.canRead(actor, subjectId)
+    },
+    page: { canView: () => true, publicRead: true }
+  },
+  features: [
+    comments({ subjects: { invoice: { canComment: ({ actor, subjectId }) => invoices.canEdit(actor, subjectId) } } })
+  ]
+})
+```
+
+- `canView` says whether a signed-in user can see a subject, and so what features attach to it. `canViewMany` answers
+  for many pairs at once, such as with one query; without it, `canView` runs for each pair.
+- `getOrgId` returns the organization that owns a subject. Features store it with what they attach, so ids repeated
+  across organizations never mix. It's required when the identity adapter reports organizations.
+- `publicRead` lets signed-out visitors see subjects: `true` for all of them, or a check per subject. Nobody, by
+  default.
+- Each feature adds its own rules on top, such as who can comment. A feature that uses a subject type the app doesn't
+  declare stops `createBetterApps` with an error.
+- Features declare subject types for their own records, such as comments' `comments.comment`, so a reaction on a comment
+  follows the comment's access.
+- Actions and subscribers check access through `context.subjects`, and server code through `app.subjects`:
+  `canView(actor, { subjectType, subjectId })`, `canViewMany`, `isPublic` and `getOrgId`. `null` as the actor is a
+  signed-out visitor. Checks receive the `db`, `identity` and `subjects` as a second argument, for subject types that
+  read Better Apps' tables.
 
 ## Identity
 

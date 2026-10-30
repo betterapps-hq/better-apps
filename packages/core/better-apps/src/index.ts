@@ -52,6 +52,15 @@ export type {
   TableIndex,
   TableSchema
 } from "./schema.js"
+export {
+  defineSubject,
+  type SubjectArgs,
+  type SubjectCheck,
+  type SubjectContext,
+  type SubjectDefinition,
+  type SubjectRef,
+  type Subjects
+} from "./subjects.js"
 export type {
   InferSchemaInput,
   InferSchemaOutput,

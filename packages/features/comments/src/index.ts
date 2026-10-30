@@ -21,6 +21,7 @@ export {
 export { defineFormat, mentionToken, textFormat, type BodyFormat } from "./formats.js"
 export type {
   BeforeHooks,
+  CommentRules,
   CommentTarget,
   CommentsOptions,
   CommentsTypes,
@@ -28,8 +29,6 @@ export type {
   EditCommentInput,
   HookArgs,
   ReplyInput,
-  SubjectArgs,
-  SubjectType,
   ThreadTarget,
   TypesOf,
   UpdateAnchorInput,
@@ -45,5 +44,6 @@ export {
   type CommentThread,
   type InferFields
 } from "./schema.js"
+export { commentSubjectTypes } from "./subjects.js"
 export { isUlid, ulid } from "./ulid.js"
 export type { UpkeepStep } from "./upkeep.js"
