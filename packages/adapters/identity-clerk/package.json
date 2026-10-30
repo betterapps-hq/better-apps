@@ -38,7 +38,7 @@
     "@clerk/backend": "^3.23.2"
   },
   "devDependencies": {
-    "@clerk/backend": "3.23.2",
+    "@clerk/backend": "3.26.3",
     "@repo/oxlint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
     "@types/node": "24.13.2",

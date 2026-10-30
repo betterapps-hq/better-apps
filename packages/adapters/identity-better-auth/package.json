@@ -42,7 +42,7 @@
     "@repo/typescript-config": "workspace:*",
     "@types/node": "24.13.2",
     "@vitest/coverage-v8": "5.0.5",
-    "better-auth": "1.7.9",
+    "better-auth": "1.7.14",
     "typescript": "catalog:",
     "vitest": "5.0.5"
   },
