@@ -1,15 +1,22 @@
 # Better Apps deploys: capability packages and the deploy service
 
 How apps declare the cloud resources they use, and how Better Apps deploys them. This design moved out of
-[scaffolder-research.md](scaffolder-research.md) on 2026-10-28; the scaffolder's side of deploys stays there (§5). The
-Better Apps Features session owns it from here.
+[scaffolder-research.md](https://github.com/betterapps-hq/buildkit/blob/main/docs/platform-planning/scaffolder-research.md)
+on 2026-10-28; the scaffolder's side of deploys stays there (§5). The Better Apps Features session owns it from here.
+
+**On hold (2026-11-02):** Cloudflare open-sourced [Void](https://github.com/voidzero-dev/void) on 2026-10-15. It covers
+most of this plan: resources found from imports (`void/db`, `void/kv`, `void/storage`, `void/queues`, `void/durable`,
+`void/live`), `void deploy`, and a platform teams host on Workers for Platforms. The storage and realtime packages this
+plan names were deleted for it. Revisit this plan, building on Void, before any deploy work.
 
 **Status (2026-10-28):**
 
 - Nothing is built yet.
 - The decisions below are settled. D6 came last and overrides the parts of §5 and §6 that assume Workers for Platforms
   in Better Apps' own account.
-- Decision IDs are shared with [scaffolder-research.md](scaffolder-research.md), which holds D1 and D4.
+- Decision IDs are shared with
+  [scaffolder-research.md](https://github.com/betterapps-hq/buildkit/blob/main/docs/platform-planning/scaffolder-research.md),
+  which holds D1 and D4.
 
 **Verification marks:**
 
@@ -27,12 +34,12 @@ Working notes are in the side-session notes folder,
 
 ## Decisions
 
-| #   | Decision (2026-10-28)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | What changes                                                                                                       |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| D2  | **Not Void; the Cloudflare API.** Void is not the deploy engine. Better Apps' deploy service calls the Cloudflare API directly, not the `cf` CLI or Wrangler                                                                                                                                                                                                                                                                                                                                                    | §5                                                                                                                 |
-| D3  | **Each release may rebuild for each environment.** "Build once, promote the same artifact" is not required                                                                                                                                                                                                                                                                                                                                                                                                      | Staging and production build separately from the same commit, each with the backend the deploy service names (§4)  |
-| D5  | **Capability packages drive deploys, and Better Apps runs them.** Neutral capability packages (SQL, KV, storage, queues, rooms, cron, workflows, secrets) and their Cloudflare adapters are open packages in Better Apps. Any code can declare resources with them. Better Apps' paid deploy service (`better-apps deploy` plus a hosted service) picks the cloud behind the scenes and runs every deploy. The scaffolder stays in Buildkit; it picks no host and writes no cloud config. v1 is Cloudflare only | §1–§5. The scaffolder has no hosts ([scaffolder-research.md](scaffolder-research.md) §4.6)                         |
-| D6  | **Apps run in the customer's own Cloudflare account, for now.**                                                                                                                                                                                                                                                                                                                                                                                                                                                 | §5 and the hosted half of the §6 spike assumed Workers for Platforms in Better Apps' account, and need rework (§8) |
+| #   | Decision (2026-10-28)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | What changes                                                                                                                                                          |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D2  | **Not Void; the Cloudflare API.** Void is not the deploy engine. Better Apps' deploy service calls the Cloudflare API directly, not the `cf` CLI or Wrangler                                                                                                                                                                                                                                                                                                                                                    | §5                                                                                                                                                                    |
+| D3  | **Each release may rebuild for each environment.** "Build once, promote the same artifact" is not required                                                                                                                                                                                                                                                                                                                                                                                                      | Staging and production build separately from the same commit, each with the backend the deploy service names (§4)                                                     |
+| D5  | **Capability packages drive deploys, and Better Apps runs them.** Neutral capability packages (SQL, KV, storage, queues, rooms, cron, workflows, secrets) and their Cloudflare adapters are open packages in Better Apps. Any code can declare resources with them. Better Apps' paid deploy service (`better-apps deploy` plus a hosted service) picks the cloud behind the scenes and runs every deploy. The scaffolder stays in Buildkit; it picks no host and writes no cloud config. v1 is Cloudflare only | §1–§5. The scaffolder has no hosts ([scaffolder-research.md](https://github.com/betterapps-hq/buildkit/blob/main/docs/platform-planning/scaffolder-research.md) §4.6) |
+| D6  | **Apps run in the customer's own Cloudflare account, for now.**                                                                                                                                                                                                                                                                                                                                                                                                                                                 | §5 and the hosted half of the §6 spike assumed Workers for Platforms in Better Apps' account, and need rework (§8)                                                    |
 
 ## Summary
 
@@ -165,7 +172,9 @@ The Better Apps Vite plugin builds the manifest during `vite build`:
 
 - **Mechanism:** each capability defaults to its Cloudflare adapter, which finds bindings by names derived from the
   declaration, such as `STORAGE_AVATARS` for `defineBucket("avatars")`. Apps override any capability in one place with
-  `configureBackends` from `better-apps`. See [better-apps-storage-realtime.md](better-apps-storage-realtime.md) §5.
+  `configureBackends` from `better-apps`. See
+  [better-apps-storage-realtime.md](https://github.com/betterapps-hq/buildkit/blob/a9fd7cb/docs/platform-planning/better-apps-storage-realtime.md)
+  §5.
 - **The deploy service picks the backend.** In v1 the answer is always Cloudflare, so it deploys with the derived
   binding names and writes no wiring. A second cloud would have it write a `configureBackends` call for that cloud's
   adapters. Each environment builds separately anyway (D3).
@@ -177,13 +186,13 @@ The Better Apps Vite plugin builds the manifest during `vite build`:
 
 **Runtime glue per target,** owned by the Better Apps integration, not the scaffolder:
 
-| App                             | Cloudflare (v1)                                                                                                                                                                 | Elsewhere (later)                                                                                                                                                      |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| TanStack Start SSR              | Cloudflare Vite plugin (`viteEnvironment: { name: "ssr" }`), entry `@tanstack/react-start/server-entry`, bindings through `cloudflare:workers`                                  | `nitro()` with a preset (Nitro v3 is still beta); Netlify's TanStack Start plugin; Railway through Nitro. Start's hosting partners are Cloudflare, Netlify and Railway |
-| Start SPA, static only          | Assets only, with the SPA fallback to `/index.html`, plus the #7740 workaround ([scaffolder-research.md](scaffolder-research.md) §4.8)                                          | any CDN                                                                                                                                                                |
-| Start SPA with server functions | Worker + assets. The deploy service renders `run_worker_first: ["/_serverFn/*", "/api/*"]`, because navigation requests skip the Worker unless listed [U: end to end, spike #9] | same split                                                                                                                                                             |
-| Next.js                         | vinext (Cloudflare's default; beta; Next 16 only) or OpenNext (doesn't support Node middleware, so `proxy.ts` may not work [U])                                                 | `next start` on Node; Vercel; Next Adapter API adapters (stable since 16.2; verified adapters are Vercel and Bun)                                                      |
-| Browser game                    | SpawnKit's own platform deploys games, not Better Apps' deploy service ([scaffolder-research.md](scaffolder-research.md) §6.2)                                                  | —                                                                                                                                                                      |
+| App                             | Cloudflare (v1)                                                                                                                                                                                                   | Elsewhere (later)                                                                                                                                                      |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TanStack Start SSR              | Cloudflare Vite plugin (`viteEnvironment: { name: "ssr" }`), entry `@tanstack/react-start/server-entry`, bindings through `cloudflare:workers`                                                                    | `nitro()` with a preset (Nitro v3 is still beta); Netlify's TanStack Start plugin; Railway through Nitro. Start's hosting partners are Cloudflare, Netlify and Railway |
+| Start SPA, static only          | Assets only, with the SPA fallback to `/index.html`, plus the #7740 workaround ([scaffolder-research.md](https://github.com/betterapps-hq/buildkit/blob/main/docs/platform-planning/scaffolder-research.md) §4.8) | any CDN                                                                                                                                                                |
+| Start SPA with server functions | Worker + assets. The deploy service renders `run_worker_first: ["/_serverFn/*", "/api/*"]`, because navigation requests skip the Worker unless listed [U: end to end, spike #9]                                   | same split                                                                                                                                                             |
+| Next.js                         | vinext (Cloudflare's default; beta; Next 16 only) or OpenNext (doesn't support Node middleware, so `proxy.ts` may not work [U])                                                                                   | `next start` on Node; Vercel; Next Adapter API adapters (stable since 16.2; verified adapters are Vercel and Bun)                                                      |
+| Browser game                    | SpawnKit's own platform deploys games, not Better Apps' deploy service ([scaffolder-research.md](https://github.com/betterapps-hq/buildkit/blob/main/docs/platform-planning/scaffolder-research.md) §6.2)         | —                                                                                                                                                                      |
 
 ## 5. The deploy service on Cloudflare (v1)
 
@@ -226,7 +235,9 @@ Wrangler (D2). The service holds Better Apps' Cloudflare credentials; customers 
 
 **Services around deploys** belong to Better Apps too: preview environments and custom domains (the rows above), the
 environment variables vault, managed storage (what `@better-apps/storage` deploys), and the preview, deploy and cleanup
-workflows with their migrate action. Their designs are in [build-plans.md](build-plans.md) § "Better Apps services".
+workflows with their migrate action. Their designs are in
+[build-plans.md](https://github.com/betterapps-hq/buildkit/blob/main/docs/platform-planning/build-plans.md) § "Better
+Apps services".
 
 **Not supported in v1:**
 
@@ -265,9 +276,10 @@ A second cloud is a new adapter set in Better Apps, plus support in the deploy s
 3. **Capabilities (D5):**
    - How Better Apps' schema layer (forked from Better Auth's) feeds `@better-apps/sql` migrations, and how a feature
      reaches the app's `main` database through its handle (rule 4) instead of declaring its own.
-   - Durable Object classes: answered in [better-apps-storage-realtime.md](better-apps-storage-realtime.md) §6. Each
-     room gets its own class, `roomDurableObject(room)`, exported from the Worker entry; the integration generates those
-     exports, bindings and migrations from the manifest.
+   - Durable Object classes: answered in
+     [better-apps-storage-realtime.md](https://github.com/betterapps-hq/buildkit/blob/a9fd7cb/docs/platform-planning/better-apps-storage-realtime.md)
+     §6. Each room gets its own class, `roomDurableObject(room)`, exported from the Worker entry; the integration
+     generates those exports, bindings and migrations from the manifest.
    - Dev discovery: restarting on a new declaration, and inline bindings for the Cloudflare Vite plugin (§6 #2).
    - Custom domains through Cloudflare for SaaS, and usage metering for billing: not researched.
    - Package and function names (`@better-apps/sql`, `defineDatabase` and the rest) aren't settled.

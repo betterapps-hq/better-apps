@@ -1,14 +1,15 @@
 # better-apps
 
 App features, such as comments, audit history and approval flows, that bring their own database tables, server actions
-and events. Better Apps runs them for any framework and any auth provider: [`@better-apps/cli`](../cli/README.md)
-generates the features' schema for your ORM, the way Better Auth does for its plugins, and `createBetterApps` serves
-their actions over HTTP and to your server code. Apps don't need Better Auth to use it.
+and events. Better Apps runs them for any framework and any auth provider:
+[`@better-apps/cli`](../../tooling/cli/README.md) generates the features' schema for your ORM, the way Better Auth does
+for its plugins, and `createBetterApps` serves their actions over HTTP and to your server code. Apps don't need Better
+Auth to use it.
 
 ## Usage
 
 ```ts
-import { drizzleAdapter } from "@better-apps/drizzle"
+import { drizzleAdapter } from "@better-apps/database-drizzle"
 import { createBetterApps, defineAction, defineEvent, defineFeature, localIdentity } from "better-apps"
 import { z } from "zod"
 
@@ -53,7 +54,7 @@ await app.api.notes.add({ text: "Imported" }, { author: { type: "system", name: 
 ```
 
 Run `better-apps generate` from `@better-apps/cli` to write the schema file that `drizzle-kit` reads. Test features with
-[`@better-apps/testing`](../testing/README.md).
+[`@better-apps/testing`](../../tooling/testing/README.md).
 
 ## Features
 
@@ -116,8 +117,9 @@ The identity adapter reads the signed-in user from a standard `Request`, so one 
 `getActor(request)` returns `{ userId, orgId, roles }` or `null`. `getActorsFor(userIds, orgId)` builds actors for other
 users in one call, leaving out non-members. Optional `getUsers` and `searchUsers` look up names and suggestions.
 `localIdentity()` is for apps without sign-in: every request acts as one local user, outside any organization.
-[`@better-apps/better-auth`](../better-auth/README.md), [`@better-apps/clerk`](../clerk/README.md) and
-[`@better-apps/workos`](../workos/README.md) read users from those providers.
+[`@better-apps/identity-better-auth`](../../adapters/identity-better-auth/README.md),
+[`@better-apps/identity-clerk`](../../adapters/identity-clerk/README.md) and
+[`@better-apps/identity-workos`](../../adapters/identity-workos/README.md) read users from those providers.
 
 ## HTTP
 
@@ -155,7 +157,7 @@ await client.notes.add({ text: "Hi" })
 - `baseURL`, `basePath`, `headers`, `credentials` and `fetch` change how calls are sent. Tests can pass a `fetch` that
   calls `app.handler` directly.
 - `createStore(initial)` makes the store feature clients keep their state in: `getSnapshot`, `subscribe` and `setState`,
-  which framework layers such as [`@better-apps/react`](../react/README.md) bind to.
+  which framework layers such as [`@better-apps/react`](../../integrations/react/README.md) bind to.
 
 ## Events
 
@@ -172,23 +174,6 @@ await client.notes.add({ text: "Hi" })
   scheduled job's own `waitUntil` to `app.deliverEvents({ waitUntil })` for the same.
 - Events nobody subscribes to aren't written. The outbox table, `betterAppsEvent`, is generated only when a feature
   subscribes to events.
-
-## Backends
-
-Capability packages, such as [`@better-apps/storage`](../storage/README.md), declare cloud resources in code and run
-them through adapters. Each uses its Cloudflare adapter unless the app chooses another, once, in a server module its
-server entry imports:
-
-```ts
-import { memoryStorage } from "@better-apps/storage/local"
-import { configureBackends } from "better-apps"
-
-configureBackends({ storage: { adapter: memoryStorage() } })
-```
-
-- Each call merges into the current choice. A capability left out keeps its adapter, and one set to `undefined` goes
-  back to Cloudflare's.
-- Capability packages add their key to the `Backends` interface, and read it with `getBackend`.
 
 ## Tables
 

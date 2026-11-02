@@ -67,10 +67,6 @@ export type Author = {
 };
 
 // @public
-export interface Backends {
-}
-
-// @public
 export interface BetterApp<Features extends readonly BetterAppsFeature[] = readonly BetterAppsFeature[]> {
     $Infer: {
         Api: BetterAppsApi<Features>;
@@ -150,9 +146,6 @@ export type CallInput<Action> = Action extends {
 export type CallOutput<Action> = Action extends {
     handler: (...args: never[]) => infer Output;
 } ? Awaited<Output> : never;
-
-// @public
-export function configureBackends(backends: Backends): void;
 
 // @public
 export interface CountGroup {
@@ -370,9 +363,6 @@ export type FieldType = "string" | "number" | "boolean" | "date" | "json" | "str
 
 // @public
 export type FieldValue = string | number | boolean | Date | null | undefined | string[] | number[] | Record<string, unknown> | unknown[];
-
-// @public
-export function getBackend<Capability extends keyof Backends>(capability: Capability): Backends[Capability] | undefined;
 
 // @public
 export function getFeatureTables(features: readonly BetterAppsFeature[]): DatabaseSchema;

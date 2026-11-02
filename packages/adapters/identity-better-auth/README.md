@@ -1,13 +1,13 @@
-# @better-apps/better-auth
+# @better-apps/identity-better-auth
 
-The [Better Auth](https://www.better-auth.com) identity adapter for [Better Apps](../better-apps/README.md). Features
-read the signed-in user, their organization and roles, and other users' names from your app's Better Auth instance. It
-only reads the standard `Request`, so it works on any framework and on Cloudflare Workers.
+The [Better Auth](https://www.better-auth.com) identity adapter for [Better Apps](../../core/better-apps/README.md).
+Features read the signed-in user, their organization and roles, and other users' names from your app's Better Auth
+instance. It only reads the standard `Request`, so it works on any framework and on Cloudflare Workers.
 
 ## Usage
 
 ```ts
-import { betterAuthIdentity } from "@better-apps/better-auth"
+import { betterAuthIdentity } from "@better-apps/identity-better-auth"
 import { createBetterApps } from "better-apps"
 import { auth } from "./auth"
 

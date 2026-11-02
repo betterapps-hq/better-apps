@@ -51,12 +51,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/AndrewCraswell/buildkit.git",
-    "directory": "packages/better-apps/react"
+    "url": "git+https://github.com/betterapps-hq/better-apps.git",
+    "directory": "packages/integrations/react"
   },
-  "homepage": "https://github.com/AndrewCraswell/buildkit/tree/main/packages/better-apps/react#readme",
+  "homepage": "https://github.com/betterapps-hq/better-apps/tree/main/packages/integrations/react#readme",
   "bugs": {
-    "url": "https://github.com/AndrewCraswell/buildkit/issues"
+    "url": "https://github.com/betterapps-hq/better-apps/issues"
   },
   "publishConfig": {
     "access": "public",

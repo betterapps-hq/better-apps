@@ -1,13 +1,13 @@
-# @better-apps/clerk
+# @better-apps/identity-clerk
 
-The [Clerk](https://clerk.com) identity adapter for [Better Apps](../better-apps/README.md). Features read the signed-in
-user, their organization and role, and other users' names from Clerk. It only reads the standard `Request`, so it works
-on any framework and on Cloudflare Workers.
+The [Clerk](https://clerk.com) identity adapter for [Better Apps](../../core/better-apps/README.md). Features read the
+signed-in user, their organization and role, and other users' names from Clerk. It only reads the standard `Request`, so
+it works on any framework and on Cloudflare Workers.
 
 ## Usage
 
 ```ts
-import { clerkIdentity } from "@better-apps/clerk"
+import { clerkIdentity } from "@better-apps/identity-clerk"
 import { createBetterApps } from "better-apps"
 
 export const app = createBetterApps({

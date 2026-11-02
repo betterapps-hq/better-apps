@@ -1,5 +1,5 @@
 {
-  "name": "@better-apps/better-auth",
+  "name": "@better-apps/identity-better-auth",
   "version": "0.0.0",
   "private": true,
   "description": "The Better Auth identity adapter for Better Apps.",
@@ -46,12 +46,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/AndrewCraswell/buildkit.git",
-    "directory": "packages/better-apps/better-auth"
+    "url": "git+https://github.com/betterapps-hq/better-apps.git",
+    "directory": "packages/adapters/identity-better-auth"
   },
-  "homepage": "https://github.com/AndrewCraswell/buildkit/tree/main/packages/better-apps/better-auth#readme",
+  "homepage": "https://github.com/betterapps-hq/better-apps/tree/main/packages/adapters/identity-better-auth#readme",
   "bugs": {
-    "url": "https://github.com/AndrewCraswell/buildkit/issues"
+    "url": "https://github.com/betterapps-hq/better-apps/issues"
   },
   "publishConfig": {
     "access": "public",

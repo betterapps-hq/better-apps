@@ -1,7 +1,7 @@
 # @better-apps/tanstack-start
 
-Runs a [Better Apps](../better-apps/README.md) app in [TanStack Start](https://tanstack.com/start): a catch-all server
-route serves its actions over HTTP, and server functions call `app.api` as the signed-in user without passing the
+Runs a [Better Apps](../../core/better-apps/README.md) app in [TanStack Start](https://tanstack.com/start): a catch-all
+server route serves its actions over HTTP, and server functions call `app.api` as the signed-in user without passing the
 request by hand. It doesn't import an identity provider or a UI library.
 
 ## Usage

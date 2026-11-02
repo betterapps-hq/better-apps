@@ -1,0 +1,28 @@
+{
+  "name": "better-apps-monorepo",
+  "private": true,
+  "license": "MIT",
+  "packageManager": "pnpm@12.10.1",
+  "engines": {
+    "node": "^24.11.0 || >=26.0.0",
+    "pnpm": ">=12 <13"
+  },
+  "scripts": {
+    "build": "vp run --cache -r build",
+    "build:packages": "vp run --cache --filter \"./packages/**\" build",
+    "dev": "vp run --filter ./apps/example dev",
+    "verify": "pnpm check && pnpm check:unused && pnpm check:api && pnpm test:coverage && pnpm build",
+    "check": "pnpm build:packages && vp check",
+    "check:api": "pnpm build:packages && pnpm --filter @repo/api-tools api:check",
+    "api:update": "pnpm build:packages && pnpm --filter @repo/api-tools api:update",
+    "format": "vp fmt",
+    "check:unused": "knip",
+    "test": "pnpm build:packages && vp run --cache -r test",
+    "test:coverage": "pnpm build:packages && vp run --cache -r test:coverage",
+    "prepare": "vp config --no-agent"
+  },
+  "devDependencies": {
+    "knip": "^6.43.0",
+    "vite-plus": "catalog:"
+  }
+}

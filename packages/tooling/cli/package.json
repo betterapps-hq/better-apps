@@ -46,7 +46,7 @@
     }
   },
   "devDependencies": {
-    "@better-apps/drizzle": "workspace:*",
+    "@better-apps/database-drizzle": "workspace:*",
     "@repo/typescript-config": "workspace:*",
     "@types/node": "24.19.2",
     "@vitest/coverage-v8": "catalog:",
@@ -60,12 +60,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/AndrewCraswell/buildkit.git",
-    "directory": "packages/better-apps/cli"
+    "url": "git+https://github.com/betterapps-hq/better-apps.git",
+    "directory": "packages/tooling/cli"
   },
-  "homepage": "https://github.com/AndrewCraswell/buildkit/tree/main/packages/better-apps/cli#readme",
+  "homepage": "https://github.com/betterapps-hq/better-apps/tree/main/packages/tooling/cli#readme",
   "bugs": {
-    "url": "https://github.com/AndrewCraswell/buildkit/issues"
+    "url": "https://github.com/betterapps-hq/better-apps/issues"
   },
   "publishConfig": {
     "access": "public",

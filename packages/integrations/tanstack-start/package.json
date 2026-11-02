@@ -54,12 +54,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/AndrewCraswell/buildkit.git",
-    "directory": "packages/better-apps/tanstack-start"
+    "url": "git+https://github.com/betterapps-hq/better-apps.git",
+    "directory": "packages/integrations/tanstack-start"
   },
-  "homepage": "https://github.com/AndrewCraswell/buildkit/tree/main/packages/better-apps/tanstack-start#readme",
+  "homepage": "https://github.com/betterapps-hq/better-apps/tree/main/packages/integrations/tanstack-start#readme",
   "bugs": {
-    "url": "https://github.com/AndrewCraswell/buildkit/issues"
+    "url": "https://github.com/betterapps-hq/better-apps/issues"
   },
   "publishConfig": {
     "access": "public",

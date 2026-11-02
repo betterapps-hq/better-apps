@@ -1,4 +1,4 @@
-// A small in-memory database adapter for the core's own tests, which can't depend on @better-apps/drizzle because it
+// A small in-memory database adapter for the core's own tests, which can't depend on @better-apps/database-drizzle because it
 // depends on the core. Features and apps test against SQLite through @better-apps/testing instead.
 import type { DatabaseAdapter, DatabaseAdapterFactory, Row, SortBy, Where, WriteOperation } from "../src/index.js"
 

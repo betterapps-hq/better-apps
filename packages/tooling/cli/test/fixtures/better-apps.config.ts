@@ -1,4 +1,4 @@
-import { drizzleAdapter } from "@better-apps/drizzle"
+import { drizzleAdapter } from "@better-apps/database-drizzle"
 import { defineFeature, type BetterAppsOptions } from "better-apps"
 import { drizzle } from "drizzle-orm/pg-proxy"
 

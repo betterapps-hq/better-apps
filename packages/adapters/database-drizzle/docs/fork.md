@@ -1,9 +1,9 @@
 # Forked Better Auth source
 
 This adapter started as a copy of Better Auth 1.7.14's Drizzle adapter and adapter factory. Unlike the
-[vendored generator in the CLI](../../cli/docs/vendoring.md), the forked code belongs to Better Apps: edit it like any
-other source. `upstream.json` records the upstream files and their hashes at the base release, so upstream fixes can
-still be found and ported.
+[vendored generator in the CLI](../../../tooling/cli/docs/vendoring.md), the forked code belongs to Better Apps: edit it
+like any other source. `upstream.json` records the upstream files and their hashes at the base release, so upstream
+fixes can still be found and ported.
 
 ## Where the code came from
 
@@ -38,7 +38,7 @@ those files too.
 ## Finding upstream fixes
 
 ```sh
-pnpm --filter @better-apps/drizzle upstream:changes
+pnpm --filter @better-apps/database-drizzle upstream:changes
 ```
 
 The script compares each tracked file at the base release with the latest Better Auth release, or the version you pass,
@@ -46,7 +46,7 @@ and prints the files that changed, the forked files they feed and a link to the 
 then record the release as the new base:
 
 ```sh
-pnpm --filter @better-apps/drizzle upstream:changes 1.8.0 --update
+pnpm --filter @better-apps/database-drizzle upstream:changes 1.8.0 --update
 ```
 
 A file that upstream moved or removed stops `--update`. Point `upstream.json` at its new path first.

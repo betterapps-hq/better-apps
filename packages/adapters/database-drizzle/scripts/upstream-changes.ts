@@ -23,7 +23,7 @@ const { values, positionals } = parseArgs({
 })
 
 async function get(url: string) {
-  const response = await fetch(url, { headers: { "User-Agent": "buildkit-better-apps-upstream" } })
+  const response = await fetch(url, { headers: { "User-Agent": "better-apps-upstream" } })
   if (!response.ok) {
     throw new Error(`${response.status}: ${url}`)
   }

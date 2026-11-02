@@ -1,0 +1,15 @@
+node_modules/
+dist/
+coverage/
+.vitest/
+.next/
+storybook-static/
+.env*
+!.env.example
+*.log
+*.tsbuildinfo
+.DS_Store
+
+.generated/
+.vitepress/.temp/
+.vitepress/cache/

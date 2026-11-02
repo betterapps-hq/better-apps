@@ -43,7 +43,7 @@ const pathRewrites: Record<string, string> = {
 }
 
 async function get(url: string, accept?: string) {
-  const headers: Record<string, string> = { "User-Agent": "buildkit-better-auth-sync" }
+  const headers: Record<string, string> = { "User-Agent": "better-apps-better-auth-sync" }
   if (accept) {
     headers.Accept = accept
   }

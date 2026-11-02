@@ -1,10 +1,10 @@
 # Better Apps example
 
-A [TanStack Start](https://tanstack.com/start) app that runs
-[Better Apps](../../packages/better-apps/better-apps/README.md) features on SQLite, wired with
-[`@better-apps/tanstack-start`](../../packages/better-apps/tanstack-start/README.md). People sign in with
-[Better Auth](https://www.better-auth.com), and
-[`@better-apps/better-auth`](../../packages/better-apps/better-auth/README.md) tells features who they are.
+A [TanStack Start](https://tanstack.com/start) app that runs [Better Apps](../../packages/core/better-apps/README.md)
+features on SQLite, wired with [`@better-apps/tanstack-start`](../../packages/integrations/tanstack-start/README.md).
+People sign in with [Better Auth](https://www.better-auth.com), and
+[`@better-apps/identity-better-auth`](../../packages/adapters/identity-better-auth/README.md) tells features who they
+are.
 
 Build the packages it uses once, then start it:
 
@@ -21,11 +21,11 @@ Then open <http://127.0.0.1:4190>. `build` and `preview` run the production buil
   `api.notes.list()` as the request's user, and the form posts to `/api/apps/notes/add` from the browser.
 - **Invoices** is the app's own table, in `src/db/schema.ts`, with a list page and a detail page. The app adds five
   sample invoices on start.
-- **Comments** from [`@better-apps/comments`](../../packages/better-apps/comments/README.md) attach to invoices. The
-  detail page lists an invoice's threads beside it, with a form to start one on the whole invoice or pinned to one of
-  its details, and numbered pins on the details that have open threads. Threads can be replied to, resolved, reopened
-  and deleted. The list shows each invoice's open threads. The UI is in `src/invoice-comments.tsx`; the hooks and the
-  store come from `@better-apps/comments/react`.
+- **Comments** from [`@better-apps/comments`](../../packages/features/comments/README.md) attach to invoices. The detail
+  page lists an invoice's threads beside it, with a form to start one on the whole invoice or pinned to one of its
+  details, and numbered pins on the details that have open threads. Threads can be replied to, resolved, reopened and
+  deleted. The list shows each invoice's open threads. The UI is in `src/invoice-comments.tsx`; the hooks and the store
+  come from `@better-apps/comments/react`.
 - Pages render on the server with their comments. Loaders call server functions in `src/comments.functions.ts`, which
   load a comments store through the bound `client()` and return its snapshot, and the router in `src/router.tsx` carries
   the store to the browser, so the first paint has the threads and the browser doesn't fetch them again.

@@ -1,8 +1,8 @@
 # @better-apps/testing
 
-An in-memory SQLite database and a test identity for testing [Better Apps](../better-apps/README.md) features. The
-database runs through [`@better-apps/drizzle`](../drizzle/README.md), so tests run the same queries an app does, with no
-separate memory adapter to keep in step.
+An in-memory SQLite database and a test identity for testing [Better Apps](../../core/better-apps/README.md) features.
+The database runs through [`@better-apps/database-drizzle`](../../adapters/database-drizzle/README.md), so tests run the
+same queries an app does, with no separate memory adapter to keep in step.
 
 ## Usage
 

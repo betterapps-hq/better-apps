@@ -17,7 +17,7 @@ driver an app would use. The test tables match what `better-apps generate` write
 `pnpm test` skips the databases that need a server. To run them, start Docker and run:
 
 ```sh
-pnpm --filter @better-apps/drizzle test:servers
+pnpm --filter @better-apps/database-drizzle test:servers
 ```
 
 It starts PostgreSQL 17, MySQL 8.4 and Neon's proxy from `test/compose.yaml`, then runs every test against all eight

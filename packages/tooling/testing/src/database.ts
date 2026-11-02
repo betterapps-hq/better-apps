@@ -1,5 +1,5 @@
 import { DatabaseSync, type SQLInputValue } from "node:sqlite"
-import { drizzleAdapter } from "@better-apps/drizzle"
+import { drizzleAdapter } from "@better-apps/database-drizzle"
 import type { DatabaseAdapterFactory, DatabaseSchema, FieldAttribute, TableSchema } from "better-apps"
 import { integer, sqliteTable, text, type SQLiteColumnBuilderBase } from "drizzle-orm/sqlite-core"
 import { drizzle } from "drizzle-orm/sqlite-proxy"
@@ -116,7 +116,7 @@ function drizzleTables(schema: DatabaseSchema) {
 type Method = "run" | "all" | "values" | "get"
 
 /**
- * An in-memory SQLite database for the features' tables, reached through `@better-apps/drizzle`, so tests run the same
+ * An in-memory SQLite database for the features' tables, reached through `@better-apps/database-drizzle`, so tests run the same
  * queries an app runs. Pass it as `database` to `createBetterApps`; each app gets a fresh database with every table and
  * index created, foreign keys enforced, and batches that commit or roll back together.
  */

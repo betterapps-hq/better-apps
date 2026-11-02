@@ -48,12 +48,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/AndrewCraswell/buildkit.git",
-    "directory": "packages/better-apps/mentions"
+    "url": "git+https://github.com/betterapps-hq/better-apps.git",
+    "directory": "packages/features/mentions"
   },
-  "homepage": "https://github.com/AndrewCraswell/buildkit/tree/main/packages/better-apps/mentions#readme",
+  "homepage": "https://github.com/betterapps-hq/better-apps/tree/main/packages/features/mentions#readme",
   "bugs": {
-    "url": "https://github.com/AndrewCraswell/buildkit/issues"
+    "url": "https://github.com/betterapps-hq/better-apps/issues"
   },
   "publishConfig": {
     "access": "public",

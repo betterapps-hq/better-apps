@@ -18,7 +18,6 @@ export {
   type FeatureEvent,
   type HandlerContext
 } from "./app.js"
-export { configureBackends, getBackend, type Backends } from "./backends.js"
 export {
   createDatabaseAdapter,
   type CountGroup,

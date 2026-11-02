@@ -1,5 +1,5 @@
-import { betterAuthIdentity } from "@better-apps/better-auth"
-import { drizzleAdapter } from "@better-apps/drizzle"
+import { drizzleAdapter } from "@better-apps/database-drizzle"
+import { betterAuthIdentity } from "@better-apps/identity-better-auth"
 import { createStartBindings } from "@better-apps/tanstack-start"
 import { createBetterApps } from "better-apps"
 import { auth } from "./auth.server"

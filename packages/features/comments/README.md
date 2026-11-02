@@ -2,8 +2,9 @@
 
 Comment threads on any record an app owns, such as an invoice, a ticket or a preview deploy, optionally pinned to a spot
 inside it. Comments store only the record's type and id; the app's subject types say who can see it, and the rules here
-who can comment. Every write is one atomic batch through [`@better-apps/drizzle`](../drizzle/README.md), on Cloudflare
-D1 as on any other SQL database.
+who can comment. Every write is one atomic batch through
+[`@better-apps/database-drizzle`](../../adapters/database-drizzle/README.md), on Cloudflare D1 as on any other SQL
+database.
 
 ## Usage
 
@@ -69,8 +70,8 @@ as "Former user".
 ## Access
 
 - The app declares each subject type in `createBetterApps`, with `canView`, `getOrgId` and `publicRead` (see
-  [Subjects](../better-apps/README.md#subjects)). Comments add `canComment` for each, and optionally `canModerate`,
-  extra visibilities such as `staff`, a `metadata` schema and `canMention`.
+  [Subjects](../../core/better-apps/README.md#subjects)). Comments add `canComment` for each, and optionally
+  `canModerate`, extra visibilities such as `staff`, a `metadata` schema and `canMention`.
 - One rule decides whether someone can see a thread: its organization must be its subject's, the subject's `canView`
   must pass, and the actor must pass the thread's visibility check. Reads, mentions and live updates all use it.
 - Threads and comments are subject types too, `comments.thread` and `comments.comment` (`commentSubjectTypes`), so other

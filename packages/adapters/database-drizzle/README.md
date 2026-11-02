@@ -1,15 +1,15 @@
-# @better-apps/drizzle
+# @better-apps/database-drizzle
 
-The [Drizzle](https://orm.drizzle.team) database adapter for [Better Apps](../better-apps/README.md). Features read and
-write their tables through it on PostgreSQL, MySQL, SQLite and Cloudflare D1.
+The [Drizzle](https://orm.drizzle.team) database adapter for [Better Apps](../../core/better-apps/README.md). Features
+read and write their tables through it on PostgreSQL, MySQL, SQLite and Cloudflare D1.
 
 ## Usage
 
-Generate the feature tables with `better-apps generate` from [`@better-apps/cli`](../cli/README.md), then pass them to
-Drizzle and create the adapter:
+Generate the feature tables with `better-apps generate` from [`@better-apps/cli`](../../tooling/cli/README.md), then
+pass them to Drizzle and create the adapter:
 
 ```ts
-import { drizzleAdapter } from "@better-apps/drizzle"
+import { drizzleAdapter } from "@better-apps/database-drizzle"
 import { createDatabaseAdapter } from "better-apps"
 import { drizzle } from "drizzle-orm/d1"
 import * as schema from "./better-apps-schema"

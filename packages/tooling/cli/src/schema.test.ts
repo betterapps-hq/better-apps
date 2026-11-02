@@ -6,7 +6,7 @@ import { createRequire } from "node:module"
 import { dirname, join } from "node:path"
 import { DatabaseSync, type SQLInputValue } from "node:sqlite"
 import { pathToFileURL } from "node:url"
-import { drizzleAdapter } from "@better-apps/drizzle"
+import { drizzleAdapter } from "@better-apps/database-drizzle"
 import { createDatabaseAdapter, defineFeature } from "better-apps"
 import {
   generateDrizzleJson,

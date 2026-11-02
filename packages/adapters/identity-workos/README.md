@@ -1,13 +1,13 @@
-# @better-apps/workos
+# @better-apps/identity-workos
 
-The [WorkOS](https://workos.com) identity adapter for [Better Apps](../better-apps/README.md). Features read the
+The [WorkOS](https://workos.com) identity adapter for [Better Apps](../../core/better-apps/README.md). Features read the
 signed-in user, their organization and roles, and other users' names from WorkOS AuthKit. It only reads the standard
 `Request`, so it works on any framework and on Cloudflare Workers.
 
 ## Usage
 
 ```ts
-import { workosIdentity } from "@better-apps/workos"
+import { workosIdentity } from "@better-apps/identity-workos"
 import { createBetterApps } from "better-apps"
 
 export const app = createBetterApps({

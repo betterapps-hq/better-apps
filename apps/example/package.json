@@ -15,9 +15,9 @@
   },
   "dependencies": {
     "@better-apps/anchors": "workspace:*",
-    "@better-apps/better-auth": "workspace:*",
+    "@better-apps/identity-better-auth": "workspace:*",
     "@better-apps/comments": "workspace:*",
-    "@better-apps/drizzle": "workspace:*",
+    "@better-apps/database-drizzle": "workspace:*",
     "@better-apps/react": "workspace:*",
     "@better-apps/tanstack-start": "workspace:*",
     "@tanstack/react-router": "^1.170.46",

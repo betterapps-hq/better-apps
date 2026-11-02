@@ -1,8 +1,8 @@
 # @better-apps/react
 
-Binds a [Better Apps](../better-apps/README.md) client and its stores to React. It adds no UI and needs no data-fetching
-library; feature packages build their hooks on it, such as
-[`@better-apps/comments/react`](../comments/README.md#in-the-browser).
+Binds a [Better Apps](../../core/better-apps/README.md) client and its stores to React. It adds no UI and needs no
+data-fetching library; feature packages build their hooks on it, such as
+[`@better-apps/comments/react`](../../features/comments/README.md#in-the-browser).
 
 ## Usage
 

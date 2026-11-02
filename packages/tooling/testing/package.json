@@ -30,7 +30,7 @@
     "test:coverage": "vp test run --coverage"
   },
   "dependencies": {
-    "@better-apps/drizzle": "workspace:*",
+    "@better-apps/database-drizzle": "workspace:*",
     "better-apps": "workspace:*"
   },
   "peerDependencies": {
@@ -47,12 +47,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/AndrewCraswell/buildkit.git",
-    "directory": "packages/better-apps/testing"
+    "url": "git+https://github.com/betterapps-hq/better-apps.git",
+    "directory": "packages/tooling/testing"
   },
-  "homepage": "https://github.com/AndrewCraswell/buildkit/tree/main/packages/better-apps/testing#readme",
+  "homepage": "https://github.com/betterapps-hq/better-apps/tree/main/packages/tooling/testing#readme",
   "bugs": {
-    "url": "https://github.com/AndrewCraswell/buildkit/issues"
+    "url": "https://github.com/betterapps-hq/better-apps/issues"
   },
   "publishConfig": {
     "access": "public",
