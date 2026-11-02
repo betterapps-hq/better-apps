@@ -8,7 +8,7 @@ permissions:
   contents: read
 jobs:
   ci-verify:
-    uses: betterapps-hq/pipelines/.github/workflows/ci-verify.yml@efa1c3e00652cca72174fdf3abdb911a5c501c45 # v1.11.1
+    uses: betterapps-hq/pipelines/.github/workflows/ci-verify.yml@main
     with:
       # Beachball's change check compares a pull request with origin/main, so it needs the whole history.
       fetch-depth: 0
@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: betterapps-hq/pipelines/github/actions/setup@efa1c3e00652cca72174fdf3abdb911a5c501c45 # v1.11.1
+      - uses: betterapps-hq/pipelines/github/actions/setup@main
       - name: Test the Drizzle adapter on PostgreSQL, Neon and MySQL servers
         run:
           pnpm exec vp run --cache --filter "@better-apps/database-drizzle^..." build && pnpm --filter
