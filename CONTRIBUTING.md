@@ -9,5 +9,6 @@ Put a new package in the folder for its role: `core`, `features`, `adapters`, `i
 The Drizzle adapter also has server tests: `pnpm --filter @better-apps/database-drizzle test:servers` runs it on
 PostgreSQL, Neon and MySQL in Docker.
 
-Open a pull request with the problem, resulting behavior, and validation. Packages remain unpublished during incubation.
-Contributions are MIT licensed.
+A change to a package that isn't private needs a change file: run `pnpm change`. See [Releases](docs/releases.md).
+
+Open a pull request with the problem, resulting behavior, and validation. Contributions are MIT licensed.

@@ -19,9 +19,12 @@
     "check:unused": "knip",
     "test": "pnpm build:packages && vp run --cache -r test",
     "test:coverage": "pnpm build:packages && vp run --cache -r test:coverage",
-    "prepare": "vp config --no-agent"
+    "prepare": "vp config --no-agent",
+    "change": "beachball change",
+    "check:change": "beachball check"
   },
   "devDependencies": {
+    "beachball": "^2.65.5",
     "knip": "^6.43.0",
     "vite-plus": "catalog:"
   }

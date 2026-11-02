@@ -8,10 +8,16 @@ permissions:
   contents: read
 jobs:
   ci-verify:
-    uses: betterapps-hq/pipelines/.github/workflows/ci-verify.yml@8b4311a69b28ad7423898dceda366cee6644f92c # v1.1.1
+    uses: betterapps-hq/pipelines/.github/workflows/ci-verify.yml@efa1c3e00652cca72174fdf3abdb911a5c501c45 # v1.11.1
     with:
-      command: pnpm verify
-  # Branch protection expects a check named verify, and a reusable workflow's checks are named after the calling job,
+      # Beachball's change check compares a pull request with origin/main, so it needs the whole history.
+      fetch-depth: 0
+      command: |
+        if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+          pnpm check:change
+        fi
+        pnpm verify
+  # Branch protection requires a check named verify, and a reusable workflow's checks are named after the calling job,
   # such as "ci-verify / Verify (ubuntu-latest)". This job reports ci-verify's result as verify.
   verify:
     needs: ci-verify
@@ -27,7 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: betterapps-hq/pipelines/github/actions/setup@8b4311a69b28ad7423898dceda366cee6644f92c # v1.1.1
+      - uses: betterapps-hq/pipelines/github/actions/setup@efa1c3e00652cca72174fdf3abdb911a5c501c45 # v1.11.1
       - name: Test the Drizzle adapter on PostgreSQL, Neon and MySQL servers
         run:
           pnpm exec vp run --cache --filter "@better-apps/database-drizzle^..." build && pnpm --filter
