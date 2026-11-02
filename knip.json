@@ -2,18 +2,47 @@
   "ignoreExportsUsedInFile": true,
   "ignore": ["**/src/vendor/**"],
   "workspaces": {
-    "packages/core/better-apps": { "entry": ["src/index.ts", "src/client.ts"] },
-    "packages/features/anchors": { "entry": ["src/index.ts", "src/dom.ts", "src/react.ts"] },
-    "packages/features/comments": { "entry": ["src/index.ts", "src/client.ts", "src/react.tsx"] },
-    "packages/features/mentions": { "entry": ["src/index.ts"] },
-    "packages/adapters/database-drizzle": { "entry": ["src/index.ts"] },
-    "packages/adapters/identity-better-auth": { "entry": ["src/index.ts"] },
-    "packages/adapters/identity-clerk": { "entry": ["src/index.ts"] },
-    "packages/adapters/identity-workos": { "entry": ["src/index.ts"] },
-    "packages/integrations/react": { "entry": ["src/index.tsx"] },
-    "packages/integrations/tanstack-start": { "entry": ["src/index.ts"] },
-    "packages/tooling/cli": { "entry": ["src/index.ts", "src/bin.ts", "test/fixtures/*.config.ts"] },
-    "packages/tooling/testing": { "entry": ["src/index.ts"] },
-    "apps/example": { "entry": ["better-apps.config.ts"] }
+    ".": {
+      "entry": ["beachball.config.js"]
+    },
+    "packages/core/better-apps": {
+      "entry": ["src/index.ts", "src/client.ts"]
+    },
+    "packages/features/anchors": {
+      "entry": ["src/index.ts", "src/dom.ts", "src/react.ts"]
+    },
+    "packages/features/comments": {
+      "entry": ["src/index.ts", "src/client.ts", "src/react.tsx"]
+    },
+    "packages/features/mentions": {
+      "entry": ["src/index.ts"]
+    },
+    "packages/adapters/database-drizzle": {
+      "entry": ["src/index.ts"]
+    },
+    "packages/adapters/identity-better-auth": {
+      "entry": ["src/index.ts"]
+    },
+    "packages/adapters/identity-clerk": {
+      "entry": ["src/index.ts"]
+    },
+    "packages/adapters/identity-workos": {
+      "entry": ["src/index.ts"]
+    },
+    "packages/integrations/react": {
+      "entry": ["src/index.tsx"]
+    },
+    "packages/integrations/tanstack-start": {
+      "entry": ["src/index.ts"]
+    },
+    "packages/tooling/cli": {
+      "entry": ["src/index.ts", "src/bin.ts", "test/fixtures/*.config.ts"]
+    },
+    "packages/tooling/testing": {
+      "entry": ["src/index.ts"]
+    },
+    "apps/example": {
+      "entry": ["better-apps.config.ts"]
+    }
   }
 }
