@@ -22,7 +22,7 @@
     "prepare": "vp config --no-agent"
   },
   "devDependencies": {
-    "knip": "^6.43.0",
+    "knip": "^6.44.0",
     "vite-plus": "catalog:"
   }
 }
