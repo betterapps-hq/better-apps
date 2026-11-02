@@ -28,7 +28,7 @@ jobs:
       actions: read
       # npm's trusted publishing exchanges the run's OIDC token for a short-lived one, and signs provenance with it.
       id-token: write
-    uses: betterapps-hq/pipelines/.github/workflows/cd-npm-publish.yml@efa1c3e00652cca72174fdf3abdb911a5c501c45 # v1.11.1
+    uses: betterapps-hq/pipelines/.github/workflows/cd-npm-publish.yml@main
     with:
       environment: npm
       ci-workflow: ci.yml

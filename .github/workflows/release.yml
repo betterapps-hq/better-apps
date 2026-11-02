@@ -18,7 +18,7 @@ jobs:
   prepare:
     # CI's runs for pushes to main only, never a pull request's branch that happens to be called main.
     if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
-    uses: betterapps-hq/pipelines/.github/workflows/release-prepare.yml@efa1c3e00652cca72174fdf3abdb911a5c501c45 # v1.11.1
+    uses: betterapps-hq/pipelines/.github/workflows/release-prepare.yml@main
     with:
       app-client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
     secrets:
@@ -27,7 +27,7 @@ jobs:
   merge:
     needs: prepare
     if: needs.prepare.outputs.pull-request != ''
-    uses: betterapps-hq/pipelines/.github/workflows/release-merge.yml@efa1c3e00652cca72174fdf3abdb911a5c501c45 # v1.11.1
+    uses: betterapps-hq/pipelines/.github/workflows/release-merge.yml@main
     with:
       pull-request: ${{ fromJSON(needs.prepare.outputs.pull-request) }}
       head-sha: ${{ needs.prepare.outputs.head-sha }}

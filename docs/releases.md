@@ -8,7 +8,8 @@ one version, as the `better-apps-platform` group in `beachball.config.js`. Featu
 
 ## How a release goes out
 
-The workflows call the shared templates in [betterapps-hq/pipelines](https://github.com/betterapps-hq/pipelines).
+The workflows call the shared templates in [betterapps-hq/pipelines](https://github.com/betterapps-hq/pipelines) at
+`main`, so every run uses whatever is on its `main` branch now.
 
 1. **A change merges with its change file.** After CI passes on `main`, [release.yml](../.github/workflows/release.yml)
    opens the release pull request, or updates the open one: one commit with the versions and changelogs `beachball bump`
