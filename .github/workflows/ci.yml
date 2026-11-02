@@ -8,7 +8,7 @@ permissions:
   contents: read
 jobs:
   ci-verify:
-    uses: betterapps-hq/pipelines/.github/workflows/ci-verify.yml@8b4311a69b28ad7423898dceda366cee6644f92c # v1.1.1
+    uses: betterapps-hq/pipelines/.github/workflows/ci-verify.yml@cfe6a66143f19e96a69eb54ee703ec3d052d37a7 # v1.10.0
     with:
       command: pnpm verify
   # Branch protection expects a check named verify, and a reusable workflow's checks are named after the calling job,
