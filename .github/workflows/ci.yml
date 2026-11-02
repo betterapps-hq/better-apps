@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: betterapps-hq/pipelines/github/actions/setup@8b4311a69b28ad7423898dceda366cee6644f92c # v1.1.1
+      - uses: betterapps-hq/pipelines/github/actions/setup@cfe6a66143f19e96a69eb54ee703ec3d052d37a7 # v1.10.0
       - name: Test the Drizzle adapter on PostgreSQL, Neon and MySQL servers
         run:
           pnpm exec vp run --cache --filter "@better-apps/database-drizzle^..." build && pnpm --filter
