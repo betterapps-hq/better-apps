@@ -8,8 +8,10 @@ one version, as the `better-apps-platform` group in `beachball.config.js`. Featu
 
 ## How a release goes out
 
-Releasing is the last job in [CI](../.github/workflows/ci.yml). When a change merges with its change file and `verify`
-and `databases` pass on `main`, the `release` job runs `beachball publish`, which:
+Releasing is the last job in [CI](../.github/workflows/ci.yml), through the shared
+[beachball-publish-npm](https://github.com/betterapps-hq/pipelines/blob/main/.github/workflows/beachball-publish-npm.yml)
+template. When a change merges with its change file and `verify` and `databases` pass on `main`, the `release` job runs
+`beachball publish`, which:
 
 1. bumps the versions and writes the changelogs from the change files, and deletes them;
 2. publishes the new versions to npm, in dependency order, turning `workspace:` and `catalog:` ranges into versions;
