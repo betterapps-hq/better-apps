@@ -1,0 +1,6 @@
+interface:
+  display_name: "Test Quality"
+  short_description: "Meaningful unit and Storybook interaction tests"
+  default_prompt: "Use $test-quality to write or review tests for useful coverage, clear assertions, and realistic interactions."
+policy:
+  allow_implicit_invocation: true

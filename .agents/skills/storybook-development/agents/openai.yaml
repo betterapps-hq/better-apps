@@ -1,0 +1,6 @@
+interface:
+  display_name: "Storybook Development"
+  short_description: "Build stories around the UI used in the app"
+  default_prompt: "Use $storybook-development to build or review stories for production components."
+policy:
+  allow_implicit_invocation: true
