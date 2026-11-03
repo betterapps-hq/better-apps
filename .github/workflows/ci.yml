@@ -49,5 +49,8 @@ jobs:
       contents: read
       id-token: write
     uses: betterapps-hq/pipelines/.github/workflows/beachball-publish-npm.yml@main
+    # The template reads RELEASE_DEPLOY_KEY from the npm environment, which a called workflow sees only when the caller
+    # inherits secrets.
+    secrets: inherit
     with:
       build-command: pnpm build:packages
