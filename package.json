@@ -21,11 +21,23 @@
     "test:coverage": "pnpm build:packages && vp run --cache -r test:coverage",
     "prepare": "vp config --no-agent",
     "change": "beachball change",
-    "check:change": "beachball check"
+    "check:change": "beachball check",
+    "guidance:sync": "playbook-sync",
+    "guidance:check": "playbook-sync --check",
+    "guidance:update": "pnpm update @betterapps/playbook --latest && playbook-sync",
+    "skills:add": "skills add",
+    "skills:update": "skills update -p",
+    "skills:remove": "skills remove",
+    "skills:check": "skills check",
+    "skills:sync": "skills add betterapps-hq/playbook --skill \"*\" -a codex claude-code github-copilot --yes",
+    "rules:import": "rulesync import"
   },
   "devDependencies": {
     "beachball": "^2.65.5",
     "knip": "^6.43.0",
-    "vite-plus": "catalog:"
+    "vite-plus": "catalog:",
+    "@betterapps/playbook": "github:betterapps-hq/playbook",
+    "rulesync": "43.5.0",
+    "skills": "1.7.6"
   }
 }

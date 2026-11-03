@@ -1,0 +1,7 @@
+interface:
+  display_name: "React Components"
+  short_description: "Cohesive React components, hooks, and state ownership"
+  default_prompt:
+    "Use $react-components to implement or review React components, hooks, state ownership, and file organization."
+policy:
+  allow_implicit_invocation: true
