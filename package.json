@@ -34,7 +34,7 @@
   },
   "devDependencies": {
     "beachball": "^2.65.5",
-    "knip": "^6.43.0",
+    "knip": "^6.44.1",
     "vite-plus": "catalog:",
     "@betterapps/playbook": "github:betterapps-hq/playbook",
     "rulesync": "43.5.0",
