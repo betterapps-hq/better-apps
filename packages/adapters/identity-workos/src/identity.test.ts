@@ -4,20 +4,30 @@ import { workosIdentity, type WorkOSIdentityClient, type WorkOSMembership, type 
 
 const cookiePassword = "a-cookie-password-that-is-at-least-32-characters"
 
-// A key pair standing in for WorkOS's, and a fake WorkOS API that serves its public key and authenticates passwords,
-// so the real SDK seals and verifies sessions without a network.
-const { publicKey, privateKey } = await crypto.subtle.generateKey(
-  { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
-  true,
-  ["sign", "verify"]
-)
+// A key pair standing in for WorkOS's, and a fake WorkOS API that serves its public key and issuer and authenticates
+// passwords, so the real SDK seals and verifies sessions and tokens without a network.
+const generateKeys = () =>
+  crypto.subtle.generateKey(
+    { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+    true,
+    ["sign", "verify"]
+  )
+const { publicKey, privateKey } = await generateKeys()
 const jwk = { ...(await crypto.subtle.exportKey("jwk", publicKey)), kid: "key_test", alg: "RS256", use: "sig" }
 const encode = (value: object) => Buffer.from(JSON.stringify(value)).toString("base64url")
+// WorkOS's issuer can name another of the environment's clients, not the app's.
+const issuer = "https://api.workos.com/user_management/client_environment"
 let authentication: object = {}
+let openidConfiguration = (): Response => Response.json({ issuer })
+let issuerReads = 0
 vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
   const { pathname } = new URL(input instanceof Request ? input.url : String(input))
   if (pathname === "/sso/jwks/client_test") {
     return Response.json({ keys: [jwk] })
+  }
+  if (pathname === "/user_management/client_test/.well-known/openid-configuration") {
+    issuerReads++
+    return openidConfiguration()
   }
   if (pathname === "/user_management/authenticate") {
     return Response.json(authentication)
@@ -25,17 +35,19 @@ vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
   return Response.json({ message: "Not found" }, { status: 404 })
 })
 
-/** Signs an access token the way WorkOS does. */
-async function accessToken(claims: object) {
+/** Signs an access token the way WorkOS does, or with another key. */
+async function accessToken(claims: object, key = privateKey) {
   const now = Math.floor(Date.now() / 1000)
   const body = `${encode({ alg: "RS256", typ: "JWT", kid: "key_test" })}.${encode({
+    iss: issuer,
     sub: "user_ada",
     sid: "session_1",
     iat: now - 10,
+    auth_time: now - 10,
     exp: now + 300,
     ...claims
   })}`
-  const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", privateKey, new TextEncoder().encode(body))
+  const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(body))
   return `${body}.${Buffer.from(signature).toString("base64url")}`
 }
 
@@ -70,8 +82,12 @@ async function sessionCookie(claims: object, password = cookiePassword) {
   return sealedSession!
 }
 
-const request = (cookie?: string) =>
-  new Request("https://app.test/api/apps/notes/add", { method: "POST", headers: cookie ? { cookie } : {} })
+const request = (cookie?: string, authorization?: string) =>
+  new Request("https://app.test/api/apps/notes/add", {
+    method: "POST",
+    headers: { ...(cookie ? { cookie } : {}), ...(authorization ? { authorization } : {}) }
+  })
+const bearer = (token: string) => request(undefined, `Bearer ${token}`)
 
 interface DirectoryUser {
   id: string
@@ -95,6 +111,7 @@ function mockWorkOS(directory: DirectoryUser[]) {
     profilePictureUrl: `https://img.workos.test/${user.id}`
   })
   const userManagement = {
+    verifyAccessToken: vi.fn<WorkOSIdentityClient["userManagement"]["verifyAccessToken"]>(async () => null),
     loadSealedSession: vi.fn<WorkOSIdentityClient["userManagement"]["loadSealedSession"]>(() => ({
       authenticate: async () => ({ authenticated: false })
     })),
@@ -127,7 +144,7 @@ function mockWorkOS(directory: DirectoryUser[]) {
       }
     )
   }
-  return { userManagement } satisfies WorkOSIdentityClient
+  return { baseURL: "https://api.workos.test", clientId: "client_test", userManagement } satisfies WorkOSIdentityClient
 }
 
 const admin = { status: "active", role: { slug: "admin" } } as const
@@ -161,6 +178,8 @@ const many = (count: number, orgs?: DirectoryUser["orgs"]): DirectoryUser[] =>
 
 afterEach(() => {
   vi.useRealTimers()
+  openidConfiguration = () => Response.json({ issuer })
+  issuerReads = 0
 })
 
 describe("workosIdentity", () => {
@@ -219,6 +238,112 @@ describe("workosIdentity", () => {
       const created = workosIdentity({ apiKey: "sk_test_identity", clientId: "client_test", cookiePassword })
       const cookie = await sessionCookie({ org_id: "org_acme", role: "admin" })
       expect(await created.getActor(request(`wos-session=${cookie}`))).toMatchObject({ userId: "user_ada" })
+    })
+  })
+
+  describe("getActor with a WorkOS access token", () => {
+    const identity = workosIdentity({ workos, cookiePassword })
+
+    it("acts in the token's organization with its role or roles, or outside any organization", async () => {
+      expect(await identity.getActor(bearer(await accessToken({ org_id: "org_acme", role: "admin" })))).toEqual({
+        userId: "user_ada",
+        orgId: "org_acme",
+        roles: ["admin"]
+      })
+      const several = await accessToken({ org_id: "org_acme", role: "admin", roles: ["admin", "billing", "admin"] })
+      expect(await identity.getActor(request(undefined, `bearer   ${several} `))).toEqual({
+        userId: "user_ada",
+        orgId: "org_acme",
+        roles: ["admin", "billing"]
+      })
+      expect(await identity.getActor(bearer(await accessToken({ role: "member" })))).toEqual({
+        userId: "user_ada",
+        orgId: null,
+        roles: []
+      })
+    })
+
+    it("acts as nobody with an expired, forged or malformed token, or one that isn't a user's", async () => {
+      const now = Math.floor(Date.now() / 1000)
+      const { privateKey: otherKey } = await generateKeys()
+      for (const token of [
+        await accessToken({ exp: now - 60 }),
+        await accessToken({ org_id: "org_acme", role: "admin" }, otherKey),
+        await accessToken({ sid: undefined, auth_time: undefined, sub_profile: "agent" }),
+        "not-a-token"
+      ]) {
+        expect(await identity.getActor(bearer(token))).toBeNull()
+      }
+      const valid = await accessToken({})
+      expect(await identity.getActor(request(undefined, `Basic ${valid}`))).toBeNull()
+      expect(await identity.getActor(request(undefined, `Bearer ${valid} extra`))).toBeNull()
+      expect(await identity.getActor(request(undefined, "Bearer "))).toBeNull()
+    })
+
+    it("acts as nobody with a token from another issuer", async () => {
+      expect(await identity.getActor(bearer(await accessToken({ iss: "https://api.workos.com/" })))).toBeNull()
+      expect(await identity.getActor(bearer(await accessToken({ iss: "https://elsewhere.test" })))).toBeNull()
+    })
+
+    it("reads the cookie when a request has both", async () => {
+      const cookie = await sessionCookie({ org_id: "org_acme", role: "admin" })
+      const token = await accessToken({ sub: "user_grace", org_id: "org_initech", role: "member" })
+      expect(await identity.getActor(request(`wos-session=${cookie}`, `Bearer ${token}`))).toEqual({
+        userId: "user_ada",
+        orgId: "org_acme",
+        roles: ["admin"]
+      })
+      expect(await identity.getActor(request("wos-session=not-a-sealed-session", `Bearer ${token}`))).toBeNull()
+    })
+
+    it("reads WorkOS's published issuer once", async () => {
+      const fresh = workosIdentity({ workos, cookiePassword })
+      const token = await accessToken({ org_id: "org_acme", role: "admin" })
+      await Promise.all([fresh.getActor(bearer(token)), fresh.getActor(bearer(token))])
+      expect(await fresh.getActor(bearer(token))).toMatchObject({ userId: "user_ada" })
+      expect(issuerReads).toBe(1)
+    })
+
+    it("checks the issuers the app sets instead", async () => {
+      const custom = workosIdentity({ workos, cookiePassword, issuer: ["https://auth.example.test"] })
+      const token = await accessToken({ iss: "https://auth.example.test", org_id: "org_acme", role: "admin" })
+      expect(await custom.getActor(bearer(token))).toMatchObject({ userId: "user_ada", orgId: "org_acme" })
+      expect(await custom.getActor(bearer(await accessToken({})))).toBeNull()
+      expect(issuerReads).toBe(0)
+    })
+
+    it("lets a failure to read the issuer through and tries again on the next request", async () => {
+      const fresh = workosIdentity({ workos, cookiePassword })
+      const token = await accessToken({})
+      openidConfiguration = () => Response.json({ message: "Unavailable" }, { status: 503 })
+      await expect(fresh.getActor(bearer(token))).rejects.toThrow("503")
+      openidConfiguration = () => Response.json({})
+      await expect(fresh.getActor(bearer(token))).rejects.toThrow("has no issuer")
+      openidConfiguration = () => Response.json({ issuer })
+      expect(await fresh.getActor(bearer(token))).toMatchObject({ userId: "user_ada" })
+      expect(issuerReads).toBe(3)
+    })
+
+    it("needs the client ID, or an issuer, to check tokens", async () => {
+      const client = { ...mockWorkOS([]), clientId: undefined }
+      client.userManagement.verifyAccessToken.mockResolvedValue({ sub: "user_ada", iss: issuer })
+      await expect(workosIdentity({ workos: client, cookiePassword }).getActor(bearer("token"))).rejects.toThrow(
+        "client ID"
+      )
+      expect(await workosIdentity({ workos: client, cookiePassword, issuer }).getActor(bearer("token"))).toEqual({
+        userId: "user_ada",
+        orgId: null,
+        roles: []
+      })
+    })
+
+    it("creates a client from the keys", async () => {
+      const created = workosIdentity({ apiKey: "sk_test_identity", clientId: "client_test", cookiePassword })
+      expect(await created.getActor(bearer(await accessToken({ org_id: "org_acme" })))).toEqual({
+        userId: "user_ada",
+        orgId: "org_acme",
+        roles: []
+      })
     })
   })
 

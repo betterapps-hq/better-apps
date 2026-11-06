@@ -7,6 +7,19 @@
 import type { Identity } from 'better-apps';
 
 // @public
+export interface WorkOSAccessTokenClaims {
+    // (undocumented)
+    iss: string;
+    // (undocumented)
+    org_id?: string | undefined;
+    // (undocumented)
+    role?: string | undefined;
+    // (undocumented)
+    roles?: string[] | undefined;
+    sub: string;
+}
+
+// @public
 export type WorkOSAuthentication = {
     authenticated: false;
 } | {
@@ -24,6 +37,9 @@ export function workosIdentity(options: WorkOSIdentityOptions): Identity;
 
 // @public
 export interface WorkOSIdentityClient {
+    readonly baseURL: string;
+    // (undocumented)
+    readonly clientId?: string | undefined;
     // (undocumented)
     userManagement: {
         loadSealedSession(options: {
@@ -32,6 +48,7 @@ export interface WorkOSIdentityClient {
         }): {
             authenticate(): Promise<WorkOSAuthentication>;
         };
+        verifyAccessToken(accessToken: string): Promise<WorkOSAccessTokenClaims | null>;
         getUser(userId: string): Promise<WorkOSUser>;
         listUsers(options: {
             organizationId?: string;
@@ -56,6 +73,7 @@ export type WorkOSIdentityOptions = ({
 }) & {
     cookiePassword: string;
     cookieName?: string | undefined;
+    issuer?: string | readonly string[] | undefined;
     searchOutsideOrgs?: boolean | undefined;
 };
 

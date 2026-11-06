@@ -1,5 +1,6 @@
 export {
   workosIdentity,
+  type WorkOSAccessTokenClaims,
   type WorkOSAuthentication,
   type WorkOSIdentityClient,
   type WorkOSIdentityOptions,
