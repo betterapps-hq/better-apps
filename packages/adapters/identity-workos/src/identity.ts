@@ -36,12 +36,30 @@ export type WorkOSAuthentication =
       roles?: string[] | undefined
     }
 
+/** A verified WorkOS access token's claims, the ones the identity reads. */
+export interface WorkOSAccessTokenClaims {
+  /** The user's id. */
+  sub: string
+  iss: string
+  org_id?: string | undefined
+  role?: string | undefined
+  roles?: string[] | undefined
+}
+
 /** The parts of a WorkOS client, the one `new WorkOS()` creates, that the identity calls. */
 export interface WorkOSIdentityClient {
+  /** The WorkOS API's address, `https://api.workos.com` unless the client names another. */
+  readonly baseURL: string
+  readonly clientId?: string | undefined
   userManagement: {
     loadSealedSession(options: { sessionData: string; cookiePassword: string }): {
       authenticate(): Promise<WorkOSAuthentication>
     }
+    /**
+     * Checks an access token's signature against the client's JWKS, its expiry and that it's a user's token, and
+     * returns its claims, or `null` when it fails a check.
+     */
+    verifyAccessToken(accessToken: string): Promise<WorkOSAccessTokenClaims | null>
     getUser(userId: string): Promise<WorkOSUser>
     listUsers(options: { organizationId?: string; limit?: number; after?: string }): Promise<WorkOSList<WorkOSUser>>
     listOrganizationMemberships(options: {
@@ -62,6 +80,11 @@ export type WorkOSIdentityOptions = (
   /** The default is `wos-session`, AuthKit's. */
   cookieName?: string | undefined
   /**
+   * The issuer, or issuers, a bearer access token must name. The default is the issuer WorkOS publishes in the client's
+   * OpenID configuration. Set it when the environment has a custom authentication domain.
+   */
+  issuer?: string | readonly string[] | undefined
+  /**
    * Whether `searchUsers` with no organization searches every user, for apps without organizations. The default is
    * false, so nobody outside an organization can look through every user's name and email.
    */
@@ -78,13 +101,51 @@ const cacheSize = 1000
 
 /**
  * An identity that reads users from WorkOS: the signed-in user, their organization and roles from AuthKit's sealed
- * session cookie, and other users and memberships from WorkOS's user management API. It never refreshes the session,
- * since the new cookie couldn't reach the browser, so sign-in and refresh stay with AuthKit.
+ * session cookie or a WorkOS access token sent as a bearer token, and other users and memberships from WorkOS's user
+ * management API. It never refreshes the session, since the new cookie couldn't reach the browser, so sign-in and
+ * refresh stay with AuthKit or the app that holds the token.
  */
 export function workosIdentity(options: WorkOSIdentityOptions): Identity {
   const workos = options.workos ?? new WorkOS(options.apiKey, { clientId: options.clientId })
   const { cookiePassword, cookieName = "wos-session", searchOutsideOrgs = false } = options
+  const issuers = options.issuer === undefined ? undefined : [options.issuer].flat()
   const users = new Map<string, { expiresAt: number; user: Promise<IdentityUser | null> }>()
+  let publishedIssuer: Promise<string> | undefined
+
+  /** The issuers a bearer token may name: the configured ones, or the one WorkOS publishes, read once. */
+  const getIssuers = async (): Promise<readonly string[]> => {
+    if (issuers) {
+      return issuers
+    }
+    let issuer = publishedIssuer
+    if (!issuer) {
+      const read = readPublishedIssuer(workos)
+      // A failed read isn't remembered.
+      read.catch(() => {
+        if (publishedIssuer === read) {
+          publishedIssuer = undefined
+        }
+      })
+      issuer = publishedIssuer = read
+    }
+    return [await issuer]
+  }
+
+  const getActorFromCookie = async (sessionData: string): Promise<Actor | null> => {
+    const session = await workos.userManagement.loadSealedSession({ sessionData, cookiePassword }).authenticate()
+    if (!session.authenticated) {
+      return null
+    }
+    return toActor(session.user.id, session.organizationId, session.role, session.roles)
+  }
+
+  const getActorFromToken = async (accessToken: string): Promise<Actor | null> => {
+    const claims = await workos.userManagement.verifyAccessToken(accessToken)
+    if (!claims || !(await getIssuers()).includes(claims.iss)) {
+      return null
+    }
+    return toActor(claims.sub, claims.org_id, claims.role, claims.roles)
+  }
 
   /** Looks a user up, or reuses a lookup from the last minute. Users that don't exist are remembered too. */
   const getUser = (userId: string) => {
@@ -133,23 +194,13 @@ export function workosIdentity(options: WorkOSIdentityOptions): Identity {
 
   return {
     getActor: async (request) => {
+      // A request with both reads only the cookie.
       const sessionData = readCookie(request, cookieName)
-      if (!sessionData) {
-        return null
+      if (sessionData) {
+        return getActorFromCookie(sessionData)
       }
-      const session = await workos.userManagement.loadSealedSession({ sessionData, cookiePassword }).authenticate()
-      if (!session.authenticated) {
-        return null
-      }
-      if (!session.organizationId) {
-        return { userId: session.user.id, orgId: null, roles: [] }
-      }
-      // `roles` lists every role when the member has several, and `role` is the main one.
-      let roles = session.roles ?? []
-      if (roles.length === 0 && session.role) {
-        roles = [session.role]
-      }
-      return { userId: session.user.id, orgId: session.organizationId, roles: unique(roles) }
+      const accessToken = readBearerToken(request)
+      return accessToken ? getActorFromToken(accessToken) : null
     },
     getActorsFor: async (userIds, orgId) => {
       const ids = unique(userIds)
@@ -208,6 +259,45 @@ export function workosIdentity(options: WorkOSIdentityOptions): Identity {
 function toProfile(user: WorkOSUser): IdentityUser {
   const name = user.name || [user.firstName, user.lastName].filter(Boolean).join(" ") || null
   return { id: user.id, name, email: user.email, image: user.profilePictureUrl }
+}
+
+/** The actor a session or access token names, in its organization with its roles, or outside any organization. */
+function toActor(
+  userId: string,
+  orgId: string | undefined,
+  role: string | undefined,
+  roles: readonly string[] | undefined
+): Actor {
+  if (!orgId) {
+    return { userId, orgId: null, roles: [] }
+  }
+  // `roles` lists every role when the member has several, and `role` is the main one.
+  if (roles?.length) {
+    return { userId, orgId, roles: unique(roles) }
+  }
+  return { userId, orgId, roles: role ? [role] : [] }
+}
+
+/** Reads the issuer from the client's OpenID configuration, the one WorkOS publishes. */
+async function readPublishedIssuer(workos: WorkOSIdentityClient): Promise<string> {
+  if (!workos.clientId) {
+    throw new TypeError("workosIdentity needs the WorkOS client's client ID, or an issuer, to check bearer tokens.")
+  }
+  const url = `${workos.baseURL}/user_management/${encodeURIComponent(workos.clientId)}/.well-known/openid-configuration`
+  const response = await fetch(url)
+  if (!response.ok) {
+    throw new Error(`Couldn't read WorkOS's OpenID configuration from ${url}: ${response.status}.`)
+  }
+  const { issuer } = (await response.json()) as { issuer?: unknown }
+  if (typeof issuer !== "string" || !issuer) {
+    throw new Error(`WorkOS's OpenID configuration at ${url} has no issuer.`)
+  }
+  return issuer
+}
+
+/** Reads the token from a request's `Authorization: Bearer` header. */
+function readBearerToken(request: Request): string | undefined {
+  return /^Bearer +([^\s]+) *$/i.exec(request.headers.get("authorization") ?? "")?.[1]
 }
 
 /** Reads a cookie from a request's `Cookie` header. */
