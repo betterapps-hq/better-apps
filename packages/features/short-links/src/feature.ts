@@ -16,9 +16,10 @@ import { codeLimits, generateCode, isValidCode, normalizeCode } from "./codes.js
 import { grantCodes, grantCookie, reachesHost, type CookieSettings } from "./cookie.js"
 import { ShortLinksError } from "./errors.js"
 import { shortLinkEvents } from "./events.js"
-import { isOpen, ownerKey, toLink, type ShortLink } from "./link.js"
+import { isOpen, ownerKey, ownerOf, toLink, type ShortLink } from "./link.js"
 import type {
   CreateLinkInput,
+  LinkHosts,
   LinkRules,
   LinkSubject,
   ListLinksInput,
@@ -53,6 +54,7 @@ interface Config {
   canManage: ShortLinksOptions["canManage"]
   path: string
   baseUrl: string | undefined
+  hosts: LinkHosts | undefined
   codeLength: number
   cookie: CookieSettings
   notFound: NonNullable<ShortLinksOptions["notFound"]>
@@ -85,6 +87,9 @@ function resolve(options: ShortLinksOptions): Config {
     }
     baseUrl = parsed.href.replace(/\/+$/, "")
   }
+  if (options.hosts !== undefined && typeof options.hosts.resolve !== "function") {
+    throw new Error("`hosts.resolve` must be a function that says whose links a host opens.")
+  }
   const cookieName = options.cookie?.name ?? "better-apps-links"
   if (!/^[\w\-.]+$/.test(cookieName)) {
     throw new Error(`The cookie name "${cookieName}" may use only letters, digits, _, - and .`)
@@ -108,15 +113,74 @@ function resolve(options: ShortLinksOptions): Config {
     canManage: options.canManage,
     path,
     baseUrl,
+    hosts: options.hosts,
     codeLength,
     cookie: { name: cookieName, maxAge: cookieMaxAge, domain },
     notFound: options.notFound ?? notFoundPage
   }
 }
 
-/** Where a call's links live: `baseUrl`, or the request's origin, with the path. */
+/** Where a call's links live on the app's own host: `baseUrl`, or the request's origin, with the path. */
 function prefixOf(config: Config, request: Request | null): string {
   return `${config.baseUrl ?? (request ? new URL(request.url).origin : "")}${config.path}`
+}
+
+/** The origin `hosts.origin` returned, or the setup error that says it isn't one. */
+function originOf(value: string): string {
+  const url = URL.canParse(value) ? new URL(value) : null
+  if (!url || (url.protocol !== "https:" && url.protocol !== "http:")) {
+    throw new Error(
+      `Short links' \`hosts.origin\` returned "${value}", which isn't an http or https origin, such as https://links.acme.com.`
+    )
+  }
+  return url.origin
+}
+
+/** Writes each link's short URL prefix within one call, such as `https://links.acme.com/s`. */
+type Prefixer = (row: LinkRow) => Promise<string>
+
+/**
+ * The prefix of each link's short URL in a call: `hosts.origin`'s for the link, or the app's own. A link that grants
+ * access stays on the app's host when the cookie it would set on the other host can't reach the record. Each owner's
+ * origin is asked once per call.
+ */
+function prefixer(config: Config, request: Request | null): Prefixer {
+  const own = prefixOf(config, request)
+  const origin = config.hosts?.origin
+  if (!origin) {
+    return async () => own
+  }
+  const asked = new Map<string, Promise<string | null>>()
+  return async (row) => {
+    const key = `${row.owner} ${row.orgId}`
+    let pending = asked.get(key)
+    if (!pending) {
+      const args = { owner: ownerOf(row.owner), orgId: row.orgId === "" ? null : row.orgId }
+      pending = Promise.resolve(origin(args)).then((value) => (value === null ? null : originOf(value)))
+      asked.set(key, pending)
+    }
+    const found = await pending
+    if (found === null) {
+      return own
+    }
+    const prefix = `${found}${config.path}`
+    const type = row.subjectType ?? ""
+    const rules = Object.hasOwn(config.subjects, type) ? config.subjects[type] : undefined
+    if (row.grantsView && rules && row.subjectId !== null) {
+      const link = `${prefix}/${row.code}`
+      const orgId = row.orgId === "" ? null : row.orgId
+      const target = new URL(await rules.url({ subjectType: type, subjectId: row.subjectId, orgId }), link).href
+      if (!reachesHost(link, target, config.cookie.domain)) {
+        return own
+      }
+    }
+    return prefix
+  }
+}
+
+/** A row as actions return it, with its short URL from `prefix`. */
+async function present(prefix: Prefixer, row: LinkRow): Promise<ShortLink> {
+  return toLink(row, await prefix(row))
 }
 
 /** Server code that passes neither an actor nor a request is trusted. It can't make links, since a link is someone's. */
@@ -351,6 +415,7 @@ async function create(config: Config, context: Context): Promise<ShortLink> {
   checkExpiry(input.expiresAt)
   const owner = ownerKey(ownerType, ownerType === "org" ? orgId : actor.userId)
   const prefix = prefixOf(config, context.request)
+  const prefixes = prefixer(config, context.request)
   let target: Pick<LinkRow, "url" | "subjectType" | "subjectId">
   if ("url" in input.target) {
     if (input.grantsView) {
@@ -397,7 +462,7 @@ async function create(config: Config, context: Context): Promise<ShortLink> {
   // writes by reading it back.
   for (let attempt = 1; ; attempt += 1) {
     const row: LinkRow = { id: crypto.randomUUID(), code: codeFor(), ...fields }
-    const link = toLink(row, prefix)
+    const link = await present(prefixes, row)
     context.emit("link.created", { link })
     try {
       await context.db.batch([{ type: "create", model: linkModel, data: row }])
@@ -418,7 +483,7 @@ async function create(config: Config, context: Context): Promise<ShortLink> {
 
 async function get(config: Config, context: Context): Promise<ShortLink> {
   const { code: wanted } = context.input as { code: string }
-  return toLink(await requireLink(config, context, wanted), prefixOf(config, context.request))
+  return present(prefixer(config, context.request), await requireLink(config, context, wanted))
 }
 
 function encodeCursor(row: LinkRow): string {
@@ -495,10 +560,10 @@ async function list(config: Config, context: Context): Promise<LinkPage> {
     limit: limit + 1
   })
   const page = rows.slice(0, limit)
-  const prefix = prefixOf(config, context.request)
+  const prefix = prefixer(config, context.request)
   const last = page.at(-1)
   return {
-    links: page.map((row) => toLink(row, prefix)),
+    links: await Promise.all(page.map(async (row) => present(prefix, row))),
     cursor: rows.length > limit && last ? encodeCursor(last) : null
   }
 }
@@ -535,7 +600,7 @@ async function update(config: Config, context: Context): Promise<ShortLink> {
     await checkSharer(context, rules, ref)
     await checkGrant(context, rules, ref, row)
   }
-  const link = toLink({ ...row, ...changes }, prefixOf(config, context.request))
+  const link = await present(prefixer(config, context.request), { ...row, ...changes })
   context.emit("link.updated", { link })
   const [updated] = await context.db.batch([
     { type: "update", model: linkModel, where: [{ field: "id", value: row.id }], update: changes }
@@ -549,7 +614,7 @@ async function update(config: Config, context: Context): Promise<ShortLink> {
 async function remove(config: Config, context: Context): Promise<{ removed: boolean }> {
   const { code: wanted } = context.input as { code: string }
   const row = await requireLink(config, context, wanted)
-  context.emit("link.removed", { link: toLink(row, prefixOf(config, context.request)) })
+  context.emit("link.removed", { link: await present(prefixer(config, context.request), row) })
   const [removed] = await context.db.batch([
     { type: "deleteMany", model: linkModel, where: [{ field: "id", value: row.id }] }
   ])
@@ -583,14 +648,36 @@ async function removeOwner(_config: Config, context: Context): Promise<{ removed
 }
 
 /**
+ * The organization whose links a host opens, `""` for the app's own host, which opens every link, or `null` for a host
+ * that opens none. Every host opens every link without `hosts`.
+ */
+async function scopeOf(config: Config, request: Request, hostname: string): Promise<string | null> {
+  if (!config.hosts) {
+    return ""
+  }
+  const host = await config.hosts.resolve({ hostname, request })
+  if (host === "app") {
+    return ""
+  }
+  return typeof host?.orgId === "string" && host.orgId !== "" ? host.orgId : null
+}
+
+/**
  * Opens a link: one read by its code, then a temporary redirect, so a link turned off or changed takes effect at once.
- * A link that grants access adds its code to the visitor's cookie. The click is written after the response.
+ * On an organization's domain, only its own links open. A link that grants access adds its code to the visitor's
+ * cookie. The click is written after the response.
  */
 async function open(config: Config, context: RouteContext): Promise<Response> {
   const { request, params, db, now } = context
   const wanted = params.code ?? ""
+  // A host that opens no links, and another organization's link, answer as a missing link does, so a domain tells
+  // nothing about the codes it doesn't open.
+  const scope = await scopeOf(config, request, context.url.hostname)
+  if (scope === null) {
+    return config.notFound({ request, code: wanted })
+  }
   const row = isValidCode(wanted) ? await db.findOne<LinkRow>({ model: linkModel, where: byCode(wanted) }) : null
-  if (!row || !isOpen(row, now)) {
+  if (!row || !isOpen(row, now) || (scope !== "" && row.owner !== ownerKey("org", scope))) {
     return config.notFound({ request, code: wanted })
   }
   let location = row.url
@@ -610,6 +697,12 @@ async function open(config: Config, context: RouteContext): Promise<Response> {
   }
   const headers = new Headers({ location, "cache-control": "private, no-store" })
   if (row.grantsView) {
+    if (config.hosts && !reachesHost(request.url, location, config.cookie.domain)) {
+      // The cookie set on this host wouldn't reach the record, so the link opens on the record's host instead, which
+      // sets it there. The click counts there.
+      const there = new URL(`${config.path}/${encodeURIComponent(row.code)}`, location).href
+      return new Response(null, { status: 302, headers: { location: there, "cache-control": "private, no-store" } })
+    }
     headers.set("set-cookie", grantCookie(request, config.cookie, row.code))
   }
   if (request.method === "GET") {

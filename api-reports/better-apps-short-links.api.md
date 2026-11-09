@@ -60,7 +60,28 @@ export const limits: {
 };
 
 // @public
+export type LinkHost = "app" | {
+    orgId: string;
+} | null;
+
+// @public
+export interface LinkHosts {
+    origin?: ((args: LinkOriginArgs) => string | null | Promise<string | null>) | undefined;
+    resolve: (args: ResolveHostArgs) => LinkHost | Promise<LinkHost>;
+}
+
+// @public
 export const linkModel = "shortLink";
+
+// @public
+export interface LinkOriginArgs {
+    orgId: string | null;
+    // (undocumented)
+    owner: {
+        type: OwnerType;
+        id: string;
+    };
+}
 
 // @public
 export interface LinkPage {
@@ -146,6 +167,13 @@ export interface NotFoundArgs {
 
 // @public
 export type OwnerType = "user" | "org";
+
+// @public
+export interface ResolveHostArgs {
+    hostname: string;
+    // (undocumented)
+    request: Request;
+}
 
 // @public
 export interface ShortLink {
@@ -308,6 +336,7 @@ export interface ShortLinksOptions {
     canManage?: ((args: ManageArgs) => boolean | Promise<boolean>) | undefined;
     codeLength?: number | undefined;
     cookie?: GrantCookie | undefined;
+    hosts?: LinkHosts | undefined;
     notFound?: ((args: NotFoundArgs) => Response | Promise<Response>) | undefined;
     path?: string | undefined;
     subjects?: Readonly<Record<string, LinkRules>> | undefined;

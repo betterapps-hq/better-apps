@@ -59,6 +59,42 @@ export interface GrantCookie {
   domain?: string | undefined
 }
 
+/**
+ * Whose links a host opens: `"app"` for the app's own host, which opens every link, `{ orgId }` for a domain an
+ * organization verified, which opens only the links that organization owns, or `null` for any other host, which opens
+ * none.
+ */
+export type LinkHost = "app" | { orgId: string } | null
+
+/** What `hosts.resolve` receives. */
+export interface ResolveHostArgs {
+  /** The host a link was opened on, lowercase and without the port, such as `links.acme.com`. */
+  hostname: string
+  request: Request
+}
+
+/** What `hosts.origin` receives: the link whose short URL is being written. */
+export interface LinkOriginArgs {
+  owner: { type: OwnerType; id: string }
+  /** The organization the link was made in, or `null` outside any. */
+  orgId: string | null
+}
+
+/**
+ * Where links open, and the host their short URLs use, for an app whose organizations have their own domains, such as
+ * the domains feature's. Short links never import such a feature: the app connects the two.
+ */
+export interface LinkHosts {
+  /** Says whose links a host opens, for the host a link was opened on. It runs before the link is read. */
+  resolve: (args: ResolveHostArgs) => LinkHost | Promise<LinkHost>
+  /**
+   * The origin of a link's short URL, such as `https://links.acme.com`, or `null` for the app's own. Return a host that
+   * opens the link: its organization's domain for an organization's link, or a host `resolve` says is the app's. The
+   * app's own, by default.
+   */
+  origin?: ((args: LinkOriginArgs) => string | null | Promise<string | null>) | undefined
+}
+
 /** How short links are set up in an app. */
 export interface ShortLinksOptions {
   /** The subject types links can point to, keyed by name. The app or a feature declares each one. */
@@ -77,6 +113,11 @@ export interface ShortLinksOptions {
   path?: string | undefined
   /** The origin of the short URLs actions return, such as `https://go.example.com`. The request's, by default. */
   baseUrl?: string | undefined
+  /**
+   * Opens links on organizations' own domains, each only its organization's, and shares them there. Without it, every
+   * host that serves the app opens every link.
+   */
+  hosts?: LinkHosts | undefined
   /** The length of generated codes, from 6 to 32. 8 by default. */
   codeLength?: number | undefined
   /** The cookie that remembers links that grant access. */
