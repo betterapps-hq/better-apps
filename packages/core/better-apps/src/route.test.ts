@@ -280,6 +280,23 @@ describe("routes", () => {
     expect([unchanged.status, unchanged.headers.get("etag")]).toEqual([304, '"v1"'])
   })
 
+  it("answer HEAD requests at once when the handler keeps a clone of its response", async () => {
+    let kept: Response | undefined
+    const report = defineRoute({
+      path: "/report",
+      method: "GET",
+      handler: () => {
+        const response = new Response("contents", { headers: { "x-file": "f-1" } })
+        kept = response.clone()
+        return response
+      }
+    })
+    const { app } = setup([defineFeature({ id: "files", routes: { report } })])
+    const head = await app.handler(get("/report", { method: "HEAD" }))
+    expect([head.status, head.headers.get("x-file"), await head.text()]).toEqual([200, "f-1", ""])
+    expect(await kept?.text()).toBe("contents")
+  })
+
   it("refuse paths that can't be matched, could match an action's URL, or repeat another route", () => {
     const route = (path: string) => defineRoute({ path, method: "GET", handler: () => new Response() })
     const app = (path: string, basePath?: string) =>
