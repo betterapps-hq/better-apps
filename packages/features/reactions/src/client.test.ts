@@ -79,7 +79,7 @@ describe("reactions client", () => {
     await Promise.all([reactions.toggle({ ...inv1, emoji: "👍" }), reactions.toggle({ ...inv1, emoji: "🎉" })])
     const state = reactions.store.getSnapshot()
     expect(state.subjects[key1]?.reactions).toEqual([{ emoji: "🎉", count: 1, reacted: true }])
-    expect(state.reactors[reactionKey("invoice", "inv-1", "👍")]?.userIds).toEqual([])
+    expect(state.reactors[reactionKey("invoice", "inv-1", "👍")]?.userIds ?? []).toEqual([])
     expect(state.subjects[key1]?.pending).toEqual([])
     expect(await api.listReactions({ subjectType: "invoice", subjectIds: ["inv-1"] })).toEqual({
       "inv-1": [{ emoji: "🎉", count: 1, reacted: false }]
@@ -245,10 +245,45 @@ describe("reactions client", () => {
     expect(reactions.store.getSnapshot().reactors[key]).toMatchObject({ userIds: ["ada", "bob"], state: "ready" })
     expect(reactions.store.getSnapshot().users.bob?.name).toBe("Bob Babbage")
     await reactions.loadMoreReactors(target)
+    await reactions.unreact({ ...target })
+    // Someone whose name hasn't loaded starts the list over, so it loads again with their name.
     await reactions.react(target)
+    expect(reactions.store.getSnapshot().reactors[key]).toBeUndefined()
+    await reactions.loadReactors(target)
     expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada", "bob", "cy"])
+    expect(reactions.store.getSnapshot().users.cy?.name).toBeDefined()
     await reactions.unreact(target)
     expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada", "bob"])
+    // Someone already named is added at once.
+    await reactions.react(target)
+    expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada", "bob", "cy"])
+  })
+
+  it("loads a record again when someone else's events arrive out of order", async () => {
+    const { api, as, events, identity, reactions, requests } = browser()
+    const target = { ...inv1, emoji: "👍" }
+    await reactions.load("invoice", ["inv-1"])
+    await api.react(target, as("ada"))
+    await api.unreact(target, as("ada"))
+    const shown = async (type: "reaction.added" | "reaction.removed") => {
+      const event = await api.toClientEvent({
+        event: events(type).at(-1) as BetterAppsEvent,
+        viewer: identity.actor("bob")
+      })
+      if (!event) {
+        throw new Error("No event was shown.")
+      }
+      return event
+    }
+    const added = await shown("reaction.added")
+    const removed = await shown("reaction.removed")
+    const loads = requests.filter((name) => name === "listReactions").length
+    // The removal arrives before the add it undoes.
+    reactions.applyEvent(removed)
+    reactions.applyEvent(added)
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(reactions.store.getSnapshot().subjects[key1]?.reactions).toEqual([])
+    expect(requests.filter((name) => name === "listReactions").length).toBeGreaterThan(loads)
   })
 
   it("pages through many reactors, keeping those listed when their live event arrives", async () => {

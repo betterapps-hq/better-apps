@@ -334,9 +334,17 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
     if (delta === 1) {
       // A new reactor is only added once the last page is loaded, since pages are in order of reacting, and one already
       // listed keeps their place.
-      return reactors.userIds.includes(userId) || reactors.cursor !== null
-        ? state
-        : setReactors(state, key, { userIds: [...reactors.userIds, userId] })
+      if (reactors.userIds.includes(userId) || reactors.cursor !== null) {
+        return state
+      }
+      if (!state.users[userId]) {
+        // Someone whose name hasn't loaded: the list starts over, so it loads again with them.
+        return {
+          ...state,
+          reactors: Object.fromEntries(Object.entries(state.reactors).filter(([name]) => name !== key))
+        }
+      }
+      return setReactors(state, key, { userIds: [...reactors.userIds, userId] })
     }
     return setReactors(state, key, { userIds: reactors.userIds.filter((id) => id !== userId) })
   }
@@ -680,6 +688,7 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
       // else's shows at once, and the record loads again to match the server.
       const { count } = event
       const base = confirmed.get(key)
+      const before = base?.find((reaction) => reaction.emoji === event.emoji)?.count ?? 0
       // An own change the store doesn't have yet, such as from another tab, or a late event for one this tab has since
       // taken back. It shows at once either way, and the record loads again to learn which.
       const surprising =
@@ -704,9 +713,9 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
         // An event without a user id comes from someone the viewer may not see, so lists of reactors stay as they are.
         event.userId === "" ? show(state, key) : withReactor(show(state, key), event, added ? 1 : -1, event.userId)
       )
-      // Unless the event's count says the store already matches, which saves a load in the usual case.
-      const now = confirmed.get(key)?.find((reaction) => reaction.emoji === event.emoji)?.count ?? 0
-      if (!event.mine && confirmed.has(key) && event.count !== now) {
+      // Unless the event moves the count from what the store had to just what the event says, which saves a load in the
+      // usual case. Events that arrive out of order, such as a removal before its add, don't, so the record loads again.
+      if (!event.mine && base !== undefined && event.count !== before + (added ? 1 : -1)) {
         refresh(event.subjectType, event.subjectId)
       }
     },
