@@ -96,6 +96,22 @@ describe("reactions client", () => {
     expect(reactions.store.getSnapshot().subjects[key1]?.reactions).toEqual([{ emoji: "🎉", count: 1, reacted: true }])
   })
 
+  it("loads who reacted again after taking back a reaction another tab already took back", async () => {
+    const { api, as, reactions } = browser()
+    const target = { ...inv1, emoji: "👍" }
+    await api.react(target, as("ada"))
+    await api.react(target, as("bob"))
+    await reactions.load("invoice", ["inv-1"])
+    await reactions.loadReactors(target)
+    const key = reactionKey("invoice", "inv-1", "👍")
+    expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada", "bob"])
+    await api.unreact(target, as("bob"))
+    await reactions.unreact(target)
+    expect(reactions.store.getSnapshot().reactors[key]).toBeUndefined()
+    await reactions.loadReactors(target)
+    expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada"])
+  })
+
   it("rolls back a refused reaction", async () => {
     const { reactions } = browser()
     const locked = { subjectType: "invoice", subjectId: "inv-locked" } as const

@@ -316,16 +316,19 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
    */
   function dropReactors(record: string) {
     const prefix = `${record.slice(0, -1)},`
-    update((state) => {
-      const kept = Object.entries(state.reactors).filter(([name]) => {
-        if (!name.startsWith(prefix)) {
-          return true
-        }
-        reactorVersions.set(name, (reactorVersions.get(name) ?? 0) + 1)
-        return false
-      })
-      return { ...state, reactors: Object.fromEntries(kept) }
+    update((state) => withoutReactors(state, (name) => name.startsWith(prefix)))
+  }
+
+  /** Drops the lists of reactors `drop` picks, so they load again, and has pages on their way asked for again. */
+  function withoutReactors(state: ReactionsState, drop: (key: string) => boolean): ReactionsState {
+    const kept = Object.entries(state.reactors).filter(([name]) => {
+      if (!drop(name)) {
+        return true
+      }
+      reactorVersions.set(name, (reactorVersions.get(name) ?? 0) + 1)
+      return false
     })
+    return { ...state, reactors: Object.fromEntries(kept) }
   }
 
   /** Adds or removes someone in a list of reactors, including one whose next page is loading. */
@@ -422,6 +425,11 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
       // The server names the reactor, so a loaded list of reactors gains or loses them now.
       if (reaction) {
         next = withReactor(next, target, reacted ? 1 : -1, reaction.userId)
+      } else {
+        // The server had nothing to change, such as a reaction another tab already took back, and doesn't say who the
+        // viewer is, so the emoji's list of reactors loads again.
+        const key = reactionKey(target.subjectType, target.subjectId, target.emoji)
+        next = withoutReactors(next, (name) => name === key)
       }
       return replaced.reduce(
         (shown, gone) => withReactor(shown, { ...target, emoji: gone.emoji }, -1, gone.userId),
