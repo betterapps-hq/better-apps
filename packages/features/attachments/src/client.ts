@@ -168,6 +168,22 @@ async function sendWithFetch(request: TransportRequest): Promise<{ status: numbe
 const defaultTransport: UploadTransport = (request) =>
   typeof XMLHttpRequest === "undefined" ? sendWithFetch(request) : sendWithXhr(request)
 
+/**
+ * A record's files in the order a reorder still under way asked for, with any it didn't name after them, as loaded. With
+ * no reorder under way, the files as loaded.
+ */
+function inOrder(files: AttachedFile[], order: readonly string[] | undefined): AttachedFile[] {
+  if (!order) {
+    return files
+  }
+  const rank = new Map(order.map((id, index) => [id, index]))
+  const at = (file: AttachedFile, index: number) => rank.get(file.id) ?? order.length + index
+  return files
+    .map((file, index) => ({ file, rank: at(file, index) }))
+    .sort((a, b) => a.rank - b.rank)
+    .map(({ file }, position) => ({ ...file, position }))
+}
+
 /** Dates arrive as ISO strings; the store keeps `Date`s. */
 function reviveFile<File extends FileInfo>(file: Serialized<File> | File): File {
   const date = (value: unknown) => (value === null || value === undefined ? null : new Date(value as string))
@@ -216,6 +232,8 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
   const uploadControllers = new Map<string, AbortController>()
   // Each record's version goes up with every write and event, so an answer that went out before one is dropped.
   const versions = new Map<string, number>()
+  // The order each record's reorders under way asked for, the latest last, so a load that lands meanwhile keeps it.
+  const reordering = new Map<string, { order: readonly string[]; count: number }>()
   const queued = new Map<string, Map<string, { resolve: () => void; reject: (error: unknown) => void }[]>>()
   let flushing: Promise<void> | null = null
   // Answers to calls made before a reset() belong to the previous person, so they change the store only in their
@@ -262,7 +280,10 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
         const files = (answer[id] ?? []).map((file) => reviveFile<AttachedFile>(file))
         setSubject(key, (current) => ({
           ...current,
-          files: files.filter((file) => !current.pending.includes(file.id)),
+          files: inOrder(
+            files.filter((file) => !current.pending.includes(file.id)),
+            reordering.get(key)?.order
+          ),
           state: "ready",
           error: null
         }))
@@ -551,6 +572,15 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
     const before = store.getSnapshot().subjects[key]?.files ?? []
     const byId = new Map(before.map((file) => [file.id, file]))
     const current = scoped()
+    reordering.set(key, { order: [...fileIds], count: (reordering.get(key)?.count ?? 0) + 1 })
+    const settle = () => {
+      const left = (reordering.get(key)?.count ?? 1) - 1
+      if (left > 0) {
+        reordering.set(key, { order: reordering.get(key)?.order ?? [], count: left })
+      } else {
+        reordering.delete(key)
+      }
+    }
     bump(key)
     setSubject(key, (current) => ({
       ...current,
@@ -561,8 +591,15 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
     }))
     try {
       await run("reorder", { ...subject, fileIds })
+      if (current()) {
+        settle()
+        // A load still under way may have read the order from before the write, so its answer is dropped and it loads
+        // again.
+        bump(key)
+      }
     } catch (error) {
       if (current()) {
+        settle()
         bump(key)
         setSubject(key, (files) => ({ ...files, files: before }))
         await load(subject.subjectType, [subject.subjectId]).catch(() => undefined)
@@ -634,6 +671,7 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
     }
     queued.clear()
     versions.clear()
+    reordering.clear()
     store.setState(empty)
     for (const listener of resetListeners) {
       listener()

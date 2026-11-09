@@ -372,7 +372,8 @@ const file = await attachments.upload(input.files[0], { subjectType: "invoice", 
   `cancelled`. `startUpload` does the same and returns the upload's id at once. `cancel(id)` stops one and deletes what
   the server knew of it. A file the limits from `loadSettings` refuse fails at once, without a call.
 - An upload onto a record adds the file to the record's list when it finishes. `detach` and `reorder` show at once and
-  roll back when the server refuses. `attach` loads the record again once it's done.
+  roll back when the server refuses, and a load that lands while they're saved keeps them. `attach` loads the record
+  again once it's done.
 - `applyEvent` takes events from `toClientEvent` and loads the record again. `dehydrate`, `hydrate` and `reset` work as
   in the other features. `reset` cancels calls under way, which reject with `ABORTED`, and a call it can't cancel, such
   as `finishUpload` with its own signal, changes nothing when it settles, so the previous person's files never come back

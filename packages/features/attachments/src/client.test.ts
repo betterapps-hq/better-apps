@@ -153,6 +153,34 @@ describe("attachments client", () => {
     expect(attachments.store.getSnapshot().subjects[key1]?.files.map((entry) => entry.id)).toEqual([second, first])
   })
 
+  it("keeps a new order while it's saved, when a load lands meanwhile", async () => {
+    const { attachments, upload, hold } = browser()
+    const first = (await upload("bob", inv1)).file.id
+    const second = (await upload("bob", inv1)).file.id
+    await attachments.load("invoice", ["inv-1"])
+    const order = () => attachments.store.getSnapshot().subjects[key1]?.files.map((entry) => [entry.id, entry.position])
+
+    // The load goes out before the reorder, so its answer is dropped and it loads again, before the reorder is saved.
+    const listHeld = hold("listFiles")
+    const loading = attachments.load("invoice", ["inv-1"])
+    await tick()
+    const reorderHeld = hold("reorder")
+    const reordering = attachments.reorder(inv1, [second, first])
+    listHeld()
+    await loading
+    expect(order()).toEqual([
+      [second, 0],
+      [first, 1]
+    ])
+    reorderHeld()
+    await reordering
+    await tick(10)
+    expect(order()).toEqual([
+      [second, 0],
+      [first, 1]
+    ])
+  })
+
   it("loads a record again for a client event, and drops an answer that went out before it", async () => {
     const { attachments, upload, requests, hold } = browser()
     await attachments.load("invoice", ["inv-1"])
