@@ -24,10 +24,12 @@ and serves uploads and downloads from `app.handler`.
 - **Downloads always go through the Worker**, so every download is checked against the record's access at that moment.
 - **Image previews are the app's to plug in**, through a `previews` option, such as with Cloudflare's Images binding.
   Without it, the original image is served.
-- **UploadCN should send the bytes in the browser**, as the stack's upload UI. The client exposes the two steps around
-  the bytes, `prepareUpload` and `finishUpload`, so an UploadCN adapter is a few lines. This change still has its own
-  small upload queue and hooks, so the example works without UploadCN; adding `@uploadcn/core` and `@uploadcn/react`
-  needs the discussion the repo asks for. See [UploadCN](#uploadcn).
+- **The browser client has its own small upload queue and hooks**, and exposes the two steps around the bytes,
+  `prepareUpload` and `finishUpload`, for an engine that sends the bytes itself, such as
+  [UploadCN](https://uploadcn.dev)'s.
+- **A signed upload address can't be revoked**, so attachments never trusts storage to hold what it confirmed. Downloads
+  serve only bytes whose etag matches the one recorded when the upload finished, and a deleted file's row waits until
+  its upload address has closed, so bytes that arrive late are deleted too.
 
 ## Core support
 
@@ -66,14 +68,17 @@ One row per stored file.
 | `target`          | string, null | For a file uploaded straight onto a record: that record's id, linked once the upload finishes.   |
 | `uploadTokenHash` | string, null | The SHA-256 of the token that lets the Worker route take its bytes. Cleared once it's uploaded.  |
 | `expiresAt`       | date, null   | When an unfinished upload or an unattached draft is removed. `null` once something keeps it.     |
+| `uploadClosesAt`  | date         | When its upload address stops taking bytes. A deleted file's row stays until an hour after this. |
+| `etag`            | string, null | The stored bytes' etag when the upload finished. Downloads serve only bytes that still match it. |
 | `createdAt`       | date         |                                                                                                  |
 | `uploadedAt`      | date, null   | When its bytes were confirmed.                                                                   |
 
 Indexes:
 
 - `(owner, createdAt)` serves lists of a person's or an organization's own files, newest first.
-- `(createdBy, status)` serves removing a person's drafts.
-- `(status, expiresAt)` serves the sweep of expired and deleted files.
+- `(createdBy, status)` serves removing a person's drafts, and counting them against `maxDrafts`.
+- `(status, expiresAt)` serves the sweep of expired files.
+- `(status, uploadClosesAt)` serves the sweep of deleted files whose upload address has closed.
 
 ### `attachment`
 
@@ -157,6 +162,8 @@ attachments({
   and a link in an email works for a while. Without it, downloads need the request's own sign-in, such as a cookie.
 - `uploadTtl` is how long an upload URL works, 15 minutes by default. `draftTtl` is how long a draft waits for its
   record, 24 hours by default. `downloadTtl` is how long a signed download URL works, an hour by default.
+- `maxDrafts` is how many files one person can have uploading or waiting as drafts at once, from 1 to 1000: 50 by
+  default. Files a record or an owner keeps don't count.
 - `previews` turns on image previews. See [Image previews](#image-previews).
 
 Limits are checked when the upload starts, against what the browser declares, and again when it finishes, against what
@@ -172,9 +179,10 @@ All of them go through subject types, so a file follows its record's access.
   - for an unfinished upload or a draft, having uploaded it. Signed-out visitors see files on public records.
 - **Uploading onto a record** needs someone who can see it and whom `canUpload` allows.
 - **Uploading a draft** needs someone signed in. The draft is checked against its subject type's limits, but its record
-  doesn't exist yet. Attaching it checks the record.
+  doesn't exist yet, so `canUpload` waits for the attach. `maxDrafts` bounds the bytes a person can store that way.
 - **Attaching** a draft needs its uploader. Attaching a file kept on its own needs someone who can see it. Either way
-  the record must be one the person can see and `canUpload` allows, in the file's organization.
+  the record must be one the person can see and `canUpload` allows. A draft or an organization's file goes only on
+  records in its own organization; a person's own file goes on records in any organization they're in.
 - **Taking a file off a record** needs the person who attached it, or someone `canModerate` allows. **Reordering** needs
   `canUpload`.
 - **Deleting a file kept on its own** needs its owner, or a member `canManage` allows. It comes off every record too.
@@ -192,9 +200,10 @@ An upload takes three steps, the same for both ways of sending the bytes:
 1. `createUpload({ name, contentType, size, ... })` checks the person and the limits, writes a `pending` row, and
    returns where to send the bytes: `{ file, upload: { url, method: "PUT", headers, expiresAt } }`.
 2. The browser sends the bytes with that request.
-3. `completeUpload({ fileId })` reads the stored object's size and type from storage, checks them against the row and
-   the limits, and marks the file `ready`. A file uploaded onto a record is attached in the same batch. A mismatch
-   deletes the bytes and answers `INVALID_INPUT`.
+3. `completeUpload({ fileId })` reads the stored object's size, type and etag from storage, checks them against the row
+   and the limits, and marks the file `ready` with that etag. A file uploaded onto a record is attached in the same
+   batch. A mismatch deletes the bytes and answers `INVALID_INPUT`. When two calls finish one file at once, one marks it
+   ready, and both return it.
 
 Where the upload is aimed:
 
@@ -214,13 +223,14 @@ only on the `r2.cloudflarestorage.com` endpoint, not on a bucket's custom domain
 **Through the Worker.** Without signing, as with Void's plain R2 binding, `upload.url` is the feature's own route,
 `PUT {path}/uploads/{fileId}?token=...`. The token is random, and only its SHA-256 is stored, so the database never
 holds a working upload URL. The route checks the token, that the file is still `pending` and its URL hasn't expired, and
-that `content-type` and any `content-length` match the row, then streams the body straight to storage. Storage takes
-exactly the declared size: the R2 adapter streams the body through a `FixedLengthStream`, which also gives the binding
-the known length it needs, so a body that's longer or shorter fails. It works up to the Worker's request size limit: 100
-MB on the Free and Pro plans.
+that `content-type` and any `content-length` match the row, then streams the body straight to storage. A body without a
+length, such as a chunked one or one over HTTP/2, is counted as it arrives: past the declared size, the upload stops
+with `PAYLOAD_TOO_LARGE`, and one that ends short answers `INVALID_INPUT`. Storage takes exactly the declared size too:
+the R2 adapter streams the body through a `FixedLengthStream`, which also gives the binding the known length it needs.
+It works up to the Worker's request size limit: 100 MB on the Free and Pro plans.
 
 Both ways send the same `PUT` with the same headers, so the browser client handles both alike and reports progress for
-either. Multipart uploads, for files over those limits, are left for later.
+either. A file over those limits can't be uploaded.
 
 ## Downloads
 
@@ -232,9 +242,11 @@ either. Multipart uploads, for files over those limits, are left for later.
 - **Signed URLs:** `listFiles`, `getFile` and `completeUpload` return each file's `url`, signed when there's a `secret`.
   Expiry is rounded up to the next `downloadTtl` boundary, so a page that loads twice gets the same URL, and the browser
   can cache it.
-- **Bytes:** streamed from storage, with `ETag`, `Last-Modified`, `Content-Length` and `Accept-Ranges: bytes`. A
-  matching `If-None-Match` answers 304. One `Range` answers 206; a range past the end answers 416. Several ranges are
-  served as the whole file.
+- **Bytes:** streamed from storage, with `ETag`, `Last-Modified`, `Content-Length` and `Accept-Ranges: bytes`. Storage
+  is read on condition that its etag still matches the one recorded when the upload finished; bytes replaced since, such
+  as through a signed upload address used again, answer 409 `CONFLICT` and aren't served. An `If-None-Match` with that
+  etag answers 304 without reading storage. One `Range` answers 206; a range past the end answers 416. Several ranges
+  are served as the whole file.
 - **Safety:** `Content-Type` is the stored type, with `X-Content-Type-Options: nosniff`. Raster images, audio, video,
   PDF and plain text are served `inline`; everything else, including SVG and HTML, as `attachment`, so a file can't run
   script on the app's origin. `?download=1` asks for `attachment` for any file. Every response but PDF's carries
@@ -258,8 +270,10 @@ previews: {
 ```
 
 Only `image/png`, `image/jpeg`, `image/gif`, `image/webp` and `image/avif` get previews. Snapping keeps the number of
-distinct transformations small, which matters for Images' pricing: the Free plan includes a number of unique
-transformations a month [U: check the current number]. Without `previews`, `?w=` is ignored and the original is served.
+distinct transformations small, which matters for Images' pricing, billed by unique transformations. A preview's etag is
+the file's etag and the width, so an `If-None-Match` answers 304 before storage is read or a preview made. `HEAD` checks
+storage but makes no preview, so it leaves out `Content-Type` and `Content-Length`. Without `previews`, `?w=` is ignored
+and the original is served.
 
 ## Files that are never attached
 
@@ -271,8 +285,11 @@ transformations a month [U: check the current number]. Without `previews`, `?w=`
 that are `deleted`. Each page marks the expired ones `deleted` in one batch, guarded by their `expiresAt`, so a draft
 attached meanwhile is never taken. It reads back which ones it marked, deletes their bytes in one storage call, then
 their rows and any attachments left pointing at them. It returns `done`; call it from a scheduled job, next to
-`app.deliverEvents()`, until it's `true`. Bytes that fail to delete keep their row as `deleted`, and the next sweep
-tries again.
+`app.deliverEvents()`, until it's `true`.
+
+A deleted file's bytes go at once, but its row stays `deleted` until an hour after `uploadClosesAt`, since a signed
+upload address keeps working until it expires, and a slow upload that started in time may finish later still. The sweep
+then deletes the bytes again, in case some arrived, and the row. Bytes that fail to delete are tried again the same way.
 
 ## Records that change
 
@@ -323,8 +340,9 @@ enough.
 - Server only: `sweep`, `removeSubject`, `moveSubject`, `removeUser`, `toClientEvent` and `toClientEvents`.
 
 Errors are `AttachmentsError`s: `UNAUTHENTICATED`, `NOT_FOUND`, `FORBIDDEN`, `INVALID_INPUT` for a type, name or file
-that doesn't fit, `PAYLOAD_TOO_LARGE` past `maxSize`, `LIMIT_EXCEEDED` past `maxFiles`, and `CONFLICT` for a file that
-changed state meanwhile, such as an expired draft.
+that doesn't fit, `PAYLOAD_TOO_LARGE` past `maxSize`, `LIMIT_EXCEEDED` past `maxFiles` or `maxDrafts`, and `CONFLICT`
+for a file that changed meanwhile, such as an expired draft, one another record took first, or bytes replaced after they
+were confirmed.
 
 ## In the browser
 
@@ -339,7 +357,7 @@ const file = await attachments.upload(input.files[0], { subjectType: "invoice", 
 - `load(subjectType, subjectIds)` batches loads of the same tick, 20 records a call.
 - `prepareUpload(file, target)` checks the file against the loaded limits and calls `createUpload`, and
   `finishUpload(prepared)` calls `completeUpload` and adds the file to its record's list. They're the two steps around
-  the bytes, for an engine that sends them itself, such as [UploadCN](#uploadcn)'s.
+  the bytes, for an engine that sends them itself, such as [UploadCN](https://uploadcn.dev)'s.
 - `upload(file, target)` runs the three steps. It sends the bytes with `XMLHttpRequest`, for progress, or with `fetch`
   where there's none, and takes a `transport` for tests. `uploads[id]` holds
   `{ name, size, loaded, state, error, file }` while it runs, `state` being `uploading`, `finishing`, `done`, `error` or
@@ -363,45 +381,13 @@ const file = await attachments.upload(input.files[0], { subjectType: "invoice", 
 Apps announce progress and errors themselves, such as with a polite live region for progress and an alert for a failure.
 The example app shows one way.
 
-## UploadCN
-
-[UploadCN](https://uploadcn.dev) is the stack's upload UI: shadcn blocks, such as dropzones, galleries and chat
-attachments, over `@uploadcn/core`, an engine with a queue, concurrency, retries, validation, paste and drop, and
-accessible progress. The two split the work. UploadCN moves the bytes and shows uploads under way. Attachments decides
-where the bytes go, who sees the file, and which record keeps it.
-
-An adapter for UploadCN's engine is its `presignedAdapter` over the client's two steps:
-
-- `getTarget` calls `prepareUpload`, which checks the limits and calls `createUpload`. The target is the `PUT` it
-  returns: straight to R2 when the storage adapter signs uploads, or to the upload route otherwise.
-- UploadCN's transport sends the bytes, with progress and cancel.
-- `complete` calls `finishUpload`, so the file joins its record's list in the attachments store, and the `FileInfo`
-  becomes the item's `result`.
-- `abort` calls `deleteFile` for a cancelled upload the server knew of.
-- A retry reuses the item's prepared upload until its `expiresAt`, because the route and R2 take the same bytes again.
-  After that it prepares a new one, and the sweep removes the old pending file.
-- `INVALID_INPUT`, `PAYLOAD_TOO_LARGE`, `LIMIT_EXCEEDED`, `FORBIDDEN` and `NOT_FOUND` become UploadCN's `rejected`,
-  which it never retries. Network failures and server errors retry.
-- `getSettings` gives UploadCN's `accept` and `maxSize`, and `maxFiles` less the files already on the record.
-- A comment composer keeps its successful items' file ids and calls `attach(subject, fileIds)` once the comment is
-  posted, as `useDraftAttachments` does now.
-
-UploadCN's own upload route, `@uploadcn/server`, isn't used: attachments' actions and routes take its place, so access
-follows the record. Virus scanning, when it comes, maps to UploadCN's `scanning` state, with its `process` hook waiting
-for the file to leave it.
-
-The adapter would ship as `@better-apps/attachments/uploadcn`, with `@uploadcn/core` as an optional peer dependency, and
-a React hook over UploadCN's `useUploader` in `@better-apps/attachments/react`. The client's own queue, `startUpload`,
-`uploads`, `cancel` and `dismiss`, and the `useUpload` and `useDraftAttachments` hooks would then go, so UploadCN is the
-one way the browser uploads.
-
 ## Storage adapters
 
 ```ts
 interface StorageAdapter {
   id: string
   put(key, body, { size, contentType }): Promise<StoredObject>
-  get(key, { range?, etagDoesNotMatch? }): Promise<StoredBody | StoredObject | null>
+  get(key, { range?, etagMatches? }): Promise<StoredBody | StoredObject | null>
   head(key): Promise<StoredObject | null>
   delete(keys): Promise<void>
   /** Signs a direct upload. Adapters that can't leave it out, and uploads go through the Worker. */
@@ -409,7 +395,8 @@ interface StorageAdapter {
 }
 ```
 
-- `get` with a met `etagDoesNotMatch` returns the object without a body, so the route answers 304.
+- `get` with an `etagMatches` that isn't the object's etag returns the object without a body, so bytes replaced after an
+  upload finished are never served.
 - `delete` takes many keys at once; R2 takes up to 1000 in one call.
 
 Two adapters:
@@ -419,11 +406,3 @@ Two adapters:
   read and write on that bucket.
 - **`memoryStorage()`**, exported from `@better-apps/attachments`, keeps objects in memory, for tests and demos. It
   implements `createUploadUrl` only when asked, `memoryStorage({ signedUploads: true })`, so tests cover both ways.
-
-## Left for later
-
-- Multipart uploads for files over the single upload limits.
-- Quotas per person or organization.
-- Captions and alt text for files.
-- Checking that a file's bytes match its declared type, such as by its first bytes.
-- Virus scanning, which would add a `scanning` status between `pending` and `ready`.

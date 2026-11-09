@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "c5b4bdd5-5445-4e9d-8f41-1164ca3173c2",
+  "id": "91117553-2ab0-4eaa-b4b8-fd8256071a30",
   "prevId": "6adede89-c7ec-496a-bef2-5ef495ea0f5e",
   "tables": {
     "invoice": {
@@ -709,6 +709,20 @@
           "notNull": false,
           "autoincrement": false
         },
+        "upload_closes_at": {
+          "name": "upload_closes_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "etag": {
+          "name": "etag",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "integer",
@@ -738,6 +752,11 @@
         "attachment_file_by_expiry": {
           "name": "attachment_file_by_expiry",
           "columns": ["status", "expires_at"],
+          "isUnique": false
+        },
+        "attachment_file_by_closing": {
+          "name": "attachment_file_by_closing",
+          "columns": ["status", "upload_closes_at"],
           "isUnique": false
         }
       },

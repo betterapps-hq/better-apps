@@ -45,6 +45,7 @@ export interface Config {
   signer: Signer | null
   uploadTtlMs: number
   draftTtlMs: number
+  maxDrafts: number
   downloadTtlMs: number
   previews: { widths: number[]; transform: PreviewOptions["transform"] } | null
 }
@@ -55,6 +56,14 @@ function positiveSeconds(name: string, value: number | undefined, fallback: numb
     throw new Error(`\`${name}\` must be a whole number of seconds from 1 to a week.`)
   }
   return seconds * 1000
+}
+
+function resolveMaxDrafts(value: number | undefined): number {
+  const count = value ?? 50
+  if (!Number.isInteger(count) || count < 1 || count > 1000) {
+    throw new Error("`maxDrafts` must be a whole number from 1 to 1000.")
+  }
+  return count
 }
 
 function resolveMaxSize(name: string, value: number): number {
@@ -133,6 +142,7 @@ export function resolve(options: AttachmentsOptions): Config {
     signer: options.secret === undefined ? null : createSigner(options.secret),
     uploadTtlMs: positiveSeconds("uploadTtl", options.uploadTtl, 15 * 60),
     draftTtlMs: positiveSeconds("draftTtl", options.draftTtl, 24 * 60 * 60),
+    maxDrafts: resolveMaxDrafts(options.maxDrafts),
     downloadTtlMs: positiveSeconds("downloadTtl", options.downloadTtl, 60 * 60),
     previews: resolvePreviews(options.previews)
   }

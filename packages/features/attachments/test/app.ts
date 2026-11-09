@@ -2,7 +2,7 @@
 // anyone can read, and on their own. A `feed` feature records every attachments event it's delivered.
 import { createTestApp, type TestUser } from "@better-apps/testing"
 import { defineFeature, type BetterAppsEvent, type EventHandler, type SubjectDefinition } from "better-apps"
-import { attachmentEvents, attachments, memoryStorage, type AttachmentsOptions } from "../src/index.js"
+import { attachmentEvents, attachments, fileModel, memoryStorage, type AttachmentsOptions } from "../src/index.js"
 
 export const users = [
   { id: "ada", name: "Ada Lovelace", orgId: "acme", roles: ["admin"] },
@@ -123,7 +123,12 @@ export function setup(extra: Partial<AttachmentsOptions> = {}, { signedUploads =
   }
 
   const events = (type?: string) => delivered.filter((event) => type === undefined || event.type === type)
+  // A deleted file's row waits until its upload address closed, so files count only while they aren't deleted.
   const count = (table: string) =>
-    (database.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count
+    (
+      database.sqlite
+        .prepare(`SELECT COUNT(*) AS count FROM ${table}${table === fileModel ? " WHERE status <> 'deleted'" : ""}`)
+        .get() as { count: number }
+    ).count
   return { app, database, identity, storage, api: app.api.attachments, as, request, send, upload, events, count }
 }

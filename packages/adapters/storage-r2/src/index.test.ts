@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test"
+import { describe, expect, it, vi } from "vite-plus/test"
 import { presign, r2Storage, type R2BucketLike, type R2ObjectLike, type R2RangeLike } from "./index.js"
 
 describe("presign", () => {
@@ -60,7 +60,8 @@ function fakeBucket() {
         return null
       }
       const object = info(key, options?.range)
-      if (options?.onlyIf?.etagDoesNotMatch === object.etag) {
+      const etagMatches = options?.onlyIf?.etagMatches
+      if (etagMatches !== undefined && etagMatches !== object.etag) {
         return object
       }
       const { bytes } = objects.get(key) as { bytes: Uint8Array }
@@ -112,10 +113,34 @@ describe("r2Storage", () => {
     expect(await storage.get("attachments/a", { range: { offset: 7 } })).toMatchObject({
       range: { offset: 7, length: 3 }
     })
-    expect("body" in ((await storage.get("attachments/a", { etagDoesNotMatch: "etag-10" })) as object)).toBe(false)
+    expect("body" in ((await storage.get("attachments/a", { etagMatches: "etag-10" })) as object)).toBe(true)
+    expect("body" in ((await storage.get("attachments/a", { etagMatches: "etag-9" })) as object)).toBe(false)
     await storage.delete(["attachments/a"])
     expect(await storage.get("attachments/a")).toBeNull()
     expect(await storage.head("attachments/a")).toBeNull()
+  })
+
+  it("tells R2 a stream's length with Workers' `FixedLengthStream`", async () => {
+    const lengths: number[] = []
+    vi.stubGlobal(
+      "FixedLengthStream",
+      class extends TransformStream<Uint8Array, Uint8Array> {
+        constructor(length: number) {
+          super()
+          lengths.push(length)
+        }
+      }
+    )
+    try {
+      const { bucket, objects } = fakeBucket()
+      const body = new Response("0123456789").body as ReadableStream<Uint8Array>
+      await r2Storage({ bucket }).put("attachments/a", body, { size: 10, contentType: "text/plain" })
+      await r2Storage({ bucket }).put("attachments/b", "abc", { size: 3, contentType: "text/plain" })
+      expect(lengths).toEqual([10])
+      expect(new TextDecoder().decode(objects.get("attachments/a")?.bytes)).toBe("0123456789")
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it("deletes a thousand keys a call", async () => {

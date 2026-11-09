@@ -52,4 +52,4 @@ other requests to the S3 API.
 ## The binding
 
 `r2Storage` needs only `put`, `get`, `head` and `delete` of the binding, typed as `R2BucketLike`, so tests can pass an
-object of their own. Ranges and `etagDoesNotMatch` go to R2 as they are, and deletes go 1000 keys a call.
+object of their own. Ranges and `etagMatches` go to R2 as they are, and deletes go 1000 keys a call.

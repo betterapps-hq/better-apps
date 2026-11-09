@@ -5,8 +5,7 @@ Files store only their record's type and id; the app's subject types say who can
 sees its files. Bytes go to a storage adapter, such as [`@better-apps/storage-r2`](../../adapters/storage-r2/README.md),
 straight from the browser when the adapter signs uploads, or through the app's server otherwise.
 
-The [spec](docs/spec.md) explains the design: the tables, ownership, how uploads and downloads work, cleanup, and what's
-left for later.
+The [spec](docs/spec.md) explains the design: the tables, ownership, how uploads and downloads work, and cleanup.
 
 ## Usage
 
@@ -46,7 +45,7 @@ export const app = createBetterApps({
 ```
 
 Call the sweep from a scheduled job, next to event delivery, so uploads that never finish and drafts that are never
-attached are removed:
+attached are removed, and deleted files' rows go once their upload address has closed:
 
 ```ts
 export default {
@@ -73,8 +72,9 @@ export default {
 - `secret`, at least 32 characters, signs download URLs so they work without the request's sign-in for an hour, such as
   in `<img src>` with a bearer token.
 - `path` is where the upload and download routes are, `/api/apps/attachments` by default. `baseUrl` makes returned URLs
-  absolute. `uploadTtl`, `draftTtl` and `downloadTtl` are in seconds. `previews` makes image previews with the app's
-  transform, such as Cloudflare's Images binding.
+  absolute. `uploadTtl`, `draftTtl` and `downloadTtl` are in seconds. `maxDrafts` caps how many files one person can
+  have uploading or waiting as drafts, 50 by default. `previews` makes image previews with the app's transform, such as
+  Cloudflare's Images binding.
 
 The routes, `PUT {path}/uploads/:fileId` and `GET {path}/files/:fileId/:name`, are core routes, so `app.handler` serves
 them besides actions, and an app's catch-all route for its base path reaches them.
@@ -89,7 +89,11 @@ them besides actions, and an app's catch-all route for its base path reaches the
 3. `completeUpload({ fileId })` checks what storage holds and marks the file ready, attaching it to its record.
 
 Attach drafts with `attach({ subjectType, subjectId, fileIds })` once the record exists. Drafts that aren't attached
-expire after `draftTtl`, a day by default.
+expire after `draftTtl`, a day by default. A person's own files can go on records in any organization they're in; drafts
+and an organization's files stay in their organization.
+
+The upload route counts a body that comes without a length, such as a chunked one, so it never stores more than the
+declared size.
 
 ## Actions
 
@@ -100,8 +104,8 @@ expire after `draftTtl`, a day by default.
 - Server only, through `app.api.attachments`: `sweep`, `removeSubject`, `moveSubject` and `removeUser`, which each do
   one page and return `done`, and `toClientEvent` and `toClientEvents` for live updates.
 - Errors are `AttachmentsError`s: `UNAUTHENTICATED`, `NOT_FOUND` for files and records the caller can't see,
-  `FORBIDDEN`, `INVALID_INPUT`, `PAYLOAD_TOO_LARGE` (413) past `maxSize`, `LIMIT_EXCEEDED` past `maxFiles`, and
-  `CONFLICT` for an upload that expired or hasn't arrived.
+  `FORBIDDEN`, `INVALID_INPUT`, `PAYLOAD_TOO_LARGE` (413) past `maxSize`, `LIMIT_EXCEEDED` past `maxFiles` or
+  `maxDrafts`, and `CONFLICT` for an upload that expired or hasn't arrived, or a draft another record took first.
 
 With files on comments' threads or comments, attachments follow comments' events: a deleted comment or thread loses its
 files, and a moved thread takes them along. Attachments also declares `attachments.file` as a subject type, so other
@@ -110,10 +114,12 @@ features can attach to a file.
 ## Downloads
 
 `GET {path}/files/:fileId/:name` checks the file's records on every request, or a signed URL's token, and streams the
-file with `ETag`, `Range` and `HEAD` support. Access the request carries, such as a share link's grant, counts for
-downloads, `listFiles` and `getFile`, but never for changes. Files that could run script, such as SVG and HTML, always
-download rather than open, and every response but a PDF's carries `Content-Security-Policy: sandbox` and
-`X-Content-Type-Options: nosniff`. `?download=1` asks for a download; `?w=` asks for a preview when `previews` is set.
+file with `ETag`, `Range` and `HEAD` support. It serves only the bytes confirmed when the upload finished, and answers
+409 when storage holds others, such as bytes sent again through a signed upload address. Access the request carries,
+such as a share link's grant, counts for downloads, `listFiles` and `getFile`, but never for changes. Files that could
+run script, such as SVG and HTML, always download rather than open, and every response but a PDF's carries
+`Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff`. `?download=1` asks for a download; `?w=` asks
+for a preview when `previews` is set.
 
 ## In the browser
 
@@ -132,8 +138,7 @@ const drafts = useDraftAttachments("comments.comment")
 - Uploads report `loaded` bytes as they go, through `XMLHttpRequest`, and `state`: `uploading`, `finishing`, `done`,
   `error` or `cancelled`. Announce them in the app, such as in a polite live region.
 - `prepareUpload(file, target)` and `finishUpload(prepared)` on the client are the steps around the bytes, for an engine
-  that sends them itself, such as [UploadCN](https://uploadcn.dev)'s. The [spec](docs/spec.md#uploadcn) maps an UploadCN
-  adapter onto them.
+  that sends them itself, such as [UploadCN](https://uploadcn.dev)'s.
 - `useAttachmentSettings(subjectType)` loads the limits, for a file input's `accept`. Once loaded, files they refuse
   fail at once, without a call.
 - `detach` and `reorder` show at once and roll back when the server refuses. `applyEvent` loads a record again for an

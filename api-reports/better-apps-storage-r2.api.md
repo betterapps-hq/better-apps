@@ -40,7 +40,7 @@ export interface R2BucketLike {
     get(key: string, options?: {
         range?: R2RangeLike;
         onlyIf?: {
-            etagDoesNotMatch?: string;
+            etagMatches?: string;
         };
     }): Promise<R2ObjectBodyLike | R2ObjectLike | null>;
     // (undocumented)

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test"
+import { describe, expect, it, vi } from "vite-plus/test"
 import { inv1, invoices, secret, setup, vanishing } from "../test/app.js"
 import { attachmentModel, attachments, fileModel, memoryStorage } from "./index.js"
 
@@ -89,6 +89,30 @@ describe("the upload route", () => {
     expect((await send(created.upload, "abc")).status).toBe(404)
   })
 
+  it("counts a body without a length, refusing one longer or shorter than the upload said", async () => {
+    const { api, as, request, storage } = setup()
+    const created = await api.createUpload({ ...inv1, name: "a.txt", contentType: "text/plain", size: 3 }, as("bob"))
+    const chunked = async (...chunks: string[]) =>
+      request(created.upload.url, {
+        method: "PUT",
+        headers: created.upload.headers,
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (const chunk of chunks) {
+              controller.enqueue(new TextEncoder().encode(chunk))
+            }
+            controller.close()
+          }
+        }),
+        duplex: "half"
+      } as RequestInit)
+    expect((await chunked("ab", "cd")).status).toBe(413)
+    expect((await chunked("a", "b")).status).toBe(400)
+    expect(storage.objects.size).toBe(0)
+    expect((await chunked("a", "bc")).status).toBe(204)
+    expect(await api.completeUpload({ fileId: created.file.id }, as("bob"))).toMatchObject({ file: { size: 3 } })
+  })
+
   it("keeps finishing honest: nothing sent yet, or bytes that don't match", async () => {
     const { api, as, storage } = setup()
     const created = await api.createUpload({ ...inv1, name: "a.txt", contentType: "text/plain", size: 3 }, as("bob"))
@@ -106,6 +130,23 @@ describe("the upload route", () => {
     const { file } = await upload("bob", inv1)
     const again = await api.completeUpload({ fileId: file.id }, as("bob"))
     expect(again).toMatchObject({ file: { id: file.id, status: "ready" }, attachment: null })
+  })
+
+  it("finishes a file once when it's finished twice at the same time", async () => {
+    const { api, as, send, events, count } = setup()
+    for (const target of [inv1, { owner: "user" as const }]) {
+      const created = await api.createUpload(
+        { ...target, name: "a.txt", contentType: "text/plain", size: 3 },
+        as("bob")
+      )
+      await send(created.upload, "abc")
+      const finish = async () => api.completeUpload({ fileId: created.file.id }, as("bob"))
+      const results = await Promise.all([finish(), finish()])
+      expect(results.map((result) => result.file.status)).toEqual(["ready", "ready"])
+    }
+    expect(count(attachmentModel)).toBe(1)
+    expect(events("attachment.added")).toHaveLength(1)
+    expect(events("file.uploaded")).toHaveLength(2)
   })
 })
 
@@ -180,6 +221,46 @@ describe("downloads", () => {
     expect(response.headers.get("content-security-policy")).toBeNull()
   })
 
+  it("serve only the bytes confirmed when the upload finished", async () => {
+    const { upload, request, storage } = setup({
+      previews: { transform: () => new Response("preview", { headers: { "content-type": "image/webp" } }) }
+    })
+    const { file } = await upload("bob", inv1, { name: "a.png", contentType: "image/png", bytes: "png" })
+    // A signed upload address still open takes bytes again, and can't be revoked.
+    await storage.put(`attachments/${file.id}`, "PNG", { size: 3, contentType: "image/png" })
+    const url = file.url as string
+    for (const [path, init] of [
+      [url, {}],
+      [url, { method: "HEAD" }],
+      [url, { headers: { range: "bytes=0-1" } }],
+      [`${url}?w=100`, {}],
+      [`${url}?w=100`, { method: "HEAD" }]
+    ] as const) {
+      expect((await request(path, init, "bob")).status).toBe(409)
+    }
+  })
+
+  it("answer 304 for a preview without reading storage, and HEAD without making one", async () => {
+    let made = 0
+    const { upload, request, storage } = setup({
+      previews: {
+        widths: [100],
+        transform: () => {
+          made += 1
+          return new Response("preview", { headers: { "content-type": "image/webp" } })
+        }
+      }
+    })
+    const { file } = await upload("bob", inv1, { name: "a.png", contentType: "image/png", bytes: "png" })
+    const url = `${file.url}?w=100`
+    const head = await request(url, { method: "HEAD" }, "bob")
+    expect([head.status, head.headers.get("content-type"), made]).toEqual([200, null, 0])
+    const etag = (await request(url, {}, "bob")).headers.get("etag") as string
+    await storage.delete([`attachments/${file.id}`])
+    expect((await request(url, { headers: { "if-none-match": etag } }, "bob")).status).toBe(304)
+    expect(made).toBe(1)
+  })
+
   it("make previews at the next width up with the app's transform", async () => {
     const widths: number[] = []
     const { upload, request } = setup({
@@ -223,6 +304,34 @@ describe("drafts", () => {
     })
   })
 
+  it("stay on the record that wins when two records race for one", async () => {
+    const { api, as, upload, events, count } = setup()
+    const { file } = await upload("bob", { subjectType: "invoice" })
+    const results = await Promise.allSettled([
+      api.attach({ ...inv1, fileIds: [file.id] }, as("bob")),
+      api.attach({ subjectType: "invoice", subjectId: "inv-2", fileIds: [file.id] }, as("bob"))
+    ])
+    expect(results.map((result) => result.status).sort()).toEqual(["fulfilled", "rejected"])
+    expect(results.find((result) => result.status === "rejected")).toMatchObject({ reason: { code: "CONFLICT" } })
+    expect([count(fileModel), count(attachmentModel)]).toEqual([1, 1])
+    expect(await api.getFile({ fileId: file.id }, as("bob"))).toMatchObject({ status: "ready", expiresAt: null })
+    expect(events("file.deleted")).toEqual([])
+  })
+
+  it("are capped for each person, with uploads under way", async () => {
+    const { api, as, upload } = setup({ maxDrafts: 2 })
+    const draft = { subjectType: "invoice", name: "a.txt", contentType: "text/plain", size: 3 } as const
+    await upload("bob", { subjectType: "invoice" })
+    const pending = await api.createUpload(draft, as("bob"))
+    await expect(api.createUpload(draft, as("bob"))).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" })
+    await api.createUpload(draft, as("cy"))
+    await api.deleteFile({ fileId: pending.file.id }, as("bob"))
+    // Files a record keeps don't count once they're attached.
+    await upload("bob", inv1)
+    await upload("bob", inv1)
+    await expect(api.createUpload(draft, as("bob"))).resolves.toBeDefined()
+  })
+
   it("are seen only by their uploader until they're attached", async () => {
     const { api, as, upload } = setup()
     const { file } = await upload("bob", { subjectType: "invoice" })
@@ -251,6 +360,31 @@ describe("drafts", () => {
     expect(await api.deleteFile({ fileId: file.id }, as("bob"))).toEqual({ deleted: true })
     expect(storage.objects.size).toBe(0)
     expect(await api.deleteFile({ fileId: file.id }, as("bob"))).toEqual({ deleted: false })
+  })
+})
+
+describe("deleted files", () => {
+  it("keep their row until their upload address closed, then the sweep deletes late bytes too", async () => {
+    const { api, as, send, storage, database } = setup({}, { signedUploads: true })
+    const rows = () =>
+      (database.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${fileModel}`).get() as { count: number }).count
+    const created = await api.createUpload({ ...inv1, name: "a.txt", contentType: "text/plain", size: 3 }, as("bob"))
+    expect(await api.deleteFile({ fileId: created.file.id }, as("bob"))).toEqual({ deleted: true })
+    // The signed address can't be revoked, so bytes still arrive.
+    expect((await send(created.upload, "abc")).status).toBe(200)
+    await expect(api.completeUpload({ fileId: created.file.id }, as("bob"))).rejects.toMatchObject({
+      code: "NOT_FOUND"
+    })
+    expect(await api.sweep()).toEqual({ removed: 0, done: true })
+    expect([rows(), storage.objects.size]).toEqual([1, 1])
+    vi.useFakeTimers({ toFake: ["Date"] })
+    try {
+      vi.setSystemTime(Date.now() + 2 * 60 * 60_000)
+      expect(await api.sweep()).toEqual({ removed: 1, done: true })
+    } finally {
+      vi.useRealTimers()
+    }
+    expect([rows(), storage.objects.size]).toEqual([0, 0])
   })
 })
 
@@ -325,6 +459,19 @@ describe("files on their own", () => {
     expect(page.cursor).toBeNull()
     const own = await api.listOwnFiles({ owner: "user" }, as("bob"))
     expect(own.files.map((file) => file.id)).toEqual([mine.file.id])
+  })
+
+  it("go with their uploader to another organization, unlike the organization's files", async () => {
+    const { api, identity, upload } = setup()
+    const mine = await upload("bob", { owner: "user" })
+    const ours = await upload("bob", {})
+    const elsewhere = { actor: { ...identity.actor("bob"), orgId: "globex" } }
+    const target = { subjectType: "invoice", subjectId: "inv-globex" } as const
+    const { files } = await api.attach({ ...target, fileIds: [mine.file.id] }, elsewhere)
+    expect(files.map((file) => file.id)).toEqual([mine.file.id])
+    await expect(api.attach({ ...target, fileIds: [ours.file.id] }, elsewhere)).rejects.toMatchObject({
+      code: "NOT_FOUND"
+    })
   })
 
   it("page newest first", async () => {
@@ -473,6 +620,7 @@ describe("options", () => {
     expect(() => attachments({ storage, subjects: { invoice: {} }, secret: "short" })).toThrow(/32 characters/)
     expect(() => attachments({ storage, subjects: { invoice: {} }, uploadTtl: 0 })).toThrow(/uploadTtl/)
     expect(() => attachments({ storage, subjects: { invoice: {} }, maxSize: 0 })).toThrow(/maxSize/)
+    expect(() => attachments({ storage, subjects: { invoice: {} }, maxDrafts: 0 })).toThrow(/maxDrafts/)
     expect(() =>
       attachments({ storage, subjects: { invoice: {} }, previews: { widths: [0], transform: () => new Response() } })
     ).toThrow(/widths/)

@@ -33,7 +33,7 @@ export interface R2BucketLike {
   ): Promise<R2ObjectLike | null>
   get(
     key: string,
-    options?: { range?: R2RangeLike; onlyIf?: { etagDoesNotMatch?: string } }
+    options?: { range?: R2RangeLike; onlyIf?: { etagMatches?: string } }
   ): Promise<R2ObjectBodyLike | R2ObjectLike | null>
   head(key: string): Promise<R2ObjectLike | null>
   delete(keys: string | string[]): Promise<void>
@@ -104,10 +104,10 @@ export function r2Storage({ bucket, s3 }: R2StorageOptions): StorageAdapter {
       }
       return toStored(object)
     },
-    async get(key, { range, etagDoesNotMatch } = {}) {
+    async get(key, { range, etagMatches } = {}) {
       const object = await bucket.get(key, {
         ...(range ? { range } : {}),
-        ...(etagDoesNotMatch === undefined ? {} : { onlyIf: { etagDoesNotMatch } })
+        ...(etagMatches === undefined ? {} : { onlyIf: { etagMatches } })
       })
       if (!object) {
         return null

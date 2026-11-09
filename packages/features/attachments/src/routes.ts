@@ -6,10 +6,14 @@ import type { Config } from "./config.js"
 import { AttachmentsError } from "./errors.js"
 import { cleanContentType, contentDisposition, isInline, previewTypes } from "./files.js"
 import { fileModel, type AttachmentFile } from "./schema.js"
-import { hasBody, type StorageRange, type StoredBody, type StoredObject } from "./storage.js"
+import { hasBody, type StorageRange, type StoredBody } from "./storage.js"
 import { sha256Hex } from "./tokens.js"
 
 const gone = () => new AttachmentsError("NOT_FOUND", "That upload doesn't exist, or it expired.")
+const notFound = () => new AttachmentsError("NOT_FOUND", "That file doesn't exist, or you can't see it.")
+// The bytes were replaced after the upload was checked, such as through a signed address used again.
+const changed = () =>
+  new AttachmentsError("CONFLICT", "This file changed after it was uploaded, so it can't be downloaded.")
 
 /** Takes an upload's bytes, checked against its token, its expiry, and the type and size it was declared with. */
 async function upload(config: Config, { request, url, params, db, now }: RouteContext): Promise<Response> {
@@ -28,15 +32,45 @@ async function upload(config: Config, { request, url, params, db, now }: RouteCo
   if (cleanContentType(request.headers.get("content-type") ?? "") !== file.contentType) {
     throw new AttachmentsError("INVALID_INPUT", `Send the file as ${file.contentType}, as the upload said.`)
   }
-  // Storage takes exactly `size` bytes, so a body without a length, such as a chunked one, still can't differ.
+  const exactly = `Send exactly ${file.size} bytes, as the upload said.`
   const length = request.headers.get("content-length")
   if (length !== null && length !== String(file.size)) {
-    throw new AttachmentsError("INVALID_INPUT", `Send exactly ${file.size} bytes, as the upload said.`)
+    throw new AttachmentsError("INVALID_INPUT", exactly)
   }
-  await config.storage.put(file.storageKey, request.body ?? new Uint8Array(), {
-    size: file.size,
-    contentType: file.contentType
-  })
+  // A body without a length, such as a chunked one, is counted as it arrives, so storage never takes more than `size`.
+  const count = { bytes: 0, ended: false }
+  const counted = (request.body ?? new Blob().stream()).pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        count.bytes += chunk.byteLength
+        if (count.bytes > file.size) {
+          controller.error(new Error(exactly))
+        } else {
+          controller.enqueue(chunk)
+        }
+      },
+      flush(controller) {
+        count.ended = true
+        if (count.bytes < file.size) {
+          controller.error(new Error(exactly))
+        }
+      }
+    })
+  )
+  try {
+    await config.storage.put(file.storageKey, counted, { size: file.size, contentType: file.contentType })
+  } catch (error) {
+    if (count.bytes > file.size) {
+      throw new AttachmentsError(
+        "PAYLOAD_TOO_LARGE",
+        `That's more than the ${file.size} bytes the upload said. Send exactly that many.`
+      )
+    }
+    if (count.ended && count.bytes < file.size) {
+      throw new AttachmentsError("INVALID_INPUT", exactly)
+    }
+    throw error
+  }
   return new Response(null, { status: 204 })
 }
 
@@ -82,8 +116,11 @@ async function mayDownload(config: Config, context: RouteContext, file: Attachme
   return allowed === true
 }
 
-/** The headers every download carries, for caching and so a file can't act on the app's origin. */
-function downloadHeaders(config: Config, file: AttachmentFile, object: StoredObject, url: URL): Headers {
+/**
+ * The headers every download carries, for caching and so a file can't act on the app's origin. `etag` is the version
+ * confirmed at upload, or a preview's.
+ */
+function downloadHeaders(config: Config, file: AttachmentFile, etag: string, url: URL): Headers {
   const query = url.searchParams
   const signed = query.has("token") && config.signer !== null
   const inline = isInline(file.contentType) && query.get("download") !== "1"
@@ -94,8 +131,8 @@ function downloadHeaders(config: Config, file: AttachmentFile, object: StoredObj
     // A signed URL works until it expires, so the browser keeps the file that long. Otherwise it asks again each time,
     // with the etag, so a file the person can no longer see, such as after signing out, isn't served from its cache.
     "cache-control": signed ? `private, max-age=${Math.floor(config.downloadTtlMs / 1000)}` : "private, no-cache",
-    etag: `"${object.etag}"`,
-    "last-modified": object.uploadedAt.toUTCString(),
+    etag: `"${etag}"`,
+    "last-modified": (file.uploadedAt ?? file.createdAt).toUTCString(),
     "accept-ranges": "bytes"
   })
   if (file.contentType !== "application/pdf") {
@@ -109,28 +146,42 @@ function snapWidth(widths: readonly number[], asked: number): number {
   return widths.find((width) => width >= asked) ?? (widths.at(-1) as number)
 }
 
-/** Serves a file, part of it, a preview, or 304 when the browser has it. */
+/**
+ * Serves a file, part of it, a preview, or 304 when the browser has it. Only the bytes confirmed at upload are served:
+ * the 304 comes from the row, and storage is read on condition its etag still matches.
+ */
 async function download(config: Config, context: RouteContext): Promise<Response> {
   const { request, url, params, db } = context
   const file = await db.findOne<AttachmentFile>({ model: fileModel, where: [{ field: "id", value: params.fileId }] })
   if (!file || file.status !== "ready" || !(await mayDownload(config, context, file))) {
-    throw new AttachmentsError("NOT_FOUND", "That file doesn't exist, or you can't see it.")
+    throw notFound()
   }
+  const confirmed = file.etag ?? undefined
+  const cached = bareEtag(request.headers.get("if-none-match"))
+  const head = request.method === "HEAD"
   const width = Number(url.searchParams.get("w"))
   if (config.previews && previewTypes.has(file.contentType) && Number.isInteger(width) && width > 0) {
-    const object = await config.storage.get(file.storageKey)
-    if (!object || !hasBody(object)) {
-      throw new AttachmentsError("NOT_FOUND", "That file doesn't exist, or you can't see it.")
-    }
-    const preview = await config.previews.transform({
-      file,
-      object,
-      width: snapWidth(config.previews.widths, width),
-      request
-    })
-    const headers = downloadHeaders(config, file, object, url)
+    const snapped = snapWidth(config.previews.widths, width)
+    const headers = downloadHeaders(config, file, `${file.etag}-w${snapped}`, url)
     headers.delete("accept-ranges")
-    headers.set("etag", `"${object.etag}-w${snapWidth(config.previews.widths, width)}"`)
+    if (cached === `${file.etag}-w${snapped}`) {
+      return new Response(null, { status: 304, headers })
+    }
+    const object = head
+      ? await config.storage.head(file.storageKey)
+      : await config.storage.get(file.storageKey, { etagMatches: confirmed })
+    if (!object) {
+      throw notFound()
+    }
+    if (object.etag !== file.etag) {
+      throw changed()
+    }
+    if (!hasBody(object)) {
+      // A preview's type and length are known only once it's made, so `HEAD` leaves them out.
+      headers.delete("content-type")
+      return new Response(null, { status: 200, headers })
+    }
+    const preview = await config.previews.transform({ file, object, width: snapped, request })
     for (const name of ["content-type", "content-length"]) {
       const value = preview.headers.get(name)
       if (value) {
@@ -148,19 +199,21 @@ async function download(config: Config, context: RouteContext): Promise<Response
       headers: { "content-range": `bytes */${file.size}`, "x-content-type-options": "nosniff" }
     })
   }
-  const object =
-    request.method === "HEAD"
-      ? await config.storage.head(file.storageKey)
-      : await config.storage.get(file.storageKey, {
-          range: range === "all" ? undefined : range,
-          etagDoesNotMatch: bareEtag(request.headers.get("if-none-match"))
-        })
-  if (!object) {
-    throw new AttachmentsError("NOT_FOUND", "That file doesn't exist, or you can't see it.")
-  }
-  const headers = downloadHeaders(config, file, object, url)
-  if (bareEtag(request.headers.get("if-none-match")) === object.etag) {
+  const headers = downloadHeaders(config, file, file.etag ?? "", url)
+  if (cached !== undefined && cached === file.etag) {
     return new Response(null, { status: 304, headers })
+  }
+  const object = head
+    ? await config.storage.head(file.storageKey)
+    : await config.storage.get(file.storageKey, {
+        range: range === "all" ? undefined : range,
+        etagMatches: confirmed
+      })
+  if (!object) {
+    throw notFound()
+  }
+  if (object.etag !== file.etag) {
+    throw changed()
   }
   const part = hasBody(object) ? (object as StoredBody).range : undefined
   if (part && range !== "all") {

@@ -116,13 +116,18 @@ export const attachmentFile = sqliteTable(
     target: text("target"),
     uploadTokenHash: text("upload_token_hash"),
     expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+    uploadClosesAt: integer("upload_closes_at", {
+      mode: "timestamp_ms"
+    }).notNull(),
+    etag: text("etag"),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     uploadedAt: integer("uploaded_at", { mode: "timestamp_ms" })
   },
   (table) => [
     index("attachment_file_by_owner").on(table.owner, table.createdAt),
     index("attachment_file_by_creator").on(table.createdBy, table.status),
-    index("attachment_file_by_expiry").on(table.status, table.expiresAt)
+    index("attachment_file_by_expiry").on(table.status, table.expiresAt),
+    index("attachment_file_by_closing").on(table.status, table.uploadClosesAt)
   ]
 )
 

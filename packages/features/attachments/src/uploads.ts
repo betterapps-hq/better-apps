@@ -91,9 +91,24 @@ export async function createUpload(config: Config, context: Context): Promise<Cr
   }
   const place = await placeUpload(config, context, actor, input)
   checkLimits(place.limits, contentType, input.size)
+  const now = Date.now()
+  // Drafts and unfinished uploads skip a record's checks until they're attached, so each person has only so many.
+  const open = await context.db.count({
+    model: fileModel,
+    where: [
+      { field: "createdBy", value: actor.userId },
+      { field: "status", operator: "in", value: ["pending", "ready"] },
+      { field: "expiresAt", operator: "gt", value: new Date(now) }
+    ]
+  })
+  if (open >= config.maxDrafts) {
+    throw new AttachmentsError(
+      "LIMIT_EXCEEDED",
+      `You can have up to ${config.maxDrafts} files uploading or waiting to be added. Add or remove some first.`
+    )
+  }
   const id = crypto.randomUUID()
   const storageKey = `attachments/${id}`
-  const now = Date.now()
   const expiresAt = new Date(now + config.uploadTtlMs)
   const signed = await config.storage.createUploadUrl?.(storageKey, {
     contentType,
@@ -117,6 +132,8 @@ export async function createUpload(config: Config, context: Context): Promise<Cr
       target: place.target,
       uploadTokenHash: token ? await sha256Hex(token) : null,
       expiresAt,
+      uploadClosesAt: expiresAt,
+      etag: null,
       createdAt: context.now,
       uploadedAt: null
     }
@@ -168,6 +185,7 @@ export async function completeUpload(config: Config, context: Context): Promise<
     uploadTokenHash: null,
     expiresAt,
     target: null,
+    etag: stored.etag,
     uploadedAt: new Date()
   }
   const markReady: WriteOperation = {
@@ -177,19 +195,34 @@ export async function completeUpload(config: Config, context: Context): Promise<
       { field: "id", value: file.id },
       { field: "status", value: "pending" }
     ],
-    update: { status: "ready", uploadTokenHash: null, expiresAt, target: null, uploadedAt: ready.uploadedAt }
+    update: {
+      status: "ready",
+      uploadTokenHash: null,
+      expiresAt,
+      target: null,
+      etag: stored.etag,
+      uploadedAt: ready.uploadedAt
+    }
   }
-  context.emit("file.uploaded", { file: eventFile(ready) })
+  // Emitted once the update matched, and written after it, so an upload that expired or lost a race isn't reported.
+  const announce = () => context.emit("file.uploaded", { file: eventFile(ready) })
   if (!keptByRecord) {
     const [updated] = await context.db.batch([markReady])
     if (!updated) {
-      throw new AttachmentsError("CONFLICT", "That upload expired. Upload the file again.")
+      // Another call finished it meanwhile, or it was deleted or expired, which `ownUpload` reports.
+      return { file: await present(config, await ownUpload(context, file.id)), attachment: null }
     }
+    announce()
     return { file: await present(config, ready), attachment: null }
   }
   const ref: SubjectRef = { subjectType: file.subjectType as string, subjectId: file.target as string }
   try {
-    const [attached] = await addLinks(config, context, ref, [ready], { before: [markReady], guarded: [file.id] })
+    const [attached] = await addLinks(config, context, ref, [ready], {
+      before: [markReady],
+      guarded: [file.id],
+      conflict: "That upload expired. Upload the file again.",
+      committed: announce
+    })
     return { file: await present(config, ready), attachment: attached ?? null }
   } catch (error) {
     // A record that went away or filled up meanwhile leaves the upload with nowhere to go.

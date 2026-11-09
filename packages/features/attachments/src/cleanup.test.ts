@@ -45,8 +45,13 @@ function withComments() {
   })
   const { app, database, identity } = createTestApp({ subjects, features: [feature, fake, feed], users })
   const as = (userId: "bob") => ({ actor: identity.actor(userId) })
+  // A deleted file's row waits until its upload address closed, so files count only while they aren't deleted.
   const count = (table: string) =>
-    (database.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count
+    (
+      database.sqlite
+        .prepare(`SELECT COUNT(*) AS count FROM ${table}${table === fileModel ? " WHERE status <> 'deleted'" : ""}`)
+        .get() as { count: number }
+    ).count
   /** Puts a file on a comment or thread, as a person posting it. */
   const attach = async (subjectType: "comments.comment" | "comments.thread", subjectId: string) => {
     const created = await app.api.attachments.createUpload(

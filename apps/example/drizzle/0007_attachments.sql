@@ -28,6 +28,8 @@ CREATE TABLE `attachment_file` (
 	`target` text,
 	`upload_token_hash` text,
 	`expires_at` integer,
+	`upload_closes_at` integer NOT NULL,
+	`etag` text,
 	`created_at` integer NOT NULL,
 	`uploaded_at` integer
 );
@@ -35,6 +37,7 @@ CREATE TABLE `attachment_file` (
 CREATE INDEX `attachment_file_by_owner` ON `attachment_file` (`owner`,`created_at`);--> statement-breakpoint
 CREATE INDEX `attachment_file_by_creator` ON `attachment_file` (`created_by`,`status`);--> statement-breakpoint
 CREATE INDEX `attachment_file_by_expiry` ON `attachment_file` (`status`,`expires_at`);--> statement-breakpoint
+CREATE INDEX `attachment_file_by_closing` ON `attachment_file` (`status`,`upload_closes_at`);--> statement-breakpoint
 CREATE TABLE `attachment_removal` (
 	`id` text PRIMARY KEY NOT NULL,
 	`created_at` integer NOT NULL

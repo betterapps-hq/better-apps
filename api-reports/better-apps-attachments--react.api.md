@@ -54,6 +54,7 @@ export interface AttachmentsOptions {
     contentTypes?: readonly string[] | undefined;
     downloadTtl?: number | undefined;
     draftTtl?: number | undefined;
+    maxDrafts?: number | undefined;
     maxSize?: number | undefined;
     path?: string | undefined;
     // Warning: (ae-forgotten-export) The symbol "PreviewOptions" needs to be exported by the entry point react.d.ts

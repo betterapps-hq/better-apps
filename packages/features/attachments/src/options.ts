@@ -74,6 +74,11 @@ export interface AttachmentsOptions {
   uploadTtl?: number | undefined
   /** How long a draft waits to be attached, in seconds. 24 hours by default. */
   draftTtl?: number | undefined
+  /**
+   * How many files one person can have uploading or waiting as drafts at once, so bytes no record keeps stay bounded. 50
+   * by default.
+   */
+  maxDrafts?: number | undefined
   /** How long a signed download URL works, in seconds. An hour by default. */
   downloadTtl?: number | undefined
   /** Image previews at a few widths. Without it, `?w=` is ignored and the original is served. */

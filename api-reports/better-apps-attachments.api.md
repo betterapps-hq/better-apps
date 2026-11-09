@@ -107,6 +107,8 @@ export type AttachmentFile = {
     target: string | null;
     uploadTokenHash: string | null;
     expiresAt: Date | null;
+    uploadClosesAt: Date;
+    etag: string | null;
     createdAt: Date;
     uploadedAt: Date | null;
 };
@@ -314,6 +316,7 @@ export interface AttachmentsOptions {
     contentTypes?: readonly string[] | undefined;
     downloadTtl?: number | undefined;
     draftTtl?: number | undefined;
+    maxDrafts?: number | undefined;
     maxSize?: number | undefined;
     path?: string | undefined;
     previews?: PreviewOptions | undefined;
@@ -550,7 +553,7 @@ export interface StorageAdapter {
 
 // @public
 export interface StorageGetOptions {
-    etagDoesNotMatch?: string | undefined;
+    etagMatches?: string | undefined;
     // (undocumented)
     range?: StorageRange | undefined;
 }

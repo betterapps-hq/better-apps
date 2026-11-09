@@ -35,6 +35,13 @@ export type AttachmentFile = {
   uploadTokenHash: string | null
   /** When an unfinished upload or an unattached draft is removed. `null` once something keeps it. */
   expiresAt: Date | null
+  /**
+   * When the upload's address stops taking bytes. A signed address can't be revoked, so a deleted file's row stays until
+   * a while after this, and its bytes are deleted again then, in case some arrived late.
+   */
+  uploadClosesAt: Date
+  /** The stored bytes' etag when the upload was confirmed. Downloads serve only bytes that still match it. */
+  etag: string | null
   createdAt: Date
   uploadedAt: Date | null
 }
@@ -71,13 +78,16 @@ export const attachmentsSchema: FeatureSchema = {
       target: { type: "string", required: false },
       uploadTokenHash: { type: "string", required: false },
       expiresAt: { type: "date", required: false },
+      uploadClosesAt: { type: "date" },
+      etag: { type: "string", required: false },
       createdAt: { type: "date" },
       uploadedAt: { type: "date", required: false }
     },
     indexes: [
       { fields: ["owner", "createdAt"], name: "attachment_file_by_owner" },
       { fields: ["createdBy", "status"], name: "attachment_file_by_creator" },
-      { fields: ["status", "expiresAt"], name: "attachment_file_by_expiry" }
+      { fields: ["status", "expiresAt"], name: "attachment_file_by_expiry" },
+      { fields: ["status", "uploadClosesAt"], name: "attachment_file_by_closing" }
     ]
   },
   [attachmentModel]: {

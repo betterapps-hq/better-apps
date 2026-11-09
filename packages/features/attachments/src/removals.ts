@@ -16,6 +16,12 @@ const removalMemoryMs = 60 * 60_000
 /** How many attachments one page of a bulk job removes, each a few statements per page besides its events. */
 export const removalPage = 100
 
+/**
+ * How long after an upload's address closes its bytes may still arrive, such as from a slow upload that started in
+ * time. A deleted file's row waits this long, so the sweep deletes its bytes again after any late ones landed.
+ */
+export const lateUploadMs = 60 * 60_000
+
 /** One call of a bulk job: whether it's done, or should be called again. */
 export interface BulkStep {
   done: boolean
@@ -88,19 +94,25 @@ function markDeleted(files: readonly AttachmentFile[], guard: readonly Where[] =
   }))
 }
 
-/** Deletes files' bytes, then their rows, which takes any attachments left on them along. */
+/**
+ * Deletes files' bytes, then their rows, which takes any attachments left on them along. A row whose upload address
+ * closed less than `lateUploadMs` ago stays `deleted`, since a signed address can't be revoked, and the sweep deletes its
+ * bytes again later.
+ */
 export async function purge(config: Config, db: DatabaseAdapter, files: readonly AttachmentFile[]): Promise<void> {
   if (files.length === 0) {
     return
   }
   await config.storage.delete(files.map((file) => file.storageKey))
+  const closed = new Date(Date.now() - lateUploadMs)
   await db.batch(
     chunks(files.map((file) => file.id)).map((ids) => ({
       type: "deleteMany" as const,
       model: fileModel,
       where: [
         { field: "id", operator: "in" as const, value: ids },
-        { field: "status", value: "deleted" }
+        { field: "status", value: "deleted" },
+        { field: "uploadClosesAt", operator: "lt" as const, value: closed }
       ]
     }))
   )
@@ -115,16 +127,16 @@ const fileReasons: Record<DetachReason, FileDeletedReason> = {
 }
 
 /**
- * Takes files off records. A file a record kept goes with it, since it was on that record only. Removals marked `bulk`
- * reach browsers as one `subject.changed` per record, written with the page, so a job that stops partway still reaches
- * them.
+ * Takes files off records. A file a record kept goes with it, since it was on that record only, unless `keepFiles` says
+ * the file belongs elsewhere. Removals marked `bulk` reach browsers as one `subject.changed` per record, written with the
+ * page, so a job that stops partway still reaches them.
  */
 export async function removeLinks(
   config: Config,
   writer: Writer,
   links: readonly Attachment[],
   reason: DetachReason,
-  bulk = false
+  { bulk = false, keepFiles = false }: { bulk?: boolean; keepFiles?: boolean } = {}
 ): Promise<void> {
   if (links.length === 0) {
     return
@@ -133,7 +145,7 @@ export async function removeLinks(
     writer.db,
     links.map((link) => link.fileId)
   )
-  const doomed = [...files.values()].filter((file) => file.owner === null && file.status !== "deleted")
+  const doomed = keepFiles ? [] : [...files.values()].filter((file) => file.owner === null && file.status !== "deleted")
   for (const link of links) {
     const file = files.get(link.fileId)
     if (file) {

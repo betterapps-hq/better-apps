@@ -4,7 +4,16 @@ import type { EventHandler, WriteOperation } from "better-apps"
 import { chunks, orgsOf, type Context } from "./access.js"
 import { settingsOf, type Config } from "./config.js"
 import { eventFile } from "./present.js"
-import { deleteFiles, purge, removalPage, removeLinks, retried, type BulkStep, type Writer } from "./removals.js"
+import {
+  deleteFiles,
+  lateUploadMs,
+  purge,
+  removalPage,
+  removeLinks,
+  retried,
+  type BulkStep,
+  type Writer
+} from "./removals.js"
 import { attachmentModel, fileModel, type Attachment, type AttachmentFile } from "./schema.js"
 
 /**
@@ -25,15 +34,19 @@ export interface SweepResult extends BulkStep {
 }
 
 /**
- * Removes expired uploads and drafts, and files left `deleted` by a removal whose bytes failed to go. Expired files are
- * marked with a guard on their expiry, so a draft attached meanwhile is never taken, and read back to see which were.
+ * Removes expired uploads and drafts, and the rows of deleted files once their upload address closed, deleting their
+ * bytes again in case some arrived late or failed to go. Expired files are marked with a guard on their expiry, so a
+ * draft attached meanwhile is never taken, and read back to see which were.
  */
 export async function sweep(config: Config, writer: Writer): Promise<SweepResult> {
   const { db } = writer
   const now = new Date()
   const leftovers = await db.findMany<AttachmentFile>({
     model: fileModel,
-    where: [{ field: "status", value: "deleted" }],
+    where: [
+      { field: "status", value: "deleted" },
+      { field: "uploadClosesAt", operator: "lt", value: new Date(now.getTime() - lateUploadMs) }
+    ],
     limit: removalPage
   })
   const expired =
@@ -135,7 +148,7 @@ async function removePage(
 ): Promise<{ removed: number } & BulkStep> {
   return retried(async () => {
     const rows = await find(removalPage)
-    await removeLinks(config, writer, rows, "subjectRemoved", true)
+    await removeLinks(config, writer, rows, "subjectRemoved", { bulk: true })
     return { removed: rows.length, done: rows.length < removalPage }
   })
 }
@@ -205,7 +218,7 @@ async function movePage(
       }
     }
     if (dropped.length > 0) {
-      await removeLinks(config, writer, dropped, "withdrawn", true)
+      await removeLinks(config, writer, dropped, "withdrawn", { bulk: true })
     }
     if (moves.length === 0) {
       return { moved: 0, done: rows.length < movePageSize }
@@ -277,7 +290,10 @@ export async function removeUser(config: Config, context: Context): Promise<{ re
   return retried(async () => {
     const owned = await db.findMany<AttachmentFile>({
       model: fileModel,
-      where: [{ field: "owner", value: `user:${userId}` }],
+      where: [
+        { field: "owner", value: `user:${userId}` },
+        { field: "status", operator: "ne", value: "deleted" }
+      ],
       limit: userPageSize
     })
     const unkept =

@@ -45,18 +45,31 @@ async function attachmentsOn(context: Pick<Context, "db">, ref: SubjectRef, orgI
   })
 }
 
+/** Options for `addLinks`. */
+interface LinkOptions {
+  /** Writes that run first in the same batch, such as marking an upload ready. */
+  before: readonly WriteOperation[]
+  /** The files whose update in `before` must match, in the same order. */
+  guarded: readonly string[]
+  /** Why a guarded update matched nothing, as the `CONFLICT` error says it. */
+  conflict: string
+  /** Runs once the batch committed with every guarded update matching, such as to emit `file.uploaded`. */
+  committed?: (() => void) | undefined
+}
+
 /**
  * Puts files on a record after its files, in the record's free places, so the database holds `maxFiles` even when two
- * uploads finish at once. `before` runs first in the same batch, such as marking an upload ready; a `guarded` file whose
- * update matched nothing, because it expired or was deleted meanwhile, takes its attachment back off. Then the record
- * is checked again, and files on a record that went away, or out of reach, meanwhile come back off as `withdrawn`.
+ * uploads finish at once. A `guarded` file whose update matched nothing, because it expired, was deleted or was
+ * attached elsewhere meanwhile, takes its attachment back off and leaves the file to whatever changed it. Then the
+ * record is checked again, and files on a record that went away, or out of reach, meanwhile come back off as
+ * `withdrawn`.
  */
 export async function addLinks(
   config: Config,
   context: Context,
   ref: SubjectRef,
   files: readonly AttachmentFile[],
-  { before = [], guarded = [] }: { before?: readonly WriteOperation[]; guarded?: readonly string[] } = {}
+  { before, guarded, conflict, committed }: LinkOptions
 ): Promise<AttachedFile[]> {
   const settings = settingsOf(config, ref.subjectType)
   const { actor } = context
@@ -100,8 +113,11 @@ export async function addLinks(
   })
   const lost = added.links.filter((link) => added.failed.has(link.fileId))
   if (lost.length > 0) {
-    await removeLinks(config, context, lost, "withdrawn")
-    throw new AttachmentsError("CONFLICT", "That upload expired. Upload the file again.")
+    await removeLinks(config, context, lost, "withdrawn", { keepFiles: true })
+    throw new AttachmentsError("CONFLICT", conflict)
+  }
+  if (added.failed.size === 0) {
+    committed?.()
   }
   if (!isTrusted(context)) {
     const visible = actor !== null && (await context.subjects.canView(actor, ref))
@@ -154,7 +170,8 @@ export async function attach(config: Config, context: Context): Promise<{ files:
       }
       continue
     }
-    if (file.orgId !== orgId) {
+    // A person's own files go with them to any organization; drafts and organizations' files stay in theirs.
+    if (file.orgId !== orgId && !file.owner?.startsWith("user:")) {
       throw new AttachmentsError("INVALID_INPUT", "That file belongs to another organization.")
     }
     checkLimits(settings, file.contentType, file.size)
@@ -170,7 +187,13 @@ export async function attach(config: Config, context: Context): Promise<{ files:
     update: { expiresAt: null, subjectType: input.subjectType }
   }))
   const attaching = files.map((file) => (drafts.includes(file.id) ? { ...file, expiresAt: null } : file))
-  return { files: await addLinks(config, context, ref, attaching, { before, guarded: drafts }) }
+  return {
+    files: await addLinks(config, context, ref, attaching, {
+      before,
+      guarded: drafts,
+      conflict: "That file was added somewhere else, or it expired. Upload it again."
+    })
+  }
 }
 
 /** Takes a file off a record: the person who put it there, a moderator, or trusted server code. */

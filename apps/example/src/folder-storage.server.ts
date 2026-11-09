@@ -58,9 +58,9 @@ export function folderStorage(folder: string): StorageAdapter {
       await rename(`${path}.part`, path)
       return { key, size, contentType, etag: meta.etag, uploadedAt: new Date(meta.uploadedAt) }
     },
-    async get(key, { range, etagDoesNotMatch } = {}) {
+    async get(key, { range, etagMatches } = {}) {
       const object = await head(key)
-      if (!object || (etagDoesNotMatch !== undefined && etagDoesNotMatch === object.etag)) {
+      if (!object || (etagMatches !== undefined && etagMatches !== object.etag)) {
         return object
       }
       let offset = 0

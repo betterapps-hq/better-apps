@@ -23,8 +23,8 @@ export type StorageRange = { offset: number; length?: number | undefined } | { s
 /** Options for `get`. */
 export interface StorageGetOptions {
   range?: StorageRange | undefined
-  /** Returns the object without its body when its etag is this one, so a download answers 304. */
-  etagDoesNotMatch?: string | undefined
+  /** Returns the object without its body unless its etag is this one, so bytes replaced since are never served. */
+  etagMatches?: string | undefined
 }
 
 /** A signed request that sends an object's bytes straight to storage, without the app's server. */
@@ -49,7 +49,7 @@ export interface StorageAdapter {
     options: { size: number; contentType: string }
   ): Promise<StoredObject>
   /**
-   * Reads an object, or `null` when there's none. When `etagDoesNotMatch` is the object's etag, it returns the object
+   * Reads an object, or `null` when there's none. When `etagMatches` isn't the object's etag, it returns the object
    * without a body.
    */
   get(key: string, options?: StorageGetOptions): Promise<StoredBody | StoredObject | null>
@@ -155,12 +155,12 @@ export function memoryStorage(options: MemoryStorageOptions = {}): MemoryStorage
     id: "memory",
     objects,
     put,
-    async get(key, { range, etagDoesNotMatch } = {}) {
+    async get(key, { range, etagMatches } = {}) {
       const object = objects.get(key)
       if (!object) {
         return null
       }
-      if (etagDoesNotMatch !== undefined && etagDoesNotMatch === object.etag) {
+      if (etagMatches !== undefined && etagMatches !== object.etag) {
         return info(key, object)
       }
       const part = slice(object.bytes, range)
