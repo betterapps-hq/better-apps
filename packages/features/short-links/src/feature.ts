@@ -666,15 +666,15 @@ function grantsFor(config: Config): SubjectGrants {
       if (codes.length === 0) {
         return checks.map(() => false)
       }
-      const read = await Promise.all(
-        chunks(codes).map(async (list) =>
-          context.db.findMany<LinkRow>({ model: linkModel, where: [{ field: "code", operator: "in", value: list }] })
-        )
-      )
       const now = new Date()
       const byCode = new Map(
-        read
-          .flat()
+        (
+          await readLinks(
+            context,
+            codes,
+            checks.filter((_, index) => (codesOf[index] ?? []).length > 0)
+          )
+        )
           .filter((row) => row.grantsView && isOpen(row, now) && mayGrant(config, row))
           .map((row) => [row.code, row])
       )
@@ -688,9 +688,11 @@ function grantsFor(config: Config): SubjectGrants {
       if (found.length === 0) {
         return checks.map(() => false)
       }
-      // The record's organization must still be the link's.
-      const orgs = await context.subjects.getOrgIds(found.map(refOf))
-      const placed = found.filter((row, index) => (orgs[index] ?? "") === row.orgId)
+      // The record's organization must still be the link's, looked up once per record however many links it has.
+      const records = new Map(found.map((row) => [recordKey(refOf(row)), refOf(row)]))
+      const orgIds = await context.subjects.getOrgIds([...records.values()])
+      const orgOf = new Map([...records.keys()].map((key, index) => [key, orgIds[index] ?? ""]))
+      const placed = found.filter((row) => orgOf.get(recordKey(refOf(row))) === row.orgId)
       const valid = new Set(placed.filter((row) => row.orgId !== ""))
       const loose = placed.filter((row) => row.orgId === "")
       if (loose.length > 0) {
@@ -709,11 +711,54 @@ function grantsFor(config: Config): SubjectGrants {
 
 const refOf = (row: LinkRow): SubjectRef => ({ subjectType: row.subjectType ?? "", subjectId: row.subjectId ?? "" })
 
+const recordKey = ({ subjectType, subjectId }: SubjectRef) => JSON.stringify([subjectType, subjectId])
+
+/**
+ * The links a batch of checks may be granted by, in as few queries as it takes: by their codes, 90 to a query, or, when
+ * the checks name fewer records than that takes, such as one record shown to many live viewers, by those records and
+ * matched to the codes here.
+ */
+async function readLinks(
+  context: SubjectContext,
+  codes: readonly string[],
+  checks: readonly SubjectRef[]
+): Promise<LinkRow[]> {
+  const records = new Map<string, Set<string>>()
+  for (const { subjectType, subjectId } of checks) {
+    records.set(subjectType, (records.get(subjectType) ?? new Set()).add(subjectId))
+  }
+  const byRecord = [...records].flatMap(([subjectType, ids]) => chunks([...ids]).map((list) => ({ subjectType, list })))
+  const byCode = chunks(codes)
+  if (byRecord.length < byCode.length) {
+    const wanted = new Set(codes)
+    const read = await Promise.all(
+      byRecord.map(async ({ subjectType, list }) =>
+        context.db.findMany<LinkRow>({
+          model: linkModel,
+          where: [
+            { field: "subjectType", value: subjectType },
+            { field: "subjectId", operator: "in", value: list },
+            { field: "grantsView", value: true }
+          ]
+        })
+      )
+    )
+    return read.flat().filter((row) => wanted.has(row.code))
+  }
+  const read = await Promise.all(
+    byCode.map(async (list) =>
+      context.db.findMany<LinkRow>({ model: linkModel, where: [{ field: "code", operator: "in", value: list }] })
+    )
+  )
+  return read.flat()
+}
+
 /**
  * The links outside any organization whose maker could still make them: they can see the record, and `canShare` and
  * `grantView` allow them. Such a link stands for its maker alone, so it grants nothing once they lose access. An
  * organization's links stand for the organization instead, and outlive the members who made them. When a check fails,
- * such as when the identity service is down, these links grant nothing for the request, and other links still count.
+ * such as when the identity service is down, these links grant nothing to any request in the batch being checked, and
+ * other links still count.
  */
 async function stillShared(
   config: Config,

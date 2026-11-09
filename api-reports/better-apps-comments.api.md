@@ -353,6 +353,15 @@ export function comments<const Options extends CommentsOptions>(options: Options
         }>, ClientEvent | null> & {
             serverOnly?: true | undefined;
         };
+        toClientEvents: ActionDefinition<StandardSchemaV1<{
+        event: BetterAppsEvent;
+        viewers: readonly LiveViewer[];
+        }, {
+        event: BetterAppsEvent;
+        viewers: readonly LiveViewer[];
+        }>, (ClientEvent | null)[]> & {
+            serverOnly?: true | undefined;
+        };
     };
 };
 
@@ -537,6 +546,12 @@ export interface ListThreadsInput<SubjectType extends string = string, AnchorKin
     // (undocumented)
     subjectType: SubjectType;
     where?: Record<string, string | number | boolean | null> | undefined;
+}
+
+// @public
+export interface LiveViewer {
+    actor: Actor | null;
+    request?: Request | null | undefined;
 }
 
 // @public

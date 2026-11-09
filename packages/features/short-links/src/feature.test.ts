@@ -359,6 +359,41 @@ describe("access through a link", () => {
     reads.mockRestore()
   })
 
+  it("reads many viewers' links by record when that takes fewer queries, and by code past 90 codes otherwise", async () => {
+    const { app, api, as } = setup()
+    const link = await api.create({ target: inv1, grantsView: true }, as("ada"))
+    const reads = vi.spyOn(app.db, "findMany")
+    const linkReads = () => reads.mock.calls.filter(([query]) => query.model === "shortLink").length
+    // Five viewers of one record, with 20 codes each: 100 codes, but one record.
+    const viewers = Array.from({ length: 5 }, (_, viewer) => {
+      const codes = Array.from({ length: 20 }, (_, index) => `other-${viewer}-${index}`)
+      return request(
+        `better-apps-links=${[...codes.slice(viewer === 0 ? 1 : 0), ...(viewer === 0 ? [link.code] : [])].join(".")}`
+      )
+    })
+    expect(
+      await app.subjects.canViewMany(viewers.map((holder) => ({ actor: null, ...inv1, request: holder })))
+    ).toEqual([true, false, false, false, false])
+    expect(linkReads()).toBe(1)
+
+    // 92 records, each with its own code: two queries either way, so by code, across the 90-code boundary.
+    reads.mockClear()
+    const checks = Array.from({ length: 91 }, (_, index) => ({
+      actor: null,
+      subjectType: "invoice",
+      subjectId: `missing-${index}`,
+      request: request(`better-apps-links=missing-${index}`)
+    }))
+    const holder = request(`better-apps-links=${link.code}`)
+    const allowed = await app.subjects.canViewMany([...checks, { actor: null, ...inv1, request: holder }])
+    expect(allowed.filter(Boolean)).toHaveLength(1)
+    expect(allowed.at(-1)).toBe(true)
+    expect(
+      reads.mock.calls.filter(([query]) => query.model === "shortLink" && query.where?.[0]?.field === "code")
+    ).toHaveLength(2)
+    reads.mockRestore()
+  })
+
   it("reads the links again for each check, so a request reused by a live connection sees changes at once", async () => {
     const { app, api, as } = setup()
     const link = await api.create({ target: inv1, grantsView: true }, as("ada"))

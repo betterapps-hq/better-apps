@@ -62,7 +62,7 @@ to add the `commentThread` and `comment` tables to your schema.
 - Writes: `createThread`, `reply`, `editComment`, `deleteComment`, `resolveThread`, `reopenThread`, `updateThread`,
   `updateAnchor` and `deleteThread`.
 - Server only, through `app.api.comments`: `removeSubject`, `moveSubject`, `removeUser` and `recountThreads` for upkeep,
-  `canViewThread` for other features' recipient checks, and `toClientEvent` for live updates.
+  `canViewThread` for other features' recipient checks, and `toClientEvent` and `toClientEvents` for live updates.
 
 Reads return the users they name, from the identity adapter's `getUsers`. Users it can't find are left out, so show them
 as "Former user".
@@ -171,7 +171,9 @@ body), `comment.mentioned` (one per mention), `thread.resolved`, `thread.reopene
 previous anchor), `thread.deleted`, `thread.moved`, `subject.moved`, `subject.removed` and `user.removed`. They're
 written to the core's outbox in the same batch as the change and delivered at least once. They stay on the server;
 `toClientEvent({ event, viewer, request? })` turns one into what a viewer's browser may see. With the viewer's request,
-grants it carries count as they do for reads.
+grants it carries count as they do for reads. `toClientEvents({ event, viewers })` does the same for many viewers, each
+`{ actor, request? }`, in order, with their access checked together, so each granting feature answers for all of them in
+one call.
 
 `thread.deleted` and `thread.moved` list the thread's `commentIds`, so features attached to its comments, such as
 reactions, can clean up or move along. `removeSubject` emits `thread.deleted` for each thread it deletes, and

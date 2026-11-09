@@ -320,6 +320,14 @@ const threadEventTypes = new Set([
   "thread.deleted"
 ])
 
+/** Someone a live updates feature sends events to, with the request they connected with. */
+export interface LiveViewer {
+  /** Who's connected: a signed-in user, or `null` for a signed-out visitor. */
+  actor: Actor | null
+  /** Their request, so a grant it carries, such as a share link, counts as it does for reads. */
+  request?: Request | null | undefined
+}
+
 /**
  * Turns a server event into one a viewer's browser may see, for a live updates feature. It returns `null` when the
  * viewer can't see the thread, and leaves out previous bodies and anchors. Threads and comments keep the fields reads
@@ -332,26 +340,57 @@ export async function toClientEvent(config: Config, context: Context): Promise<C
     viewer: Actor | null
     request?: Request | null | undefined
   }
+  const [shown] = await clientEvents(config, context, event, [{ actor: viewer, request }])
+  return shown ?? null
+}
+
+/** `toClientEvent` for many viewers, in order, with their access checked together, such as by one grant call. */
+export async function toClientEvents(config: Config, context: Context): Promise<(ClientEvent | null)[]> {
+  const { event, viewers } = context.input as { event: BetterAppsEvent; viewers: readonly LiveViewer[] }
+  return clientEvents(config, context, event, viewers)
+}
+
+async function clientEvents(
+  config: Config,
+  context: Context,
+  event: BetterAppsEvent,
+  viewers: readonly LiveViewer[]
+): Promise<(ClientEvent | null)[]> {
+  const none = viewers.map(() => null)
   if (event.feature !== "comments" || (!commentEventTypes.has(event.type) && !threadEventTypes.has(event.type))) {
-    return null
+    return none
   }
   const data = event.data as ThreadEventData & Partial<CommentEventData> & { userId?: string }
-  if (event.type === "comment.mentioned" && viewer?.userId !== data.userId) {
-    return null
-  }
-  const [view] = await viewThreads(config.subjects, context.subjects, [{ actor: viewer, thread: data.thread, request }])
-  if (!view) {
-    return null
-  }
+  const reached = viewers.map(
+    ({ actor }) => event.type !== "comment.mentioned" || (actor !== null && actor.userId === data.userId)
+  )
+  const asked = viewers.flatMap((viewer, index) => (reached[index] ? [index] : []))
+  const views = await viewThreads(
+    config.subjects,
+    context.subjects,
+    asked.map((index) => ({
+      actor: viewers[index]?.actor ?? null,
+      thread: data.thread,
+      request: viewers[index]?.request
+    }))
+  )
+  const viewOf = new Map(asked.map((index, position) => [index, views[position] ?? null]))
   // Someone who sees the thread only through a grant sees it as a signed-out reader does.
-  const hidden = !viewer || view === "granted"
-  const thread = hidden ? publicThread(data.thread) : data.thread
-  let comment = data.comment
-  if (comment && hidden) {
-    const users = await lookupUsers(context, namedUsers(config, [comment]))
-    comment = publicComment(config, comment, users)
+  const hiddenFor = (index: number) => viewers[index]?.actor === null || viewOf.get(index) === "granted"
+  let hiddenComment = data.comment
+  if (data.comment && asked.some((index) => viewOf.get(index) && hiddenFor(index))) {
+    const users = await lookupUsers(context, namedUsers(config, [data.comment]))
+    hiddenComment = publicComment(config, data.comment, users)
   }
-  return comment && commentEventTypes.has(event.type)
-    ? ({ id: event.id, type: event.type, thread, comment } as ClientEvent)
-    : ({ id: event.id, type: event.type, thread } as ClientEvent)
+  return viewers.map((_, index) => {
+    if (!viewOf.get(index)) {
+      return null
+    }
+    const hidden = hiddenFor(index)
+    const thread = hidden ? publicThread(data.thread) : data.thread
+    const comment = hidden ? hiddenComment : data.comment
+    return comment && commentEventTypes.has(event.type)
+      ? ({ id: event.id, type: event.type, thread, comment } as ClientEvent)
+      : ({ id: event.id, type: event.type, thread } as ClientEvent)
+  })
 }

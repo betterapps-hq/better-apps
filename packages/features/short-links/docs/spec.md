@@ -142,10 +142,12 @@ may not have the random part such a link needs.
 
 1. Opening such a link sets an HTTP-only cookie, `Secure` over HTTPS, with `SameSite=Lax`, that holds the code. The
    cookie keeps the codes of the last 20 such links opened.
-2. The feature declares a core access grant (see [Access grants](#access-grants)). For a request with that cookie, it
-   reads the links by their codes in one query on each check, and grants viewing a record when one of them points to it,
-   is turned on, hasn't expired, its subject type's `grantView` isn't `false`, and the record's organization is still
-   the link's and owns it.
+2. The feature declares a core access grant (see [Access grants](#access-grants)). Core asks it once per check about
+   every request in the check, such as one per live viewer. It reads their links by code, 90 codes to a query, or by
+   record when the check names fewer records than that takes, and reads nothing when no checked subject type has
+   `grantView` on. It grants viewing a record to a request when a link in that request's cookie points to it, is turned
+   on, hasn't expired, its subject type's `grantView` isn't `false`, and the record's organization, looked up once per
+   record, is still the link's and owns it.
 3. Read checks that pass the request, such as `app.subjects.canView(actor, ref, { request })`, then allow the record,
    for signed-in people and signed-out visitors alike.
 
@@ -161,8 +163,8 @@ Whose access a link stands for depends on where it was made:
   `identity.getActorsFor`, and the link grants access only while they can still see the record, by a check that doesn't
   pass the request, and `canShare` and `grantView` still allow them. Someone who loses access to a record, or loses the
   right to share it, takes their links' access with them. A maker the identity adapter no longer finds grants nothing,
-  and when the lookup or a check fails, such as while the identity service is down, these links grant nothing for that
-  request while other links still count, and the error goes to the app's `onError`.
+  and when the lookup or a check fails, such as while the identity service is down, these links grant nothing to any
+  request in that check while other links still count, and the error goes to the app's `onError`.
 - An organization's link stands for the organization and outlives the member who made it. A `canShare` or `grantView`
   check per record, such as an invoice's own "shareable" setting, runs when the link is made or turned back on, not on
   each request, so unsetting it doesn't end the access existing links give. The app ends it with

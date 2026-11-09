@@ -28,7 +28,9 @@ import {
   listThreads,
   suggestMentions,
   toClientEvent,
+  toClientEvents,
   type ClientEvent,
+  type LiveViewer,
   type ThreadPage,
   type ThreadWithComments
 } from "./reads.js"
@@ -228,7 +230,11 @@ export function comments<const Options extends CommentsOptions>(options: Options
       toClientEvent: serverAction<
         { event: BetterAppsEvent; viewer: Actor | null; request?: Request | null | undefined },
         ClientEvent | null
-      >(null, toClientEvent)
+      >(null, toClientEvent),
+      toClientEvents: serverAction<{ event: BetterAppsEvent; viewers: readonly LiveViewer[] }, (ClientEvent | null)[]>(
+        null,
+        toClientEvents
+      )
     }
   })
 }

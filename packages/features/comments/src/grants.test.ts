@@ -103,4 +103,35 @@ describe("comments a request's grant reaches", () => {
     // Once for the app's rules and once for the grant, not once per comment.
     expect(getOrgId).toHaveBeenCalledTimes(2)
   })
+
+  it("reach many live viewers at once, each by their own request", async () => {
+    const { api, identity, events } = await seeded()
+    const event = events("comment.created").find(
+      (found) => (found.data as { thread: { visibility: string } }).thread.visibility === "default"
+    ) as BetterAppsEvent
+    const bob = identity.actor("bob")
+    expect(
+      await api.toClientEvents({
+        event,
+        viewers: [
+          { actor: bob, request: sharing("inv-globex") },
+          { actor: bob },
+          { actor: null, request: sharing("inv-globex") },
+          { actor: identity.actor("gus"), request: sharing("inv-globex") }
+        ]
+      })
+    ).toEqual([
+      expect.objectContaining({
+        thread: expect.objectContaining({ createdBy: "" }),
+        comment: expect.objectContaining({ authorId: "" })
+      }),
+      null,
+      expect.objectContaining({ comment: expect.objectContaining({ authorId: "", bodyText: "Due Friday" }) }),
+      expect.objectContaining({
+        thread: expect.objectContaining({ createdBy: "gus" }),
+        comment: expect.objectContaining({ authorId: "gus" })
+      })
+    ])
+    expect(await api.toClientEvents({ event, viewers: [] })).toEqual([])
+  })
 })

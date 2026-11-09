@@ -139,7 +139,7 @@ export interface Subjects {
   canView(actor: Actor | null, ref: SubjectRef, options?: ViewOptions): Promise<boolean>
   /**
    * `canView` for many checks, in the same order, with one `canViewMany` call per subject type, and one call of each
-   * feature's grants per request for the checks the app's rules refuse.
+   * feature's grants for the checks the app's rules refuse, with every request among them.
    */
   canViewMany(checks: readonly SubjectCheck[]): Promise<boolean[]>
   /** Whether signed-out visitors can see a subject. */
