@@ -101,6 +101,15 @@ describe("subjects", () => {
     expect(await plain.isPublicMany(pages)).toEqual([true, false, true])
   })
 
+  it("answers a single public check with publicReadMany too", async () => {
+    const publicReadMany = (refs: readonly { subjectId: string }[]) =>
+      refs.map(({ subjectId }) => subjectId.startsWith("public-"))
+    const { subjects } = setup({ page: { ...page, publicRead: undefined, publicReadMany } })
+    expect(await subjects.isPublic({ subjectType: "page", subjectId: "public-home" })).toBe(true)
+    expect(await subjects.isPublic({ subjectType: "page", subjectId: "draft" })).toBe(false)
+    expect(await subjects.canView(null, { subjectType: "page", subjectId: "public-home" })).toBe(true)
+  })
+
   it("refuses a subject type nobody declares as invalid input", async () => {
     const { subjects } = setup()
     const error = await subjects.canView(ada, { subjectType: "order", subjectId: "1" }).catch((caught) => caught)

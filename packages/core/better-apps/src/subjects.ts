@@ -105,7 +105,8 @@ export function createSubjects(
     return definition
   }
 
-  const isPublic = async (ref: SubjectRef): Promise<boolean> => {
+  /** `publicRead` for one subject, for subject types without `publicReadMany`. */
+  const publicReadOne = async (ref: SubjectRef): Promise<boolean> => {
     const { publicRead } = definitionOf(ref.subjectType)
     if (typeof publicRead === "function") {
       return (await publicRead(ref, context)) === true
@@ -146,7 +147,7 @@ export function createSubjects(
       if (definition.publicReadMany) {
         return (await definition.publicReadMany(group, context)).map((allowed) => allowed === true)
       }
-      return Promise.all(group.map(async (ref) => isPublic(ref)))
+      return Promise.all(group.map(async (ref) => publicReadOne(ref)))
     })
 
   const viewersOf = async (definition: SubjectDefinition, pairs: readonly SubjectArgs[]) => {
@@ -207,7 +208,11 @@ export function createSubjects(
       return allowed === true
     },
     canViewMany,
-    isPublic,
+    // The same rules as lists, so a subject type with only `publicReadMany` answers alike either way.
+    async isPublic(ref) {
+      const [allowed] = await isPublicMany([ref])
+      return allowed === true
+    },
     isPublicMany
   }
   const context: SubjectContext = { db: options.db, identity: options.identity, subjects }
