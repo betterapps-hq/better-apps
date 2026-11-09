@@ -306,55 +306,18 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
     return { ...state, reactors: { ...state.reactors, [key]: { ...current, ...value } } }
   }
 
-  // Each list of reactors' version, raised by every change to who reacted, so a page that was asked for before one is
-  // asked for again rather than putting back someone who left.
+  // Lists of reactors are never changed in place: any change to a record's reactions drops them, and they load again
+  // when next shown. Each record's lists have a version, so a page that was on its way during a change is dropped too.
   const reactorVersions = new Map<string, number>()
 
-  /**
-   * Drops a record's lists of reactors, after many of its reactions changed at once, so they load again. Pages still on
-   * their way are asked for again rather than putting the old lists back.
-   */
-  function dropReactors(record: string) {
+  /** Drops a record's lists of reactors after its reactions changed, so they load again when next shown. */
+  function forgetReactors(state: ReactionsState, record: string): ReactionsState {
+    reactorVersions.set(record, (reactorVersions.get(record) ?? 0) + 1)
     const prefix = `${record.slice(0, -1)},`
-    update((state) => withoutReactors(state, (name) => name.startsWith(prefix)))
-  }
-
-  /** Drops the lists of reactors `drop` picks, so they load again, and has pages on their way asked for again. */
-  function withoutReactors(state: ReactionsState, drop: (key: string) => boolean): ReactionsState {
-    const kept = Object.entries(state.reactors).filter(([name]) => {
-      if (!drop(name)) {
-        return true
-      }
-      reactorVersions.set(name, (reactorVersions.get(name) ?? 0) + 1)
-      return false
-    })
-    return { ...state, reactors: Object.fromEntries(kept) }
-  }
-
-  /** Adds or removes someone in a list of reactors, including one whose next page is loading. */
-  function withReactor(state: ReactionsState, target: ReactionTarget, delta: 1 | -1, userId: string) {
-    const key = reactionKey(target.subjectType, target.subjectId, target.emoji)
-    reactorVersions.set(key, (reactorVersions.get(key) ?? 0) + 1)
-    const reactors = state.reactors[key]
-    if (reactors?.state !== "ready" && reactors?.state !== "loading") {
-      return state
+    return {
+      ...state,
+      reactors: Object.fromEntries(Object.entries(state.reactors).filter(([name]) => !name.startsWith(prefix)))
     }
-    if (delta === 1) {
-      // A new reactor is only added once the last page is loaded, since pages are in order of reacting, and one already
-      // listed keeps their place.
-      if (reactors.userIds.includes(userId) || reactors.cursor !== null) {
-        return state
-      }
-      if (!state.users[userId]) {
-        // Someone whose name hasn't loaded: the list starts over, so it loads again with them.
-        return {
-          ...state,
-          reactors: Object.fromEntries(Object.entries(state.reactors).filter(([name]) => name !== key))
-        }
-      }
-      return setReactors(state, key, { userIds: [...reactors.userIds, userId] })
-    }
-    return setReactors(state, key, { userIds: reactors.userIds.filter((id) => id !== userId) })
   }
 
   const reactedWith = (target: ReactionTarget) =>
@@ -410,43 +373,14 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
     }
     // Whatever the server already had, such as from another tab, the viewer now has this reaction or doesn't, and
     // `setMine` counts it once however many answers and live events say so.
-    const { reaction, replaced = [] } = output as {
-      reaction?: { userId: string } | null
-      replaced?: { emoji: string; userId: string }[]
-    }
+    const { replaced = [] } = output as { replaced?: { emoji: string }[] }
     // When each person has one, the viewer's others are gone too, even ones the server didn't replace now because another
     // tab already had, which this tab may still show.
     confirm(record, (reactions) => applyWrite(reactions, pending))
     for (const gone of replaced) {
       confirm(record, (reactions) => setMine(reactions, gone.emoji, false))
     }
-    update((state) => {
-      let next = show(state, record)
-      // The server names the reactor, so a loaded list of reactors gains or loses them now.
-      if (reaction) {
-        next = withReactor(next, target, reacted ? 1 : -1, reaction.userId)
-        if (replaces) {
-          // When each person has one, the viewer leaves every other emoji's list, even ones the server didn't replace now
-          // because another tab already had.
-          const prefix = `${record.slice(0, -1)},`
-          for (const name of Object.keys(next.reactors)) {
-            const [, , emoji] = JSON.parse(name) as [string, string, string]
-            if (name.startsWith(prefix) && emoji !== target.emoji) {
-              next = withReactor(next, { ...target, emoji }, -1, reaction.userId)
-            }
-          }
-        }
-      } else {
-        // The server had nothing to change, such as a reaction another tab already took back, and doesn't say who the
-        // viewer is, so the emoji's list of reactors loads again.
-        const key = reactionKey(target.subjectType, target.subjectId, target.emoji)
-        next = withoutReactors(next, (name) => name === key)
-      }
-      return replaced.reduce(
-        (shown, gone) => withReactor(shown, { ...target, emoji: gone.emoji }, -1, gone.userId),
-        next
-      )
-    })
+    update((state) => forgetReactors(show(state, record), record))
     return output
   }
 
@@ -591,38 +525,20 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
   async function loadReactorsPage(asked: ReactionTarget, cursor: string | undefined) {
     const target = { ...asked, emoji: normalizeEmoji(asked.emoji) }
     const key = reactionKey(target.subjectType, target.subjectId, target.emoji)
-    const apply = scoped()
+    const record = subjectKey(target.subjectType, target.subjectId)
+    const version = reactorVersions.get(record) ?? 0
+    const scope = scoped()
+    // A change to the record's reactions while the page was on its way dropped the list, and the page may not have the
+    // change, so it's dropped too and the list loads again when next shown.
+    const apply = (next: (state: ReactionsState) => ReactionsState) =>
+      scope((state) => ((reactorVersions.get(record) ?? 0) === version ? next(state) : state))
     apply((state) => setReactors(state, key, { state: "loading", error: null }))
-    // Taken now, so a page asked for again after reset() never goes out as the next person.
-    const { signal } = calls
-    let from = cursor
     try {
-      let page: ReactorPage
-      // A change to who reacted while a page was on its way may not be in it, so the page is asked for again, a few
-      // times at most on a busy record. When the list was dropped meanwhile, the pages before are gone too, so it
-      // starts over from the first.
-      for (let attempt = 1; ; attempt += 1) {
-        const asked = reactorVersions.get(key) ?? 0
-        page = (await call("reactions", "listReactors", { ...target, cursor: from }, { signal })) as ReactorPage
-        if ((reactorVersions.get(key) ?? 0) === asked) {
-          break
-        }
-        const dropped = !store.getSnapshot().reactors[key]
-        if (attempt === 3) {
-          if (dropped && from !== undefined) {
-            // A later page alone would leave out the people before it, so the list stays dropped and loads again.
-            return
-          }
-          break
-        }
-        if (dropped) {
-          from = undefined
-        }
-      }
+      const page = (await run("listReactors", { ...target, cursor })) as ReactorPage
       apply((state) => {
         const loaded = state.reactors[key]?.userIds ?? []
         const userIds =
-          from === undefined ? page.userIds : [...loaded, ...page.userIds.filter((id) => !loaded.includes(id))]
+          cursor === undefined ? page.userIds : [...loaded, ...page.userIds.filter((id) => !loaded.includes(id))]
         return {
           ...setReactors(state, key, { userIds, cursor: page.cursor, state: "ready", error: null }),
           users: { ...state.users, ...page.users }
@@ -702,7 +618,8 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
         }
       } finally {
         if (output.removed > 0 && started === generation) {
-          dropReactors(subjectKey(filter.subjectType, filter.subjectId))
+          const record = subjectKey(filter.subjectType, filter.subjectId)
+          update((state) => forgetReactors(state, record))
           await loadNow(filter.subjectType, [filter.subjectId]).catch(() => undefined)
         }
       }
@@ -724,7 +641,7 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
         // Many reactions changed at once, so a loaded record loads again, and its lists of reactors start over. A load
         // under way may have gone out before the change, so its answer can't be kept.
         bump(key, null)
-        dropReactors(key)
+        update((state) => forgetReactors(state, key))
         if (confirmed.has(key)) {
           refresh(event.subjectType, event.subjectId)
         }
@@ -753,16 +670,7 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
         // and the record loads again once it lands.
         confirm(key, (reactions) => change(reactions, event.emoji, added ? 1 : -1, false), null)
       }
-      const list = reactionKey(event.subjectType, event.subjectId, event.emoji)
-      update((state) => {
-        const shown = show(state, key)
-        if (stale) {
-          // An event that may be out of date can't say who reacted either, so the emoji's list loads again too.
-          return withoutReactors(shown, (name) => name === list)
-        }
-        // An event without a user id comes from someone the viewer may not see, so lists of reactors stay as they are.
-        return event.userId === "" ? shown : withReactor(shown, event, added ? 1 : -1, event.userId)
-      })
+      update((state) => forgetReactors(show(state, key), key))
       if (stale) {
         refresh(event.subjectType, event.subjectId)
       }

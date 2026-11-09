@@ -268,8 +268,11 @@ function allowedEmoji(emojis: Emojis, emoji: string): string {
   return normalized
 }
 
-/** Splits ids into lists of at most 90, under D1's limit of 100 bound parameters. */
-function chunks<Item>(items: readonly Item[], size = 90): Item[][] {
+/** How many ids one `in` list holds, under D1's limit of 100 bound parameters. */
+const chunkSize = 90
+
+/** Splits ids into lists of at most `chunkSize`. */
+function chunks<Item>(items: readonly Item[], size = chunkSize): Item[][] {
   const lists: Item[][] = []
   for (let start = 0; start < items.length; start += size) {
     lists.push(items.slice(start, start + size))
@@ -386,7 +389,7 @@ async function retried<Output>(page: () => Promise<Output>): Promise<Output> {
   }
 }
 
-/** One call of a bulk job: how many reactions it changed, and whether it's done, or should be called again. */
+/** One call of a bulk job: whether it's done, or should be called again. */
 export interface BulkStep {
   done: boolean
 }
@@ -425,19 +428,21 @@ async function removePage(
   })
 }
 
-/** Up to `limit` reactions on some records of one subject type, from every organization or all but one. */
-async function rowsOf(
+/**
+ * Up to `limit` reactions on some records of one subject type, from every organization or all but one, with the ids
+ * that may still have more once this page is handled. Ids before the chunk that filled the page have none left, so a
+ * next page doesn't read them again.
+ */
+async function pageOf(
   db: Context["db"],
   subjectType: string,
   subjectIds: readonly string[],
   limit: number,
   notOrgId?: string
-): Promise<Reaction[]> {
+): Promise<{ rows: Reaction[]; rest: string[] }> {
+  const ids = [...new Set(subjectIds)]
   const rows: Reaction[] = []
-  for (const list of chunks([...new Set(subjectIds)])) {
-    if (rows.length >= limit) {
-      break
-    }
+  for (const [index, list] of chunks(ids).entries()) {
     rows.push(
       ...(await db.findMany<Reaction>({
         model: reactionModel,
@@ -449,38 +454,80 @@ async function rowsOf(
         limit: limit - rows.length
       }))
     )
+    if (rows.length >= limit) {
+      return { rows, rest: ids.slice(index * chunkSize) }
+    }
   }
-  return rows
+  return { rows, rest: [] }
 }
 
+/** Finds a page of one record's reactions, from every organization or all but one. */
+const reactionsOn =
+  (db: Context["db"], ref: ReactionSubject, notOrgId?: string) =>
+  async (limit: number): Promise<Reaction[]> =>
+    (await pageOf(db, ref.subjectType, [ref.subjectId], limit, notOrgId)).rows
+
+/** Records to clean up after, by subject type, and the organization they moved to, when they moved. */
+interface Cleanup {
+  records: { subjectType: string; subjectIds: string[] }[]
+  toOrgId?: string | undefined
+}
+
+/** How many pages one delivery of a cleanup handles, so a busy thread fits in a request; the rest continues later. */
+const cleanupPages = 5
+
 /**
- * Removes every reaction on some records, a page at a time, for a subscriber that cleans up after one thread or comment
- * in one go.
+ * Removes or moves the reactions on records that went away or moved, such as comments' threads, up to a few pages per
+ * delivery. What's left continues with a `cleanup.continued` event in the next `app.deliverEvents()` run.
  */
-async function removeRecords(writer: Writer, type: string, ids: readonly string[], reason: RemovalReason) {
-  let done = ids.length === 0
-  while (!done) {
-    ;({ done } = await removePage(writer, async (limit) => rowsOf(writer.db, type, ids, limit), reason))
+async function cleanUp(config: Config, writer: Writer, job: Cleanup) {
+  const records = job.records
+    .filter((record) => record.subjectIds.length > 0)
+    .map((record) => ({ ...record, subjectIds: [...record.subjectIds] }))
+  // Only pages that found reactions count, since records without any, such as most comments, cost one read each.
+  for (let pages = 0; pages < cleanupPages && records.length > 0;) {
+    const record = records[0] as Cleanup["records"][number]
+    let rest: string[] = []
+    let found = 0
+    const find = async (limit: number) => {
+      const page = await pageOf(writer.db, record.subjectType, record.subjectIds, limit, job.toOrgId)
+      rest = page.rest
+      found = page.rows.length
+      return page.rows
+    }
+    await (job.toOrgId === undefined
+      ? removePage(writer, find, "subjectRemoved")
+      : movePage(writer, settingsOf(config, record.subjectType), record.subjectType, find, job.toOrgId))
+    pages += found > 0 ? 1 : 0
+    record.subjectIds = rest
+    if (rest.length === 0) {
+      records.shift()
+    }
+  }
+  if (records.length > 0) {
+    writer.emit("cleanup.continued", { ...job, records } satisfies Cleanup, { later: true })
   }
 }
 
 /**
- * Moves a page of the reactions on some records to another organization. A person's reaction that they already made in
- * that organization, or that has no free place there, is removed with `reaction.removed` and the reason `merged`.
- * Returns how many moved, which records had reactions to move, and whether that was the last page.
+ * Moves a page of the reactions `find` returns, on records of one subject type, to another organization. A person's
+ * reaction that they already made in that organization, or that has no free place there, is removed with
+ * `reaction.removed` and the reason `merged`. Each record the page touched gets `subject.moved`, written with the page,
+ * so a job that stops partway still reaches browsers for the pages done. Returns how many moved, and whether that was the
+ * last page.
  */
 async function movePage(
   writer: Writer,
   settings: Settings,
   type: string,
-  ids: readonly string[],
+  find: (limit: number) => Promise<Reaction[]>,
   toOrgId: string
-): Promise<{ moved: number; records: Set<string> } & BulkStep> {
+): Promise<{ moved: number } & BulkStep> {
   const { db } = writer
   return retried(async () => {
-    const rows = await rowsOf(db, type, ids, movePageSize, toOrgId)
+    const rows = await find(movePageSize)
     if (rows.length === 0) {
-      return { moved: 0, records: new Set<string>(), done: true }
+      return { moved: 0, done: true }
     }
     // What the same people already have on the same records in the new organization.
     const there = await db.findMany<Reaction>({
@@ -524,12 +571,14 @@ async function movePage(
     for (const row of dropped) {
       writer.emit("reaction.removed", removal(row, "merged", true))
     }
+    for (const record of recordsOf(rows)) {
+      writer.emit("subject.moved", { ...record, toOrgId })
+    }
     // A reaction that lands in the new organization meanwhile can take a place this page meant to use, which fails the
     // batch, and the page is read again. One removed meanwhile updates nothing, so it isn't counted as moved.
     const results = await db.batch([...updates, ...(dropped.length > 0 ? removals(dropped) : [])])
     return {
       moved: results.slice(0, updates.length).filter((result) => result !== null).length,
-      records: new Set(rows.map((row) => row.subjectId)),
       done: rows.length < movePageSize
     }
   })
@@ -810,11 +859,7 @@ async function removeReactions(config: Config, context: Context): Promise<{ remo
 async function removeSubject(config: Config, context: Context): Promise<{ removed: number } & BulkStep> {
   const input = context.input as ReactionSubject
   settingsOf(config, input.subjectType)
-  const step = await removePage(
-    context,
-    async (limit) => rowsOf(context.db, input.subjectType, [input.subjectId], limit),
-    "subjectRemoved"
-  )
+  const step = await removePage(context, reactionsOn(context.db, input), "subjectRemoved")
   if (step.done) {
     context.emit("subject.removed", { subjectType: input.subjectType, subjectId: input.subjectId })
   }
@@ -825,11 +870,7 @@ async function moveSubject(config: Config, context: Context): Promise<{ moved: n
   const input = context.input as ReactionSubject & { toOrgId: string | null }
   const settings = settingsOf(config, input.subjectType)
   const toOrgId = input.toOrgId ?? ""
-  const { moved, done } = await movePage(context, settings, input.subjectType, [input.subjectId], toOrgId)
-  if (done) {
-    context.emit("subject.moved", { subjectType: input.subjectType, subjectId: input.subjectId, toOrgId })
-  }
-  return { moved, done }
+  return movePage(context, settings, input.subjectType, reactionsOn(context.db, input, toOrgId), toOrgId)
 }
 
 async function removeUser(_config: Config, context: Context): Promise<{ removed: number } & BulkStep> {
@@ -941,50 +982,36 @@ async function toClientEvents(config: Config, context: Context): Promise<(Client
 
 /**
  * Cleans up after comments when reactions are set up on its threads or comments: a deleted comment or thread loses its
- * reactions, and a thread that moves to another organization takes them along.
+ * reactions, and a thread that moves to another organization takes them along. Each runs a few pages per delivery and
+ * continues in later runs, so a thread of any size fits in a request.
  */
 function commentHandlers(config: Config): Record<string, EventHandler> | null {
-  const thread = Object.hasOwn(config, commentTypes.thread) ? config[commentTypes.thread] : undefined
-  const comment = Object.hasOwn(config, commentTypes.comment) ? config[commentTypes.comment] : undefined
-  if (!thread && !comment) {
+  const withReactions = (type: string) => Object.hasOwn(config, type)
+  if (!withReactions(commentTypes.thread) && !withReactions(commentTypes.comment)) {
     return null
   }
   type ThreadData = { thread: { id: string; orgId: string }; commentIds?: string[] }
+  // The thread and its comments, for the subject types reactions are set up on.
+  const threadRecords = (threadIds: string[], commentIds: string[]): Cleanup["records"] =>
+    [
+      { subjectType: commentTypes.thread, subjectIds: threadIds },
+      { subjectType: commentTypes.comment, subjectIds: commentIds }
+    ].filter((record) => withReactions(record.subjectType))
   return {
     "comment.deleted": async (event, context) => {
-      const { comment: deleted } = event.data as { comment: { id: string } }
-      if (comment) {
-        await removeRecords(context, commentTypes.comment, [deleted.id], "subjectRemoved")
-      }
+      const { comment } = event.data as { comment: { id: string } }
+      await cleanUp(config, context, { records: threadRecords([], [comment.id]) })
     },
     "thread.deleted": async (event, context) => {
       const data = event.data as ThreadData
-      if (thread) {
-        await removeRecords(context, commentTypes.thread, [data.thread.id], "subjectRemoved")
-      }
-      if (comment) {
-        await removeRecords(context, commentTypes.comment, data.commentIds ?? [], "subjectRemoved")
-      }
+      await cleanUp(config, context, { records: threadRecords([data.thread.id], data.commentIds ?? []) })
     },
     "thread.moved": async (event, context) => {
       const data = event.data as ThreadData
-      const toOrgId = data.thread.orgId
-      const moves: [Settings | undefined, string, string[]][] = [
-        [thread, commentTypes.thread, [data.thread.id]],
-        [comment, commentTypes.comment, data.commentIds ?? []]
-      ]
-      for (const [settings, type, ids] of moves) {
-        const records = new Set<string>()
-        let done = !settings || ids.length === 0
-        while (settings && !done) {
-          const step = await movePage(context, settings, type, ids, toOrgId)
-          step.records.forEach((subjectId) => records.add(subjectId))
-          done = step.done
-        }
-        for (const subjectId of records) {
-          context.emit("subject.moved", { subjectType: type, subjectId, toOrgId })
-        }
-      }
+      await cleanUp(config, context, {
+        records: threadRecords([data.thread.id], data.commentIds ?? []),
+        toOrgId: data.thread.orgId
+      })
     }
   }
 }
@@ -1019,7 +1046,13 @@ export function reactions<const Options extends ReactionsOptions>(options: Optio
     events: reactionEvents,
     usesSubjects: Object.keys(options.subjects),
     // Subscribing makes the app keep an outbox table, so reactions only subscribe when comments' records have them.
-    on: comments ? { comments } : undefined,
+    // Cleanups after comments continue in later delivery runs through reactions' own event.
+    on: comments
+      ? {
+          comments,
+          reactions: { "cleanup.continued": (event, context) => cleanUp(config, context, event.data as Cleanup) }
+        }
+      : undefined,
     options,
     actions: {
       listReactions: action<ListReactionsInput<Types["subjectType"]>, Record<string, ReactionSummary[]>>(

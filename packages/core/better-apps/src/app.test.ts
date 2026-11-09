@@ -606,6 +606,21 @@ describe("events", () => {
     expect(received).toEqual(["relayed"])
   })
 
+  it("leaves events emitted for later to the next delivery run", async () => {
+    const received: string[] = []
+    const relay = defineFeature({
+      id: "relay",
+      events: { relayed: defineEvent<{ from: string }>() },
+      on: { notes: { "note.added": (event, { emit }) => emit("relayed", { from: event.id }, { later: true }) } }
+    })
+    const sink = defineFeature({ id: "sink", on: { relay: { relayed: (event) => void received.push(event.type) } } })
+    const { app } = setup({ features: [relay, sink] })
+    await app.api.notes.add({ text: "Hi" })
+    expect(received).toEqual([])
+    expect(await app.deliverEvents()).toEqual({ delivered: 1, failed: 0 })
+    expect(received).toEqual(["relayed"])
+  })
+
   it("delivers nothing when no feature subscribes", async () => {
     const { app } = setup()
     expect(await app.deliverEvents()).toEqual({ delivered: 0, failed: 0 })

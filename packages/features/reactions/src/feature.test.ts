@@ -392,6 +392,7 @@ describe("react and unreact", () => {
     invoices.set("inv-moving", { orgId: "acme" })
     try {
       const moving = { subjectType: "invoice", subjectId: "inv-moving" } as const
+      await api.react({ ...moving, emoji: "👍" }, as("bob"))
       invoices.set("inv-moving", { orgId: "globex" })
       await api.moveSubject({ ...moving, toOrgId: "globex" })
       const moved = events("subject.moved")[0]
@@ -688,6 +689,7 @@ describe("with comments", () => {
     return {
       api: app.api.reactions,
       emit: app.api.comments.emit,
+      deliver: () => app.deliverEvents(),
       as,
       threads,
       vanishing,
@@ -745,5 +747,46 @@ describe("with comments", () => {
       { subjectType: "comments.comment", subjectId: "c-1", toOrgId: "globex" }
     ])
     expect(await api.listReactions(list, as("gus"))).toEqual({ "c-1": [{ emoji: "👍", count: 1, reacted: false }] })
+  })
+
+  // A thread with more reactions on its comments than one delivery cleans up.
+  async function busyThread(setup: ReturnType<typeof withComments>, reactionsPerUser: number) {
+    const ids = Array.from({ length: reactionsPerUser }, (_, index) => `big-${index}`)
+    setup.threads.set("t-big", { orgId: "acme", comments: new Set(ids) })
+    for (const id of ids) {
+      await setup.api.react({ ...comment(id), emoji: "👍" }, setup.as("ada"))
+      await setup.api.react({ ...comment(id), emoji: "👍" }, setup.as("bob"))
+    }
+    return ids
+  }
+
+  it("clean up after a big deleted thread a few pages per delivery, finishing in later runs", async () => {
+    const setup = withComments()
+    const ids = await busyThread(setup, 255)
+    await setup.emit({ type: "thread.deleted", data: { thread: { id: "t-big", orgId: "acme" }, commentIds: ids } })
+    // Five pages of 100 go now, and the rest waits for the next delivery run.
+    expect(setup.count()).toEqual({ count: 10 })
+    expect(setup.events("subject.changed").length).toBeGreaterThan(0)
+    expect(await setup.deliver()).toMatchObject({ failed: 0 })
+    expect(setup.count()).toEqual({ count: 0 })
+    expect(setup.events("cleanup.continued")).toHaveLength(1)
+  })
+
+  it("move a big thread's reactions a few pages per delivery, telling browsers with each page", async () => {
+    const setup = withComments()
+    const ids = await busyThread(setup, 105)
+    setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
+    await setup.emit({ type: "thread.moved", data: { thread: { id: "t-big", orgId: "globex" }, commentIds: ids } })
+    const inGlobex = () =>
+      setup.database.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${reactionModel} WHERE orgId = 'globex'`).get()
+    // Five pages of 40 move now, each with its records' subject.moved, and the rest in the next run.
+    expect(inGlobex()).toEqual({ count: 200 })
+    const told = new Set(setup.events("subject.moved").map((event) => (event.data as { subjectId: string }).subjectId))
+    expect(told.size).toBe(100)
+    await setup.deliver()
+    expect(inGlobex()).toEqual({ count: 210 })
+    expect(
+      new Set(setup.events("subject.moved").map((event) => (event.data as { subjectId: string }).subjectId)).size
+    ).toBe(105)
   })
 })

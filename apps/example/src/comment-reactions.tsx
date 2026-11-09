@@ -1,4 +1,5 @@
-import { useReactions, useReactors, useSubjectReactions } from "@better-apps/reactions/react"
+import { useStore } from "@better-apps/react"
+import { useReactions, useReactors, useSubjectReactions, type ReactionSummary } from "@better-apps/reactions/react"
 import {
   Button,
   DropdownMenuItem,
@@ -12,6 +13,7 @@ import {
   TooltipContent,
   TooltipTrigger
 } from "@buildkitgg/shadcn-baseui-kit"
+import { createStore } from "better-apps/client"
 import { SmileIcon, SmilePlusIcon } from "lucide-react"
 import { useState } from "react"
 import type { App, ReactionTypes } from "./app-types"
@@ -30,22 +32,33 @@ const emojis = [
 
 const nameOf = (emoji: Emoji) => emojis.find((item) => item.emoji === emoji)?.name ?? emoji
 
+/** A comment as reactions know it. Comments name the subject type in `commentSubjectTypes`, on the server. */
+const commentSubject = (commentId: string) => ({ subjectType: "comments.comment", subjectId: commentId }) as const
+
+/** The emoji someone used on a comment, in the app's order, with their names and counts. */
+const usedEmojis = (reactions: readonly ReactionSummary[]) =>
+  emojis.flatMap(({ emoji, name }) => {
+    const reaction = reactions.find((item) => item.emoji === emoji)
+    return reaction && reaction.count > 0 ? [{ emoji, name, count: reaction.count, reacted: reaction.reacted }] : []
+  })
+
 /**
  * A comment's reactions: a chip for each emoji someone used, pressed when the viewer used it, and a picker for the
  * rest. Each person reacts with one emoji, so picking another replaces theirs.
  */
 export function CommentReactions({ commentId }: { commentId: string }) {
-  const subject = { subjectType: "comments.comment", subjectId: commentId } as const
-  const { reactions, state, toggle, writeError, isPending } = useSubjectReactions<ReactionTypes>(subject)
+  const { reactions, state, toggle, writeError, isPending } = useSubjectReactions<ReactionTypes>(
+    commentSubject(commentId)
+  )
   const [picking, setPicking] = useState(false)
+  if (state === "error") {
+    return <p className="form-error">Reactions couldn’t load.</p>
+  }
   if (state !== "ready") {
     return null
   }
-  const used = emojis.flatMap(({ emoji, name }) => {
-    const reaction = reactions.find((item) => item.emoji === emoji)
-    return reaction && reaction.count > 0 ? [{ emoji, name, count: reaction.count, reacted: reaction.reacted }] : []
-  })
-  const mine = emojis.find(({ emoji }) => reactions.some((item) => item.emoji === emoji && item.reacted))?.emoji
+  const used = usedEmojis(reactions)
+  const mine = used.find((reaction) => reaction.reacted)?.emoji
 
   return (
     <fieldset className="reactions" aria-label="Reactions">
@@ -57,7 +70,7 @@ export function CommentReactions({ commentId }: { commentId: string }) {
                 type="button"
                 className="reaction"
                 aria-pressed={reaction.reacted}
-                aria-label={`${reaction.name}, ${reaction.count} ${reaction.count === 1 ? "reaction" : "reactions"}`}
+                aria-label={`${reaction.name}, ${plural(reaction.count, "reaction", "reactions")}`}
                 aria-disabled={isPending(reaction.emoji)}
                 onClick={() => !isPending(reaction.emoji) && void toggle(reaction.emoji)}
               />
@@ -112,6 +125,19 @@ export function CommentReactions({ commentId }: { commentId: string }) {
   )
 }
 
+/** The comments whose reactions are being removed, so their menus wait until it's done, even after closing. */
+const removing = createStore<ReadonlySet<string>>(new Set())
+const setRemoving = (commentId: string, busy: boolean) =>
+  removing.setState((ids) => {
+    const next = new Set(ids)
+    if (busy) {
+      next.add(commentId)
+    } else {
+      next.delete(commentId)
+    }
+    return next
+  })
+
 interface RemoveReactionsProps {
   commentId: string
   onRemoved(title: string): void
@@ -123,13 +149,11 @@ interface RemoveReactionsProps {
  * while the comment has none.
  */
 export function RemoveReactionsMenu({ commentId, onRemoved, onError }: RemoveReactionsProps) {
-  const subject = { subjectType: "comments.comment", subjectId: commentId } as const
+  const subject = commentSubject(commentId)
   const client = useReactions<App>()
   const { reactions, state } = useSubjectReactions<ReactionTypes>(subject)
-  const used = emojis.flatMap(({ emoji, name }) => {
-    const count = reactions.find((item) => item.emoji === emoji)?.count ?? 0
-    return count > 0 ? [{ emoji, name, count }] : []
-  })
+  const busy = useStore(removing, (ids) => ids.has(commentId))
+  const used = usedEmojis(reactions)
   if (state !== "ready" || used.length === 0) {
     return null
   }
@@ -137,27 +161,32 @@ export function RemoveReactionsMenu({ commentId, onRemoved, onError }: RemoveRea
 
   async function remove(emoji?: Emoji) {
     const confirmed = await modals.confirm({
-      title: emoji ? `Remove all ${nameOf(emoji)} reactions?` : "Remove all reactions?",
+      title: emoji ? `Remove all ${nameOf(emoji).toLowerCase()} reactions?` : "Remove all reactions?",
       description: "They’re removed for everyone. People can react again afterward.",
-      confirmLabel: "Remove"
+      confirmLabel: "Remove reactions"
     })
     if (!confirmed) {
       return
     }
+    setRemoving(commentId, true)
     try {
       // The client calls the server until every page is removed.
       const { removed } = await client.removeReactions({ ...subject, ...(emoji ? { emoji } : {}) })
-      onRemoved(`${plural(removed, "reaction", "reactions")} removed`)
+      onRemoved(
+        removed > 0 ? `${plural(removed, "reaction", "reactions")} removed` : "There were no reactions to remove"
+      )
     } catch (error) {
       onError("The reactions couldn’t be removed", error)
+    } finally {
+      setRemoving(commentId, false)
     }
   }
 
   return (
     <DropdownMenuSub>
-      <DropdownMenuSubTrigger>
+      <DropdownMenuSubTrigger disabled={busy}>
         <SmileIcon />
-        Remove reactions
+        {busy ? "Removing reactions" : "Remove reactions"}
       </DropdownMenuSubTrigger>
       <DropdownMenuSubContent>
         <DropdownMenuItem onClick={() => void remove()}>All reactions ({total})</DropdownMenuItem>
@@ -174,17 +203,19 @@ export function RemoveReactionsMenu({ commentId, onRemoved, onError }: RemoveRea
 
 /** Who reacted with one emoji, loaded when its tooltip opens. */
 function Reactors({ commentId, emoji }: { commentId: string; emoji: Emoji }) {
-  const { userIds, users, state } = useReactors<ReactionTypes>(
-    { subjectType: "comments.comment", subjectId: commentId },
-    emoji
-  )
+  const { userIds, users, state, hasMore } = useReactors<ReactionTypes>(commentSubject(commentId), emoji)
+  if (state === "error") {
+    return <span>Couldn’t load who reacted</span>
+  }
   if (state !== "ready") {
     return <span>Loading</span>
   }
   const names = userIds.map((id) => users[id]?.name ?? "Former user")
+  // Tooltips show the first page; a list that goes on says so rather than looking complete.
   return (
     <span>
       {nameOf(emoji)} from {names.join(", ")}
+      {hasMore && " and others"}
     </span>
   )
 }

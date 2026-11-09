@@ -96,61 +96,6 @@ describe("reactions client", () => {
     expect(reactions.store.getSnapshot().subjects[key1]?.reactions).toEqual([{ emoji: "🎉", count: 1, reacted: true }])
   })
 
-  it("takes the viewer off another emoji's reactors when another tab already swapped it, and each person has one", async () => {
-    const { api, as, reactions } = browser("bob", { maxPerUser: 1 })
-    await api.react({ ...inv1, emoji: "👍" }, as("ada"))
-    await api.react({ ...inv1, emoji: "👍" }, as("bob"))
-    await reactions.load("invoice", ["inv-1"])
-    await reactions.loadReactors({ ...inv1, emoji: "👍" })
-    const key = reactionKey("invoice", "inv-1", "👍")
-    expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada", "bob"])
-    await api.react({ ...inv1, emoji: "🎉" }, as("bob"))
-    await reactions.react({ ...inv1, emoji: "🎉" })
-    expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada"])
-  })
-
-  it("loads who reacted again after taking back a reaction another tab already took back", async () => {
-    const { api, as, reactions } = browser()
-    const target = { ...inv1, emoji: "👍" }
-    await api.react(target, as("ada"))
-    await api.react(target, as("bob"))
-    await reactions.load("invoice", ["inv-1"])
-    await reactions.loadReactors(target)
-    const key = reactionKey("invoice", "inv-1", "👍")
-    expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada", "bob"])
-    await api.unreact(target, as("bob"))
-    await reactions.unreact(target)
-    expect(reactions.store.getSnapshot().reactors[key]).toBeUndefined()
-    await reactions.loadReactors(target)
-    expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada"])
-  })
-
-  it("loads who reacted again when a late event for the viewer's own reaction disagrees", async () => {
-    const { api, as, events, identity, reactions } = browser()
-    const target = { ...inv1, emoji: "👍" }
-    await api.react(target, as("ada"))
-    await reactions.load("invoice", ["inv-1"])
-    await reactions.react(target)
-    await reactions.loadReactors(target)
-    const key = reactionKey("invoice", "inv-1", "👍")
-    await reactions.unreact(target)
-    expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada"])
-    // The event for Bob's reaction, since taken back, arrives last.
-    const event = await api.toClientEvent({
-      event: events("reaction.added").at(-1) as BetterAppsEvent,
-      viewer: identity.actor("bob")
-    })
-    if (!event) {
-      throw new Error("No event was shown.")
-    }
-    reactions.applyEvent(event)
-    expect(reactions.store.getSnapshot().reactors[key]).toBeUndefined()
-    await new Promise((resolve) => setTimeout(resolve, 30))
-    await reactions.loadReactors(target)
-    expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada"])
-    expect(reactions.store.getSnapshot().subjects[key1]?.reactions).toEqual([{ emoji: "👍", count: 1, reacted: false }])
-  })
-
   it("rolls back a refused reaction", async () => {
     const { reactions } = browser()
     const locked = { subjectType: "invoice", subjectId: "inv-locked" } as const
@@ -334,30 +279,6 @@ describe("reactions client", () => {
     expect(reactions.store.getSnapshot().reactors[reactionKey("invoice", "inv-1", "❤️")]?.userIds).toEqual(["ada"])
   })
 
-  it("loads who reacted, page by page, and keeps the list current", async () => {
-    const { api, as, reactions } = browser("cy")
-    const target = { ...inv1, emoji: "👍" }
-    await api.react(target, as("ada"))
-    await api.react(target, as("bob"))
-    await reactions.loadReactors(target)
-    const key = reactionKey("invoice", "inv-1", "👍")
-    expect(reactions.store.getSnapshot().reactors[key]).toMatchObject({ userIds: ["ada", "bob"], state: "ready" })
-    expect(reactions.store.getSnapshot().users.bob?.name).toBe("Bob Babbage")
-    await reactions.loadMoreReactors(target)
-    await reactions.unreact({ ...target })
-    // Someone whose name hasn't loaded starts the list over, so it loads again with their name.
-    await reactions.react(target)
-    expect(reactions.store.getSnapshot().reactors[key]).toBeUndefined()
-    await reactions.loadReactors(target)
-    expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada", "bob", "cy"])
-    expect(reactions.store.getSnapshot().users.cy?.name).toBeDefined()
-    await reactions.unreact(target)
-    expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada", "bob"])
-    // Someone already named is added at once.
-    await reactions.react(target)
-    expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada", "bob", "cy"])
-  })
-
   it("loads a record again when someone else's events arrive out of order", async () => {
     const { api, as, events, identity, reactions, requests } = browser()
     const target = { ...inv1, emoji: "👍" }
@@ -383,102 +304,6 @@ describe("reactions client", () => {
     await new Promise((resolve) => setTimeout(resolve, 30))
     expect(reactions.store.getSnapshot().subjects[key1]?.reactions).toEqual([])
     expect(requests.filter((name) => name === "listReactions").length).toBeGreaterThan(loads)
-  })
-
-  it("pages through many reactors, keeping those listed when their live event arrives", async () => {
-    const { api, as, events, identity, reactions } = browser("cy", {}, { reactorsPerPage: 1 })
-    const target = { ...inv1, emoji: "👍" }
-    await api.react(target, as("ada"))
-    await api.react(target, as("bob"))
-    const key = reactionKey("invoice", "inv-1", "👍")
-    await reactions.loadReactors(target)
-    expect(reactions.store.getSnapshot().reactors[key]).toMatchObject({ userIds: ["ada"], state: "ready" })
-    expect(reactions.store.getSnapshot().reactors[key]?.cursor).not.toBeNull()
-    // Ada's live event arrives after the page that already lists her.
-    const event = await api.toClientEvent({
-      event: events("reaction.added")[0] as BetterAppsEvent,
-      viewer: identity.actor("cy")
-    })
-    if (!event) {
-      throw new Error("No event was shown.")
-    }
-    reactions.applyEvent(event)
-    expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada"])
-    await reactions.loadMoreReactors(target)
-    expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada", "bob"])
-  })
-
-  it("asks again for a page of reactors that someone left while it was on its way", async () => {
-    const { api, as, events, holdAnswer, identity, reactions, requests } = browser("cy")
-    const target = { ...inv1, emoji: "👍" }
-    await api.react(target, as("ada"))
-    await api.react(target, as("bob"))
-    const release = holdAnswer("listReactors")
-    const loading = reactions.loadReactors(target)
-    // The server has read the page, with Bob, before he takes his reaction back.
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    await api.unreact(target, as("bob"))
-    const event = await api.toClientEvent({
-      event: events("reaction.removed").at(-1) as BetterAppsEvent,
-      viewer: identity.actor("cy")
-    })
-    if (!event) {
-      throw new Error("No event was shown.")
-    }
-    reactions.applyEvent(event)
-    release()
-    await loading
-    expect(reactions.store.getSnapshot().reactors[reactionKey("invoice", "inv-1", "👍")]?.userIds).toEqual(["ada"])
-    expect(requests.filter((name) => name === "listReactors")).toHaveLength(2)
-  })
-
-  it("doesn't let a page on its way put back reactors a moderator removed", async () => {
-    const { api, as, events, holdAnswer, identity, reactions } = browser("cy")
-    const target = { ...inv1, emoji: "👍" }
-    await api.react(target, as("ada"))
-    await api.react(target, as("bob"))
-    const release = holdAnswer("listReactors")
-    const loading = reactions.loadReactors(target)
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    await api.removeReactions(inv1)
-    const event = await api.toClientEvent({
-      event: events("subject.changed").at(-1) as BetterAppsEvent,
-      viewer: identity.actor("cy")
-    })
-    if (!event) {
-      throw new Error("No event was shown.")
-    }
-    reactions.applyEvent(event)
-    release()
-    await loading
-    expect(reactions.store.getSnapshot().reactors[reactionKey("invoice", "inv-1", "👍")]?.userIds ?? []).toEqual([])
-  })
-
-  it("starts reactors over from the first page when the list is dropped while a later page loads", async () => {
-    const { api, as, events, holdAnswer, identity, reactions } = browser("cy", {}, { reactorsPerPage: 1 })
-    const target = { ...inv1, emoji: "👍" }
-    for (const userId of ["ada", "bob", "cy"] as const) {
-      await api.react(target, as(userId))
-    }
-    const key = reactionKey("invoice", "inv-1", "👍")
-    await reactions.loadReactors(target)
-    const release = holdAnswer("listReactors")
-    const more = reactions.loadMoreReactors(target)
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    await api.removeReactions({ ...inv1, userId: "bob" })
-    const event = await api.toClientEvent({
-      event: events("subject.changed").at(-1) as BetterAppsEvent,
-      viewer: identity.actor("cy")
-    })
-    if (!event) {
-      throw new Error("No event was shown.")
-    }
-    reactions.applyEvent(event)
-    release()
-    await more
-    expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada"])
-    await reactions.loadMoreReactors(target)
-    expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada", "cy"])
   })
 
   it("loads again rather than make someone else's count and the viewer's own change to one emoji again", async () => {
@@ -526,6 +351,94 @@ describe("reactions client", () => {
     expect(requests.filter((name) => name === "listReactions")).toHaveLength(loads + 1)
   })
 
+  it("loads who reacted page by page", async () => {
+    const { api, as, reactions } = browser("cy", {}, { reactorsPerPage: 1 })
+    const target = { ...inv1, emoji: "👍" }
+    await api.react(target, as("ada"))
+    await api.react(target, as("bob"))
+    const key = reactionKey("invoice", "inv-1", "👍")
+    await reactions.loadReactors(target)
+    expect(reactions.store.getSnapshot().reactors[key]).toMatchObject({ userIds: ["ada"], state: "ready" })
+    expect(reactions.store.getSnapshot().reactors[key]?.cursor).not.toBeNull()
+    await reactions.loadMoreReactors(target)
+    expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada", "bob"])
+    expect(reactions.store.getSnapshot().users.bob?.name).toBe("Bob Babbage")
+  })
+
+  it("drops a record's lists of who reacted after any change to its reactions, so they load fresh", async () => {
+    const { api, as, events, identity, reactions } = browser("bob", { maxPerUser: 1 })
+    const target = { ...inv1, emoji: "👍" }
+    await api.react(target, as("ada"))
+    await reactions.load("invoice", ["inv-1"])
+    const thumbs = reactionKey("invoice", "inv-1", "👍")
+    const party = reactionKey("invoice", "inv-1", "🎉")
+    const lists = () => reactions.store.getSnapshot().reactors
+    const loadBoth = async () => {
+      await reactions.loadReactors(target)
+      await reactions.loadReactors({ ...inv1, emoji: "🎉" })
+    }
+    // The viewer's own write drops every list on the record, including other emoji's.
+    await loadBoth()
+    await reactions.react(target)
+    expect([lists()[thumbs], lists()[party]]).toEqual([undefined, undefined])
+    await loadBoth()
+    expect(lists()[thumbs]?.userIds).toEqual(["ada", "bob"])
+    // A swap made in another tab shows once the lists load again.
+    await api.react({ ...inv1, emoji: "🎉" }, as("bob"))
+    await reactions.react({ ...inv1, emoji: "🎉" })
+    await loadBoth()
+    expect([lists()[thumbs]?.userIds, lists()[party]?.userIds]).toEqual([["ada"], ["bob"]])
+    // So does a live event, even a late one for a reaction since taken back.
+    await api.react(target, as("cy"))
+    const event = await api.toClientEvent({
+      event: events("reaction.added").at(-1) as BetterAppsEvent,
+      viewer: identity.actor("bob")
+    })
+    if (!event) {
+      throw new Error("No event was shown.")
+    }
+    await api.unreact(target, as("cy"))
+    reactions.applyEvent(event)
+    expect(lists()[thumbs]).toBeUndefined()
+    await loadBoth()
+    expect(lists()[thumbs]?.userIds).toEqual(["ada"])
+    // Records that didn't change keep theirs.
+    await reactions.loadReactors({ subjectType: "invoice", subjectId: "inv-2", emoji: "👍" })
+    reactions.applyEvent({ id: "elsewhere", type: "subject.changed", ...inv1 })
+    expect(lists()[reactionKey("invoice", "inv-2", "👍")]?.state).toBe("ready")
+  })
+
+  it("drops a page of who reacted that was on its way during a change", async () => {
+    const { api, as, events, holdAnswer, identity, reactions, requests } = browser("cy", {}, { reactorsPerPage: 1 })
+    const target = { ...inv1, emoji: "👍" }
+    for (const userId of ["ada", "bob", "cy"] as const) {
+      await api.react(target, as(userId))
+    }
+    const key = reactionKey("invoice", "inv-1", "👍")
+    await reactions.loadReactors(target)
+    // The next page is read before Bob takes his reaction back, and arrives after.
+    const release = holdAnswer("listReactors")
+    const more = reactions.loadMoreReactors(target)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await api.unreact(target, as("bob"))
+    const event = await api.toClientEvent({
+      event: events("reaction.removed").at(-1) as BetterAppsEvent,
+      viewer: identity.actor("cy")
+    })
+    if (!event) {
+      throw new Error("No event was shown.")
+    }
+    reactions.applyEvent(event)
+    release()
+    await more
+    expect(reactions.store.getSnapshot().reactors[key]).toBeUndefined()
+    // Loading again starts from the first page.
+    await reactions.loadReactors(target)
+    await reactions.loadMoreReactors(target)
+    expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada", "cy"])
+    expect(requests.filter((name) => name === "listReactors")).toHaveLength(4)
+  })
+
   it("marks reactors that failed to load", async () => {
     const { reactions } = browser("gus")
     const target = { ...inv1, emoji: "👍" }
@@ -562,13 +475,6 @@ describe("reactions client", () => {
     reactions.applyEvent({ ...event, id: "mine", userId: "bob", mine: true })
     expect(reactions.store.getSnapshot().subjects[key1]?.reactions).toEqual([{ emoji: "👍", count: 2, reacted: true }])
     expect(requests.filter((name) => name === "listReactions")).toHaveLength(loads)
-    // An event that may not say who reacted leaves lists of reactors alone.
-    await reactions.loadReactors({ ...inv1, emoji: "👍" })
-    reactions.applyEvent({ ...event, id: "nameless", type: "reaction.removed", userId: "" })
-    expect(reactions.store.getSnapshot().reactors[reactionKey("invoice", "inv-1", "👍")]?.userIds).toEqual([
-      "ada",
-      "bob"
-    ])
     reactions.applyEvent({ ...event, id: "elsewhere", subjectId: "inv-2" })
     expect(reactions.store.getSnapshot().subjects[subjectKey("invoice", "inv-2")]).toBeUndefined()
   })

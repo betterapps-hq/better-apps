@@ -48,7 +48,15 @@ export const reactionEvents = {
   "subject.changed": defineEvent<{ subjectType: string; subjectId: string }>(),
   "subject.removed": defineEvent<{ subjectType: string; subjectId: string }>(),
   /** A person's reactions were removed, in one organization, or in all of them when `orgId` is `null`. */
-  "user.removed": defineEvent<{ userId: string; orgId: string | null }>()
+  "user.removed": defineEvent<{ userId: string; orgId: string | null }>(),
+  /**
+   * Reactions' own: what's left of cleaning up after records that went away or moved, such as comments' threads, which
+   * reactions continue in the next `app.deliverEvents()` run. Browsers never get it.
+   */
+  "cleanup.continued": defineEvent<{
+    records: { subjectType: string; subjectIds: string[] }[]
+    toOrgId?: string | undefined
+  }>()
 }
 
 /** The data of each reactions event, by type. */

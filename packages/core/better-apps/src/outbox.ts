@@ -1,5 +1,5 @@
 import type { DatabaseAdapter, Row, WriteOperation } from "./database.js"
-import { eventModel, type BetterAppsEvent, type EventHandler } from "./events.js"
+import { eventModel, type BetterAppsEvent, type EmitOptions, type EventHandler } from "./events.js"
 import type { BetterAppsFeature } from "./feature.js"
 import type { Actor, Author, Identity } from "./identity.js"
 import type { Subjects } from "./subjects.js"
@@ -89,25 +89,31 @@ export function createOutbox(options: {
   function track(feature: BetterAppsFeature, scope: EventScope) {
     const pending: WriteOperation[] = []
     const written: string[] = []
+    // Events left for the next `deliverEvents`, which this run doesn't deliver once written.
+    const later = new Set<string>()
     // Many events are written with one createMany, so a bulk job's page of them takes a few statements.
     const take = () => {
       const taken = pending.splice(0)
       const rows = taken.map((event) => (event as { data: Row }).data)
       const events: WriteOperation[] = rows.length > 1 ? [{ type: "createMany", model: eventModel, data: rows }] : taken
-      return { events, ids: rows.map((row) => String(row.id)) }
+      return { events, ids: rows.map((row) => String(row.id)).filter((id) => !later.has(id)) }
     }
-    const emit = (type: string, data: unknown) => {
+    const emit = (type: string, data: unknown, options?: EmitOptions) => {
       if (!feature.events || !Object.hasOwn(feature.events, type)) {
         throw new Error(`The "${feature.id}" feature doesn't declare a "${type}" event.`)
       }
       if (subscribersOf(feature.id, type).length === 0) {
         return
       }
+      const id = crypto.randomUUID()
+      if (options?.later === true) {
+        later.add(id)
+      }
       pending.push({
         type: "create",
         model: eventModel,
         data: {
-          id: crypto.randomUUID(),
+          id,
           feature: feature.id,
           type,
           data: data ?? null,

@@ -142,6 +142,13 @@ export const reactionEvents: {
     userId: string;
     orgId: string | null;
     }>;
+    "cleanup.continued": EventDefinition<    {
+    records: {
+    subjectType: string;
+    subjectIds: string[];
+    }[];
+    toOrgId?: string | undefined;
+    }>;
 };
 
 // @public
@@ -197,10 +204,20 @@ export function reactions<const Options extends ReactionsOptions>(options: Optio
         userId: string;
         orgId: string | null;
         }>;
+        "cleanup.continued": EventDefinition<    {
+        records: {
+        subjectType: string;
+        subjectIds: string[];
+        }[];
+        toOrgId?: string | undefined;
+        }>;
     };
     readonly usesSubjects: string[];
     readonly on: {
         comments: Record<string, (event: BetterAppsEvent, context: EventContext) => void | Promise<void>>;
+        reactions: {
+            "cleanup.continued": (event: BetterAppsEvent<unknown>, context: EventContext) => Promise<void>;
+        };
     } | undefined;
     readonly options: Options;
     readonly actions: {

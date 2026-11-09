@@ -99,8 +99,10 @@ statements per page.
 
 With reactions on comments' threads or comments, reactions follow comments' events instead: a deleted comment or thread
 loses its reactions, a deleted comment can't get new ones, even one saved while it was being deleted, and a thread that
-moves takes its and its comments' reactions along. These run every page in one delivery, since a subscriber can't be
-called again. Subscribing to events needs the core's outbox table, which `better-apps generate` adds.
+moves takes its and its comments' reactions along. Each delivery handles up to five pages that find reactions, so a
+thread of any size fits in a request, and the rest continues with reactions' own `cleanup.continued` event in the next
+`app.deliverEvents()` run, so call it from a scheduled job. Subscribing to events needs the core's outbox table, which
+`better-apps generate` adds.
 
 ## Events
 
@@ -111,8 +113,9 @@ changes also carry `count`, how many reactions with that emoji the record had ju
 is reported once, even when two removals of one reaction race, and removing a record or a person emits it for each of
 their reactions, marked `bulk`. Every removal writes a row to `reactionRemoval` for that. Each page of a bulk removal
 also emits `subject.changed` for every record it touched, written with the page, so browsers hear of the pages done even
-when a job stops partway. `subject.moved`, `subject.removed` and `user.removed` follow the actions above once they're
-done; a thread that moves emits `subject.moved` for it and each of its comments that had reactions.
+when a job stops partway. Each page of a move emits `subject.moved` for every record it moved reactions on, the same
+way, so a record without reactions gets none, and a busy one may get one per page. `subject.removed` and `user.removed`
+follow the actions above once they're done.
 
 `toClientEvent({ event, viewer })`, a server-only action, turns a reaction event into one a viewer's browser may see, or
 `null` when they can't see the record. Its `mine` says whether the viewer made the change, and its `userId` is `""` when
@@ -144,15 +147,17 @@ await reactions.toggle({ subjectType: "invoice", subjectId: "inv-1", emoji: "ðŸ‘
   changes made while a load was under way are made again on its answer, since they're set rather than counted, so an
   older answer never undoes them. When someone else's change or a `subject.changed` event came meanwhile, the answer may
   or may not have it, so it's dropped and the record loads again.
-- `applyEvent` applies an event from `toClientEvent` once. A `subject.changed` event loads the record again and drops
-  its lists of reactors. The viewer's own changes are set, not counted, so one that arrives both as an answer and as a
-  live event counts once. Someone else's shows at once. When its `count` doesn't match what the store then shows, such
-  as for a change already in a load, the record loads again; changes that come while it loads make it load once more.
+- `applyEvent` applies an event from `toClientEvent` once. A `subject.changed` event loads the record again. The
+  viewer's own changes are set, not counted, so one that arrives both as an answer and as a live event counts once.
+  Someone else's shows at once. When its `count` doesn't match what the store then shows, such as for a change already
+  in a load, the record loads again; changes that come while it loads make it load once more.
 - When the record's settings list its emoji, a new chip shows where a load will put it. Lists that depend on the
   organization are used per record, once `loadSettings` has loaded that record's. `loadReactors` and `isPending` take
   any spelling of an emoji.
 - `removeReactions` removes reactions for moderators, calling the server until it's done, then loads the record again.
-- `loadReactors` and `loadMoreReactors` fill `reactors` and `users` for tooltips. `loadSettings` fills `settings`.
+- `loadReactors` and `loadMoreReactors` fill `reactors` and `users` for tooltips. Lists of who reacted aren't changed in
+  place: any write, live event or removal on a record drops its lists, and a page that was on its way meanwhile, so they
+  load fresh when next shown, as `useReactors` does. `loadSettings` fills `settings`.
 - `dehydrate` and `hydrate` carry a server render's loads to the browser. `reset` empties the store and cancels calls
   under way when the signed-in person changes without a page load.
 - `normalizeEmoji` is exported here too, for pickers that compare emoji.

@@ -9,7 +9,7 @@ export interface ActionContext<Input> {
     actor: Actor | null;
     author: Author | null;
     db: DatabaseAdapter;
-    emit(type: string, data: unknown): void;
+    emit(type: string, data: unknown, options?: EmitOptions): void;
     // (undocumented)
     identity: Identity;
     input: Input;
@@ -273,6 +273,11 @@ export interface DeliveryReport {
 }
 
 // @public
+export interface EmitOptions {
+    later?: boolean | undefined;
+}
+
+// @public
 export type ErrorCode = "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND" | "INVALID_INPUT" | "CONFLICT" | "LIMIT_EXCEEDED" | "RATE_LIMITED" | (string & {});
 
 // @public
@@ -288,7 +293,7 @@ export interface ErrorContext {
 // @public
 export interface EventContext {
     db: DatabaseAdapter;
-    emit(type: string, data: unknown): void;
+    emit(type: string, data: unknown, options?: EmitOptions): void;
     // (undocumented)
     identity: Identity;
     subjects: Subjects;

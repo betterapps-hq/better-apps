@@ -1,4 +1,5 @@
 import type { DatabaseAdapter } from "./database.js"
+import type { EmitOptions } from "./events.js"
 import type { Actor, Author, Identity } from "./identity.js"
 import type { InferSchemaInput, InferSchemaOutput, StandardSchemaV1 } from "./standard-schema.js"
 import type { Subjects } from "./subjects.js"
@@ -26,9 +27,10 @@ export interface ActionContext<Input> {
   request: Request | null
   /**
    * Emits one of the feature's events. It's written to the outbox with the action's next `db.batch`, or after the
-   * handler returns, and delivered to subscribers once written. Events nobody subscribes to are dropped.
+   * handler returns, and delivered to subscribers once written, or by the next `app.deliverEvents()` with `later`.
+   * Events nobody subscribes to are dropped.
    */
-  emit(type: string, data: unknown): void
+  emit(type: string, data: unknown, options?: EmitOptions): void
 }
 
 /** A server function a feature exposes, with an optional Standard Schema for its input. */

@@ -35,6 +35,7 @@ export {
   defineEvent,
   eventModel,
   type BetterAppsEvent,
+  type EmitOptions,
   type EventContext,
   type EventDefinition,
   type EventHandler
