@@ -355,6 +355,57 @@ describe("reactions client", () => {
     expect(reactions.store.getSnapshot().reactors[reactionKey("invoice", "inv-1", "👍")]?.userIds ?? []).toEqual([])
   })
 
+  it("starts reactors over from the first page when the list is dropped while a later page loads", async () => {
+    const { api, as, events, holdAnswer, identity, reactions } = browser("cy", {}, { reactorsPerPage: 1 })
+    const target = { ...inv1, emoji: "👍" }
+    for (const userId of ["ada", "bob", "cy"] as const) {
+      await api.react(target, as(userId))
+    }
+    const key = reactionKey("invoice", "inv-1", "👍")
+    await reactions.loadReactors(target)
+    const release = holdAnswer("listReactors")
+    const more = reactions.loadMoreReactors(target)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await api.removeReactions({ ...inv1, userId: "bob" })
+    const event = await api.toClientEvent({
+      event: events("subject.changed").at(-1) as BetterAppsEvent,
+      viewer: identity.actor("cy")
+    })
+    if (!event) {
+      throw new Error("No event was shown.")
+    }
+    reactions.applyEvent(event)
+    release()
+    await more
+    expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada"])
+    await reactions.loadMoreReactors(target)
+    expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada", "cy"])
+  })
+
+  it("loads again rather than make someone else's count and the viewer's own change to one emoji again", async () => {
+    const { api, as, events, hold, identity, reactions } = browser()
+    const target = { ...inv1, emoji: "👍" }
+    await reactions.load("invoice", ["inv-1"])
+    // The load goes out first, but the server reads after both changes, so its answer already has them.
+    const release = hold("listReactions")
+    const loading = reactions.load("invoice", ["inv-1"])
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await api.react(target, as("ada"))
+    const event = await api.toClientEvent({
+      event: events("reaction.added").at(-1) as BetterAppsEvent,
+      viewer: identity.actor("bob")
+    })
+    if (!event) {
+      throw new Error("No event was shown.")
+    }
+    reactions.applyEvent(event)
+    await reactions.react(target)
+    release()
+    await loading
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(reactions.store.getSnapshot().subjects[key1]?.reactions).toEqual([{ emoji: "👍", count: 2, reacted: true }])
+  })
+
   it("loads a record again when a late event for the viewer's own reaction disagrees", async () => {
     const { api, events, identity, reactions, requests } = browser()
     const target = { ...inv1, emoji: "👍" }

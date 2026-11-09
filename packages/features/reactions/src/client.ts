@@ -145,6 +145,12 @@ function setCount(reactions: readonly ReactionSummary[], emoji: string, count: n
 
 type Fix = (reactions: readonly ReactionSummary[]) => readonly ReactionSummary[]
 
+/** What a remembered change sets: whether the viewer reacted with an emoji, or its count from someone else's event. */
+interface Mark {
+  kind: "mine" | "count"
+  emoji: string
+}
+
 /** How many of a record's latest changes are kept, to make again on a load's answer that went out before them. */
 const keptChanges = 50
 
@@ -273,11 +279,11 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
   // Each record's version, raised whenever what the server said about it changes here, with the latest changes and how
   // to make each again, or `null` when it can't be, so a load that went out before them doesn't undo them.
   const versions = new Map<string, number>()
-  const history = new Map<string, { version: number; fix: Fix | null }[]>()
-  const bump = (key: string, fix: Fix | null) => {
+  const history = new Map<string, { version: number; fix: Fix | null; mark?: Mark }[]>()
+  const bump = (key: string, fix: Fix | null, mark?: Mark) => {
     const version = (versions.get(key) ?? 0) + 1
     versions.set(key, version)
-    history.set(key, [...(history.get(key) ?? []), { version, fix }].slice(-keptChanges))
+    history.set(key, [...(history.get(key) ?? []), { version, fix, ...(mark ? { mark } : {}) }].slice(-keptChanges))
   }
 
   /**
@@ -291,6 +297,19 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
     const since = (history.get(key) ?? []).filter((entry) => entry.version > asked)
     if (since.length !== now - asked) {
       return null
+    }
+    // Someone else's count was read at one moment, so it may or may not include the viewer's own change to the same
+    // emoji; with both to make again, which comes first can't be told, and the record loads again.
+    const kinds = new Map<string, Set<Mark["kind"]>>()
+    for (const { mark } of since) {
+      if (mark) {
+        const seen = kinds.get(mark.emoji) ?? new Set()
+        seen.add(mark.kind)
+        if (seen.size > 1) {
+          return null
+        }
+        kinds.set(mark.emoji, seen)
+      }
     }
     let reactions = answer
     for (const { fix } of since) {
@@ -306,12 +325,12 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
    * Changes what the server last said about a record, once loaded, and remembers the change for a load under way.
    * `again` is how to make it again on a newer answer, or `null` when it can't be.
    */
-  const confirm = (key: string, next: Fix, again: Fix | null = next) => {
+  const confirm = (key: string, next: Fix, again: Fix | null = next, mark?: Mark) => {
     const base = confirmed.get(key)
     if (base) {
       confirmed.set(key, next(base))
     }
-    bump(key, again)
+    bump(key, again, mark)
   }
 
   const setReactors = (state: ReactionsState, key: string, value: Partial<Reactors>): ReactionsState => {
@@ -424,9 +443,11 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
       reaction?: { userId: string } | null
       replaced?: { emoji: string; userId: string }[]
     }
-    confirm(record, (reactions) => setMine(reactions, target.emoji, reacted))
+    const own = (reactions: readonly ReactionSummary[]) => setMine(reactions, target.emoji, reacted)
+    confirm(record, own, own, { kind: "mine", emoji: target.emoji })
     for (const gone of replaced) {
-      confirm(record, (reactions) => setMine(reactions, gone.emoji, false))
+      const cleared = (reactions: readonly ReactionSummary[]) => setMine(reactions, gone.emoji, false)
+      confirm(record, cleared, cleared, { kind: "mine", emoji: gone.emoji })
     }
     update((state) => {
       let next = show(state, record)
@@ -585,21 +606,36 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
     const key = reactionKey(target.subjectType, target.subjectId, target.emoji)
     const apply = scoped()
     apply((state) => setReactors(state, key, { state: "loading", error: null }))
+    // Taken now, so a page asked for again after reset() never goes out as the next person.
+    const { signal } = calls
+    let from = cursor
     try {
       let page: ReactorPage
       // A change to who reacted while a page was on its way may not be in it, so the page is asked for again, a few
-      // times at most on a busy record.
+      // times at most on a busy record. When the list was dropped meanwhile, the pages before are gone too, so it
+      // starts over from the first.
       for (let attempt = 1; ; attempt += 1) {
         const asked = reactorVersions.get(key) ?? 0
-        page = (await run("listReactors", { ...target, cursor })) as ReactorPage
-        if ((reactorVersions.get(key) ?? 0) === asked || attempt === 3) {
+        page = (await call("reactions", "listReactors", { ...target, cursor: from }, { signal })) as ReactorPage
+        if ((reactorVersions.get(key) ?? 0) === asked) {
           break
+        }
+        const dropped = !store.getSnapshot().reactors[key]
+        if (attempt === 3) {
+          if (dropped && from !== undefined) {
+            // A later page alone would leave out the people before it, so the list stays dropped and loads again.
+            return
+          }
+          break
+        }
+        if (dropped) {
+          from = undefined
         }
       }
       apply((state) => {
         const loaded = state.reactors[key]?.userIds ?? []
         const userIds =
-          cursor === undefined ? page.userIds : [...loaded, ...page.userIds.filter((id) => !loaded.includes(id))]
+          from === undefined ? page.userIds : [...loaded, ...page.userIds.filter((id) => !loaded.includes(id))]
         return {
           ...setReactors(state, key, { userIds, cursor: page.cursor, state: "ready", error: null }),
           users: { ...state.users, ...page.users }
@@ -707,7 +743,8 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
         (base.find((reaction) => reaction.emoji === event.emoji)?.reacted ?? false) !== added &&
         !(writes.get(key) ?? []).some((write) => write.emoji === event.emoji && write.reacted === added)
       if (event.mine) {
-        confirm(key, (reactions) => setMine(reactions, event.emoji, added))
+        const own = (reactions: readonly ReactionSummary[]) => setMine(reactions, event.emoji, added)
+        confirm(key, own, own, { kind: "mine", emoji: event.emoji })
         if (surprising) {
           refresh(event.subjectType, event.subjectId)
         }
@@ -716,7 +753,8 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
         confirm(
           key,
           (reactions) => change(reactions, event.emoji, added ? 1 : -1, false),
-          count === undefined ? null : (reactions) => setCount(reactions, event.emoji, count)
+          count === undefined ? null : (reactions) => setCount(reactions, event.emoji, count),
+          { kind: "count", emoji: event.emoji }
         )
       }
       update((state) =>
