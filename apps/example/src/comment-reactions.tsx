@@ -207,7 +207,8 @@ function Reactors({ commentId, emoji }: { commentId: string; emoji: Emoji }) {
   if (state === "error") {
     return <span>Couldn’t load who reacted</span>
   }
-  if (state !== "ready") {
+  // A list that's loading again keeps showing, so an open tooltip doesn't flicker when someone reacts.
+  if (userIds.length === 0 && state !== "ready") {
     return <span>Loading</span>
   }
   const names = userIds.map((id) => users[id]?.name ?? "Former user")

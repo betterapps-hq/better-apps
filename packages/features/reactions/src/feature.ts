@@ -127,10 +127,11 @@ const removalMemoryMs = 60 * 60_000
  */
 const removalPage = 100
 /**
- * How many reactions one batch moves. Each page also looks up what the same people have in the new organization, which
- * keeps the query's ids under D1's 100 bound parameters.
+ * How many reactions one batch moves. Each takes its own update statement, and the page also looks up what the same
+ * people have in the new organization, so a page stays under D1's 50 queries per request on its free plan and its
+ * query's ids under D1's 100 bound parameters.
  */
-const movePageSize = 40
+const movePageSize = 30
 /** How long an organization's own list of emoji is reused before it's asked for again. */
 const emojiListMs = 60_000
 
@@ -429,20 +430,25 @@ async function removePage(
 }
 
 /**
- * Up to `limit` reactions on some records of one subject type, from every organization or all but one, with the ids
- * that may still have more once this page is handled. Ids before the chunk that filled the page have none left, so a
- * next page doesn't read them again.
+ * Up to `limit` reactions on some records of one subject type, from every organization or all but one, reading at most
+ * `maxReads` lists of ids, with the ids that may still have more once this page is handled. Ids before the list that
+ * filled the page have none left, so a next page doesn't read them again.
  */
 async function pageOf(
   db: Context["db"],
   subjectType: string,
   subjectIds: readonly string[],
   limit: number,
-  notOrgId?: string
-): Promise<{ rows: Reaction[]; rest: string[] }> {
+  { notOrgId, maxReads = Infinity }: { notOrgId?: string | undefined; maxReads?: number } = {}
+): Promise<{ rows: Reaction[]; rest: string[]; reads: number }> {
   const ids = [...new Set(subjectIds)]
   const rows: Reaction[] = []
+  let reads = 0
   for (const [index, list] of chunks(ids).entries()) {
+    if (reads >= maxReads) {
+      return { rows, rest: ids.slice(index * chunkSize), reads }
+    }
+    reads += 1
     rows.push(
       ...(await db.findMany<Reaction>({
         model: reactionModel,
@@ -455,17 +461,17 @@ async function pageOf(
       }))
     )
     if (rows.length >= limit) {
-      return { rows, rest: ids.slice(index * chunkSize) }
+      return { rows, rest: ids.slice(index * chunkSize), reads }
     }
   }
-  return { rows, rest: [] }
+  return { rows, rest: [], reads }
 }
 
 /** Finds a page of one record's reactions, from every organization or all but one. */
 const reactionsOn =
   (db: Context["db"], ref: ReactionSubject, notOrgId?: string) =>
   async (limit: number): Promise<Reaction[]> =>
-    (await pageOf(db, ref.subjectType, [ref.subjectId], limit, notOrgId)).rows
+    (await pageOf(db, ref.subjectType, [ref.subjectId], limit, { notOrgId })).rows
 
 /** Records to clean up after, by subject type, and the organization they moved to, when they moved. */
 interface Cleanup {
@@ -473,48 +479,60 @@ interface Cleanup {
   toOrgId?: string | undefined
 }
 
-/** How many pages one delivery of a cleanup handles, so a busy thread fits in a request; the rest continues later. */
-const cleanupPages = 5
+/**
+ * How many lists of ids one delivery of a cleanup reads looking for reactions. With one page of removals or moves, a
+ * delivery stays under D1's 50 queries per request on its free plan; the rest continues in later runs.
+ */
+const cleanupReads = 10
+/** How many batches of removals or moves one delivery of a cleanup writes, each a few statements besides its rows. */
+const cleanupBatches = 3
 
 /**
- * Removes or moves the reactions on records that went away or moved, such as comments' threads, up to a few pages per
- * delivery. What's left continues with a `cleanup.continued` event in the next `app.deliverEvents()` run.
+ * Removes or moves the reactions on records that went away or moved, such as comments' threads: one page of them per
+ * delivery, reading at most `cleanupReads` lists of ids to find it. What's left continues with a `cleanup.continued`
+ * event in the next `app.deliverEvents()` run. Subject types reactions no longer set up are skipped.
  */
 async function cleanUp(config: Config, writer: Writer & Pick<Context, "subjects">, job: Cleanup) {
   const { toOrgId } = job
-  const records: Cleanup["records"] = []
-  for (const record of job.records) {
-    let subjectIds = [...new Set(record.subjectIds)]
-    if (toOrgId !== undefined && subjectIds.length > 0) {
-      // A move runs over several deliveries, so the record may have moved again since. Only records still in the
-      // organization this job moves to are moved, so an older job never undoes a newer move.
-      const orgIds = await orgsOf(
-        writer.subjects,
-        subjectIds.map((subjectId) => ({ subjectType: record.subjectType, subjectId })),
-        null
-      )
-      subjectIds = subjectIds.filter((_, index) => orgIds[index] === toOrgId)
-    }
-    if (subjectIds.length > 0) {
-      records.push({ subjectType: record.subjectType, subjectIds })
+  const records = job.records.filter(
+    (record) => record.subjectIds.length > 0 && Object.hasOwn(config, record.subjectType)
+  )
+  if (toOrgId !== undefined && records.length > 0) {
+    // A move runs over several deliveries, so its records may have moved again since. They move together, as a thread
+    // and its comments do, so the first of each kind tells where they are; one no longer in this job's organization
+    // stops it, so an older job never undoes a newer move.
+    const orgIds = await orgsOf(
+      writer.subjects,
+      records.map((record) => ({ subjectType: record.subjectType, subjectId: record.subjectIds[0] as string })),
+      null
+    )
+    if (orgIds.some((orgId) => orgId !== toOrgId)) {
+      return
     }
   }
-  // Only pages that found reactions count, since records without any, such as most comments, cost one read each.
-  for (let pages = 0; pages < cleanupPages && records.length > 0;) {
+  // One page's worth of reactions per delivery, over a few batches at most, such as a thread's and its comments'.
+  let room = toOrgId === undefined ? removalPage : movePageSize
+  let reads = cleanupReads
+  for (let batches = 0; batches < cleanupBatches && room > 0 && reads > 0 && records.length > 0;) {
     const record = records[0] as Cleanup["records"][number]
     let rest: string[] = []
     let found = 0
     const find = async (limit: number) => {
-      const page = await pageOf(writer.db, record.subjectType, record.subjectIds, limit, toOrgId)
+      const page = await pageOf(writer.db, record.subjectType, record.subjectIds, Math.min(limit, room), {
+        notOrgId: toOrgId,
+        maxReads: reads
+      })
       rest = page.rest
       found = page.rows.length
+      reads -= page.reads
       return page.rows
     }
     await (toOrgId === undefined
       ? removePage(writer, find, "subjectRemoved")
       : movePage(writer, settingsOf(config, record.subjectType), record.subjectType, find, toOrgId))
-    pages += found > 0 ? 1 : 0
-    record.subjectIds = rest
+    room -= found
+    batches += found > 0 ? 1 : 0
+    records[0] = { ...record, subjectIds: rest }
     if (rest.length === 0) {
       records.shift()
     }

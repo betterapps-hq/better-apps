@@ -92,17 +92,19 @@ reactions stay hidden, and don't count toward anyone's limit there, until server
 organizations keeps one, and the other is removed with the reason `merged`. Call
 `removeSubject({ subjectType, subjectId })` when a record is deleted, and `removeUser({ userId, orgId? })` when a person
 leaves the app, or one organization. These actions are server only. Each call does one page, removing up to 100
-reactions or moving up to 40, and returns `done`, so no request outgrows a database's limits however busy the record or
+reactions or moving up to 30, and returns `done`, so no request outgrows a database's limits however busy the record or
 person; call again, such as from a queue or a scheduled job, until `done` is `true`. A page whose batch fails, such as
 one that lost a race with another removal, is read again. Each page's removal rows go in one `createMany`, a few
 statements per page.
 
 With reactions on comments' threads or comments, reactions follow comments' events instead: a deleted comment or thread
 loses its reactions, a deleted comment can't get new ones, even one saved while it was being deleted, and a thread that
-moves takes its and its comments' reactions along. Each delivery handles up to five pages that find reactions, so a
-thread of any size fits in a request, and the rest continues with reactions' own `cleanup.continued` event in the next
-`app.deliverEvents()` run, so call it from a scheduled job. Subscribing to events needs the core's outbox table, which
-`better-apps generate` adds.
+moves takes its and its comments' reactions along. Each delivery handles one page's worth of reactions, reading at most
+ten lists of 90 ids to find them, so a thread of any size stays under D1's 50 queries per request on its free plan, and
+the rest continues with reactions' own `cleanup.continued` event in the next `app.deliverEvents()` run, so call it from
+a scheduled job. A move continues only while the thread is still in the organization it moved to, so an older move never
+undoes a newer one. Subject types reactions are no longer set up on are skipped. Subscribing to events needs the core's
+outbox table, which `better-apps generate` adds.
 
 ## Events
 
@@ -156,8 +158,9 @@ await reactions.toggle({ subjectType: "invoice", subjectId: "inv-1", emoji: "ðŸ‘
   any spelling of an emoji.
 - `removeReactions` removes reactions for moderators, calling the server until it's done, then loads the record again.
 - `loadReactors` and `loadMoreReactors` fill `reactors` and `users` for tooltips. Lists of who reacted aren't changed in
-  place: any write, live event or removal on a record drops its lists, and a page that was on its way meanwhile, so they
-  load fresh when next shown, as `useReactors` does. `loadSettings` fills `settings`.
+  place: any write, live event or removal on a record marks its lists `stale`, including one whose page was on its way
+  meanwhile, and a stale list keeps showing until it loads again. `useReactors` loads a stale list again, one load at a
+  time, and returns `stale`. `loadSettings` fills `settings`.
 - `dehydrate` and `hydrate` carry a server render's loads to the browser. `reset` empties the store and cancels calls
   under way when the signed-in person changes without a page load.
 - `normalizeEmoji` is exported here too, for pickers that compare emoji.

@@ -82,6 +82,24 @@ describe("reactions hooks", () => {
     })
     expect(result.current.error).toBeNull()
   })
+
+  it("keep showing who reacted while the list loads again after a change", async () => {
+    const { api, as, holdAnswer, reactions, requests, wrapper } = rendered()
+    await api.react({ ...inv1, emoji: "🎉" }, as("ada"))
+    const { result } = renderHook(() => useReactors(inv1, "🎉"), { wrapper })
+    await waitFor(() => expect(result.current.state).toBe("ready"))
+    const release = holdAnswer("listReactors")
+    await act(async () => {
+      await reactions.react({ ...inv1, emoji: "🎉" })
+    })
+    // The list is stale and loading again, and still shows Ada meanwhile.
+    expect(result.current.userIds).toEqual(["ada"])
+    expect(result.current.stale).toBe(true)
+    expect(requests.filter((name) => name === "listReactors")).toHaveLength(2)
+    release()
+    await waitFor(() => expect(result.current.stale).toBe(false))
+    expect(result.current.userIds).toEqual(["ada", "bob"])
+  })
 })
 
 describe("useReactionSettings", () => {

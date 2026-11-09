@@ -73,6 +73,11 @@ export interface Reactors {
   cursor: string | null
   state: LoadState
   error: Error | null
+  /**
+   * Whether the record's reactions changed since the list loaded. The list still shows until it loads again, as
+   * `useReactors` does, so a tooltip that's open doesn't blank out.
+   */
+  stale: boolean
 }
 
 /** Everything the store holds. */
@@ -302,21 +307,26 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
   }
 
   const setReactors = (state: ReactionsState, key: string, value: Partial<Reactors>): ReactionsState => {
-    const current = state.reactors[key] ?? { userIds: [], cursor: null, state: "idle", error: null }
+    const current = state.reactors[key] ?? { userIds: [], cursor: null, state: "idle", error: null, stale: false }
     return { ...state, reactors: { ...state.reactors, [key]: { ...current, ...value } } }
   }
 
-  // Lists of reactors are never changed in place: any change to a record's reactions drops them, and they load again
-  // when next shown. Each record's lists have a version, so a page that was on its way during a change is dropped too.
+  // Lists of reactors are never changed in place: any change to a record's reactions marks them stale, and they load
+  // again when shown. Each record's lists have a version, so a page that was on its way during a change stays stale.
   const reactorVersions = new Map<string, number>()
 
-  /** Drops a record's lists of reactors after its reactions changed, so they load again when next shown. */
+  /** Marks a record's lists of reactors stale after its reactions changed, so they load again when shown. */
   function forgetReactors(state: ReactionsState, record: string): ReactionsState {
     reactorVersions.set(record, (reactorVersions.get(record) ?? 0) + 1)
     const prefix = `${record.slice(0, -1)},`
     return {
       ...state,
-      reactors: Object.fromEntries(Object.entries(state.reactors).filter(([name]) => !name.startsWith(prefix)))
+      reactors: Object.fromEntries(
+        Object.entries(state.reactors).map(([name, list]) => [
+          name,
+          name.startsWith(prefix) ? { ...list, stale: true } : list
+        ])
+      )
     }
   }
 
@@ -527,21 +537,25 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
     const key = reactionKey(target.subjectType, target.subjectId, target.emoji)
     const record = subjectKey(target.subjectType, target.subjectId)
     const version = reactorVersions.get(record) ?? 0
-    const scope = scoped()
-    // A change to the record's reactions while the page was on its way dropped the list, and the page may not have the
-    // change, so it's dropped too and the list loads again when next shown.
-    const apply = (next: (state: ReactionsState) => ReactionsState) =>
-      scope((state) => ((reactorVersions.get(record) ?? 0) === version ? next(state) : state))
+    const apply = scoped()
+    // A list that loads again keeps showing what it had until the page arrives.
     apply((state) => setReactors(state, key, { state: "loading", error: null }))
     try {
       const page = (await run("listReactors", { ...target, cursor })) as ReactorPage
       apply((state) => {
+        // A change to the record's reactions while the page was on its way may not be in it, so the list stays stale
+        // and loads again; a later page then isn't added to a first page that's out of date.
+        const stale = (reactorVersions.get(record) ?? 0) !== version
         const loaded = state.reactors[key]?.userIds ?? []
+        const users = { ...state.users, ...page.users }
+        if (stale && cursor !== undefined) {
+          return { ...setReactors(state, key, { state: "ready", stale: true }), users }
+        }
         const userIds =
           cursor === undefined ? page.userIds : [...loaded, ...page.userIds.filter((id) => !loaded.includes(id))]
         return {
-          ...setReactors(state, key, { userIds, cursor: page.cursor, state: "ready", error: null }),
-          users: { ...state.users, ...page.users }
+          ...setReactors(state, key, { userIds, cursor: page.cursor, state: "ready", error: null, stale }),
+          users
         }
       })
     } catch (error) {

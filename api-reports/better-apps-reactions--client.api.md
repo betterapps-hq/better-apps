@@ -152,6 +152,7 @@ export interface Reactors {
     cursor: string | null;
     // (undocumented)
     error: Error | null;
+    stale: boolean;
     // (undocumented)
     state: LoadState;
     // (undocumented)

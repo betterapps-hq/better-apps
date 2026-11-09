@@ -760,49 +760,60 @@ describe("with comments", () => {
     return ids
   }
 
-  it("clean up after a big deleted thread a few pages per delivery, finishing in later runs", async () => {
+  it("clean up after a big deleted thread a page per delivery, finishing in later runs", async () => {
     const setup = withComments()
-    const ids = await busyThread(setup, 255)
+    const ids = await busyThread(setup, 60)
     await setup.emit({ type: "thread.deleted", data: { thread: { id: "t-big", orgId: "acme" }, commentIds: ids } })
-    // Five pages of 100 go now, and the rest waits for the next delivery run.
-    expect(setup.count()).toEqual({ count: 10 })
+    // A page of 100 goes now, and the rest waits for the next delivery run.
+    expect(setup.count()).toEqual({ count: 20 })
     expect(setup.events("subject.changed").length).toBeGreaterThan(0)
     expect(await setup.deliver()).toMatchObject({ failed: 0 })
     expect(setup.count()).toEqual({ count: 0 })
     expect(setup.events("cleanup.continued")).toHaveLength(1)
   })
 
+  it("read a bounded number of lists of ids per delivery, so a thread of many comments fits in a request", async () => {
+    const setup = withComments()
+    // 1,000 comments, only the last with a reaction, take twelve lists of 90 ids: ten now and two in the next run.
+    const ids = Array.from({ length: 1000 }, (_, index) => `many-${index}`)
+    setup.threads.set("t-many", { orgId: "acme", comments: new Set(ids) })
+    await setup.api.react({ ...comment("many-999"), emoji: "👍" }, setup.as("ada"))
+    await setup.emit({ type: "thread.deleted", data: { thread: { id: "t-many", orgId: "acme" }, commentIds: ids } })
+    expect(setup.count()).toEqual({ count: 1 })
+    await setup.deliver()
+    expect(setup.count()).toEqual({ count: 0 })
+  })
+
   it("never let an older move's later pages undo a newer move", async () => {
     const setup = withComments()
-    const ids = await busyThread(setup, 101)
+    const ids = await busyThread(setup, 20)
     const inOrg = (orgId: string) =>
       setup.database.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${reactionModel} WHERE orgId = ?`).get(orgId)
     // The move to globex leaves its last page for later, and the thread moves on before that runs.
     setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
     await setup.emit({ type: "thread.moved", data: { thread: { id: "t-big", orgId: "globex" }, commentIds: ids } })
-    expect(inOrg("globex")).toEqual({ count: 200 })
+    expect(inOrg("globex")).toEqual({ count: 30 })
     setup.threads.set("t-big", { orgId: "initech", comments: new Set(ids) })
     await setup.deliver()
     // The older job's last page doesn't move what's left to globex, where the thread no longer is.
-    expect(inOrg("globex")).toEqual({ count: 200 })
-    expect(inOrg("acme")).toEqual({ count: 2 })
+    expect(inOrg("globex")).toEqual({ count: 30 })
+    expect(inOrg("acme")).toEqual({ count: 10 })
   })
 
-  it("move a big thread's reactions a few pages per delivery, telling browsers with each page", async () => {
+  it("move a big thread's reactions a page per delivery, telling browsers with each page", async () => {
     const setup = withComments()
-    const ids = await busyThread(setup, 105)
+    const ids = await busyThread(setup, 20)
     setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
     await setup.emit({ type: "thread.moved", data: { thread: { id: "t-big", orgId: "globex" }, commentIds: ids } })
     const inGlobex = () =>
       setup.database.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${reactionModel} WHERE orgId = 'globex'`).get()
-    // Five pages of 40 move now, each with its records' subject.moved, and the rest in the next run.
-    expect(inGlobex()).toEqual({ count: 200 })
-    const told = new Set(setup.events("subject.moved").map((event) => (event.data as { subjectId: string }).subjectId))
-    expect(told.size).toBe(100)
-    await setup.deliver()
-    expect(inGlobex()).toEqual({ count: 210 })
-    expect(
+    const told = () =>
       new Set(setup.events("subject.moved").map((event) => (event.data as { subjectId: string }).subjectId)).size
-    ).toBe(105)
+    // A page of 30 moves now with its records' subject.moved, and the rest in the next run.
+    expect(inGlobex()).toEqual({ count: 30 })
+    expect(told()).toBeGreaterThanOrEqual(15)
+    await setup.deliver()
+    expect(inGlobex()).toEqual({ count: 40 })
+    expect(told()).toBe(20)
   })
 })

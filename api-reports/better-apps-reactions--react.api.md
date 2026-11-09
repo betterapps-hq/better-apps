@@ -152,6 +152,7 @@ export interface Reactors {
     cursor: string | null;
     // (undocumented)
     error: Error | null;
+    stale: boolean;
     // (undocumented)
     state: LoadState;
     // (undocumented)
@@ -260,6 +261,7 @@ export function useReactors<Types extends ReactionsTypes = ReactionsTypes>(subje
     users: Readonly<Record<string, IdentityUser>>;
     state: LoadState;
     error: Error | null;
+    stale: boolean;
     hasMore: boolean;
     loadMore: () => Promise<void>;
 };

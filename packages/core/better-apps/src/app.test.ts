@@ -621,6 +621,38 @@ describe("events", () => {
     expect(received).toEqual(["relayed"])
   })
 
+  it("writes events left for later only once their event is delivered, so a retry emits them once", async () => {
+    let failures = 1
+    const relay = defineFeature({
+      id: "relay",
+      events: { relayed: defineEvent<{ from: string }>() },
+      on: { notes: { "note.added": (event, { emit }) => emit("relayed", { from: event.id }, { later: true }) } }
+    })
+    const flaky = defineFeature({
+      id: "flaky",
+      on: {
+        notes: {
+          "note.added": () => {
+            if (failures-- > 0) {
+              throw new Error("Not yet")
+            }
+          }
+        }
+      }
+    })
+    const sink = defineFeature({ id: "sink", on: { relay: { relayed: () => undefined } } })
+    const { app, memory } = setup({ features: [relay, flaky, sink] })
+    const relayed = () => (memory.tables.get(eventModel) ?? []).filter((row) => row.type === "relayed")
+    await app.api.notes.add({ text: "Hi" })
+    // The delivery failed, so the relayed event isn't written yet.
+    expect(relayed()).toHaveLength(0)
+    for (const row of memory.tables.get(eventModel) ?? []) {
+      row.availableAt = new Date(0)
+    }
+    await app.deliverEvents()
+    expect(relayed()).toHaveLength(1)
+  })
+
   it("delivers nothing when no feature subscribes", async () => {
     const { app } = setup()
     expect(await app.deliverEvents()).toEqual({ delivered: 0, failed: 0 })

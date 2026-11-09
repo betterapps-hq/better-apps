@@ -156,7 +156,7 @@ describe("reactions client", () => {
     expect(requests.at(-1)).toBe("listReactions")
     const state = reactions.store.getSnapshot()
     expect(state.subjects[key1]?.reactions).toEqual([])
-    expect(state.reactors[reactionKey("invoice", "inv-1", "👍")]).toBeUndefined()
+    expect(state.reactors[reactionKey("invoice", "inv-1", "👍")]?.stale).toBe(true)
   })
 
   it("stops removing reactions at a reset, without loading anything as the next person", async () => {
@@ -255,7 +255,7 @@ describe("reactions client", () => {
     await api.removeReactions(inv1)
     const loads = requests.filter((name) => name === "listReactions").length
     reactions.applyEvent({ id: "cleared", type: "subject.changed", ...inv1 })
-    expect(reactions.store.getSnapshot().reactors[reactionKey("invoice", "inv-1", "👍")]).toBeUndefined()
+    expect(reactions.store.getSnapshot().reactors[reactionKey("invoice", "inv-1", "👍")]?.stale).toBe(true)
     await reactions.load("invoice", ["inv-1"])
     expect(requests.filter((name) => name === "listReactions").length).toBeGreaterThan(loads)
     expect(reactions.store.getSnapshot().subjects[key1]?.reactions).toEqual([])
@@ -365,7 +365,7 @@ describe("reactions client", () => {
     expect(reactions.store.getSnapshot().users.bob?.name).toBe("Bob Babbage")
   })
 
-  it("drops a record's lists of who reacted after any change to its reactions, so they load fresh", async () => {
+  it("marks a record's lists of who reacted stale after any change to its reactions, so they load fresh", async () => {
     const { api, as, events, identity, reactions } = browser("bob", { maxPerUser: 1 })
     const target = { ...inv1, emoji: "👍" }
     await api.react(target, as("ada"))
@@ -377,10 +377,11 @@ describe("reactions client", () => {
       await reactions.loadReactors(target)
       await reactions.loadReactors({ ...inv1, emoji: "🎉" })
     }
-    // The viewer's own write drops every list on the record, including other emoji's.
+    // The viewer's own write marks every list on the record stale, including other emoji's, and they keep showing.
     await loadBoth()
     await reactions.react(target)
-    expect([lists()[thumbs], lists()[party]]).toEqual([undefined, undefined])
+    expect([lists()[thumbs]?.stale, lists()[party]?.stale]).toEqual([true, true])
+    expect(lists()[thumbs]?.userIds).toEqual(["ada"])
     await loadBoth()
     expect(lists()[thumbs]?.userIds).toEqual(["ada", "bob"])
     // A swap made in another tab shows once the lists load again.
@@ -399,16 +400,16 @@ describe("reactions client", () => {
     }
     await api.unreact(target, as("cy"))
     reactions.applyEvent(event)
-    expect(lists()[thumbs]).toBeUndefined()
+    expect(lists()[thumbs]?.stale).toBe(true)
     await loadBoth()
     expect(lists()[thumbs]?.userIds).toEqual(["ada"])
     // Records that didn't change keep theirs.
     await reactions.loadReactors({ subjectType: "invoice", subjectId: "inv-2", emoji: "👍" })
     reactions.applyEvent({ id: "elsewhere", type: "subject.changed", ...inv1 })
-    expect(lists()[reactionKey("invoice", "inv-2", "👍")]?.state).toBe("ready")
+    expect(lists()[reactionKey("invoice", "inv-2", "👍")]?.stale).toBe(false)
   })
 
-  it("drops a page of who reacted that was on its way during a change", async () => {
+  it("keeps a list stale, without adding a page that was on its way during a change", async () => {
     const { api, as, events, holdAnswer, identity, reactions, requests } = browser("cy", {}, { reactorsPerPage: 1 })
     const target = { ...inv1, emoji: "👍" }
     for (const userId of ["ada", "bob", "cy"] as const) {
@@ -431,7 +432,7 @@ describe("reactions client", () => {
     reactions.applyEvent(event)
     release()
     await more
-    expect(reactions.store.getSnapshot().reactors[key]).toBeUndefined()
+    expect(reactions.store.getSnapshot().reactors[key]).toMatchObject({ userIds: ["ada"], stale: true })
     // Loading again starts from the first page.
     await reactions.loadReactors(target)
     await reactions.loadMoreReactors(target)

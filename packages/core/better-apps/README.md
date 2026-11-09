@@ -174,7 +174,8 @@ await client.notes.add({ text: "Hi" })
 - When delivery has a `waitUntil`, a report `onError` is still making is handed to it too, so it isn't cut off. Pass a
   scheduled job's own `waitUntil` to `app.deliverEvents({ waitUntil })` for the same.
 - `emit(type, data, { later: true })` writes an event the same way but leaves it for the next `app.deliverEvents()` run,
-  so a bulk job can do a step per run and continue in the next instead of in one long request.
+  so a bulk job can do a step per run and continue in the next instead of in one long request. A subscriber's later
+  events are written with its event's removal, so a delivery that fails or is retried emits them once.
 - Events nobody subscribes to aren't written. The outbox table, `betterAppsEvent`, is generated only when a feature
   subscribes to events.
 

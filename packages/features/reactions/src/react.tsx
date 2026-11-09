@@ -127,11 +127,13 @@ export function useReactors<Types extends ReactionsTypes = ReactionsTypes>(
   const loaded = useReactionsState((state) => state.reactors[key])
   const users = useReactionsState((state) => state.users)
   const loadedState = loaded?.state
+  const stale = loaded?.stale === true
+  // A stale list loads again while it shows, one load at a time, so a busy record doesn't send one per change.
   useEffect(() => {
-    if (loadedState === undefined) {
+    if (loadedState === undefined || (stale && loadedState === "ready")) {
       reactions.loadReactors({ subjectType, subjectId, emoji }).catch(() => undefined)
     }
-  }, [reactions, subjectType, subjectId, emoji, loadedState])
+  }, [reactions, subjectType, subjectId, emoji, loadedState, stale])
   const loadMore = useCallback(
     () => reactions.loadMoreReactors({ subjectType, subjectId, emoji }),
     [reactions, subjectType, subjectId, emoji]
@@ -141,6 +143,8 @@ export function useReactors<Types extends ReactionsTypes = ReactionsTypes>(
     users: users as Readonly<Record<string, IdentityUser>>,
     state: loaded?.state ?? "loading",
     error: loaded?.error ?? null,
+    /** Whether the record's reactions changed since the list loaded; it loads again, and shows meanwhile. */
+    stale,
     hasMore: Boolean(loaded?.cursor),
     loadMore
   }
