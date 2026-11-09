@@ -18,4 +18,5 @@ CREATE TABLE `short_link` (
 --> statement-breakpoint
 CREATE UNIQUE INDEX `short_link_code_unique` ON `short_link` (`code`);--> statement-breakpoint
 CREATE INDEX `short_link_by_owner` ON `short_link` (`owner`,`created_at`);--> statement-breakpoint
+CREATE INDEX `short_link_by_org` ON `short_link` (`org_id`,`created_at`);--> statement-breakpoint
 CREATE INDEX `short_link_by_subject` ON `short_link` (`subject_type`,`subject_id`,`created_at`);

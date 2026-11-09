@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "7bdeea01-8450-4564-b974-f4d7f5181ed8",
+  "id": "6f124219-b4ce-418d-b5a3-dea5ff3305ad",
   "prevId": "6adede89-c7ec-496a-bef2-5ef495ea0f5e",
   "tables": {
     "invoice": {
@@ -1153,6 +1153,11 @@
         "short_link_by_owner": {
           "name": "short_link_by_owner",
           "columns": ["owner", "created_at"],
+          "isUnique": false
+        },
+        "short_link_by_org": {
+          "name": "short_link_by_org",
+          "columns": ["org_id", "created_at"],
           "isUnique": false
         },
         "short_link_by_subject": {

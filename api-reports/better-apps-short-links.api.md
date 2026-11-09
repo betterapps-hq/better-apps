@@ -20,8 +20,8 @@ export const codeLimits: {
     readonly minGenerated: 6;
     readonly maxGenerated: 32;
     readonly defaultLength: 8;
-    readonly maxCustom: 64;
-    readonly minGranting: 8;
+    readonly maxCode: 64;
+    readonly granting: 12;
 };
 
 // @public
@@ -39,6 +39,7 @@ export function generateCode(length?: number): string;
 
 // @public
 export interface GrantCookie {
+    domain?: string | undefined;
     maxAge?: number | undefined;
     name?: string | undefined;
 }
@@ -51,8 +52,8 @@ export const limits: {
     readonly minGenerated: 6;
     readonly maxGenerated: 32;
     readonly defaultLength: 8;
-    readonly maxCustom: 64;
-    readonly minGranting: 8;
+    readonly maxCode: 64;
+    readonly granting: 12;
     readonly linksPerPage: 20;
     readonly maxLinksPerPage: 50;
     readonly urlLength: 2048;
@@ -189,14 +190,12 @@ export const shortLinkEvents: {
     "subject.removed": EventDefinition<    {
     subjectType: string;
     subjectId: string;
-    removed: number;
     }>;
     "owner.removed": EventDefinition<    {
     owner: {
     type: OwnerType;
     id: string;
     };
-    removed: number;
     }>;
 };
 
@@ -217,14 +216,12 @@ export function shortLinks<const Options extends ShortLinksOptions>(options?: Op
         "subject.removed": EventDefinition<    {
         subjectType: string;
         subjectId: string;
-        removed: number;
         }>;
         "owner.removed": EventDefinition<    {
         owner: {
         type: OwnerType;
         id: string;
         };
-        removed: number;
         }>;
     };
     readonly usesSubjects: string[];
@@ -340,8 +337,7 @@ export interface UpdateLinkInput {
     // (undocumented)
     enabled?: boolean | undefined;
     expiresAt?: Date | string | null | undefined;
-    // (undocumented)
-    grantsView?: boolean | undefined;
+    grantsView?: false | undefined;
     url?: string | undefined;
 }
 

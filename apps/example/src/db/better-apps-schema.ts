@@ -119,6 +119,7 @@ export const shortLink = sqliteTable(
   },
   (table) => [
     index("short_link_by_owner").on(table.owner, table.createdAt),
+    index("short_link_by_org").on(table.orgId, table.createdAt),
     index("short_link_by_subject").on(table.subjectType, table.subjectId, table.createdAt)
   ]
 )

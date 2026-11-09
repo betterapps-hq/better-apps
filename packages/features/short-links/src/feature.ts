@@ -12,8 +12,8 @@ import {
   type Where
 } from "better-apps"
 import { z } from "zod"
-import { codeLimits, generateCode, isValidCode } from "./codes.js"
-import { grantCodes, grantCookie } from "./cookie.js"
+import { codeLimits, generateCode, isValidCode, normalizeCode } from "./codes.js"
+import { grantCodes, grantCookie, reachesHost, type CookieSettings } from "./cookie.js"
 import { ShortLinksError } from "./errors.js"
 import { shortLinkEvents } from "./events.js"
 import { isOpen, ownerKey, toLink, type ShortLink } from "./link.js"
@@ -54,8 +54,7 @@ interface Config {
   path: string
   baseUrl: string | undefined
   codeLength: number
-  cookieName: string
-  cookieMaxAge: number
+  cookie: CookieSettings
   notFound: NonNullable<ShortLinksOptions["notFound"]>
 }
 
@@ -94,6 +93,15 @@ function resolve(options: ShortLinksOptions): Config {
   if (!Number.isInteger(cookieMaxAge) || cookieMaxAge <= 0) {
     throw new Error("The cookie's `maxAge` must be a whole number of seconds above 0.")
   }
+  const domain = options.cookie?.domain
+  if (domain !== undefined) {
+    if (!/^\.?([a-z\d-]+\.)*[a-z\d-]+$/i.test(domain)) {
+      throw new Error(`The cookie's domain "${domain}" must be a host name, such as example.com.`)
+    }
+    if (baseUrl !== undefined && !reachesHost(baseUrl, baseUrl, domain)) {
+      throw new Error(`\`baseUrl\`'s host must be under the cookie's domain, "${domain}", or browsers drop the cookie.`)
+    }
+  }
   return {
     subjects: options.subjects ?? {},
     validateUrl: options.validateUrl,
@@ -101,8 +109,7 @@ function resolve(options: ShortLinksOptions): Config {
     path,
     baseUrl,
     codeLength,
-    cookieName,
-    cookieMaxAge,
+    cookie: { name: cookieName, maxAge: cookieMaxAge, domain },
     notFound: options.notFound ?? notFoundPage
   }
 }
@@ -142,10 +149,11 @@ async function manages(config: Config, context: Context, row: LinkRow): Promise<
   if (row.owner === ownerKey("user", actor.userId)) {
     return true
   }
-  return actor.orgId !== null && row.owner === ownerKey("org", actor.orgId) && managesOrg(config, actor, actor.orgId)
+  // An organization's managers manage every link made in it, so its links outlive the members who made them.
+  return row.orgId !== "" && managesOrg(config, actor, row.orgId)
 }
 
-const byCode = (code: string): Where[] => [{ field: "code", value: code }]
+const byCode = (code: string): Where[] => [{ field: "code", value: normalizeCode(code) }]
 
 /** A link the caller manages, or the error that says why not. */
 async function requireLink(config: Config, context: Context, code: string): Promise<LinkRow> {
@@ -187,18 +195,30 @@ function checkExpiry(expiresAt: Date | null | undefined): void {
   }
 }
 
-/** Refuses access through a link whose code is short enough to guess, since the code is all it takes. */
-function checkGrantingCode(code: string): void {
-  if (code.length < codeLimits.minGranting) {
-    throw new ShortLinksError(
-      "INVALID_INPUT",
-      `Links that let people see a record need codes of at least ${codeLimits.minGranting} characters.`
-    )
+/** Refuses a link to a record the caller can't see or share. Trusted server code may link to any. */
+async function checkSharer(context: Context, rules: LinkRules, ref: SubjectRef): Promise<void> {
+  if (isTrusted(context)) {
+    return
+  }
+  const { actor } = context
+  if (!actor || !(await context.subjects.canView(actor, ref))) {
+    throw new ShortLinksError("NOT_FOUND", "That record doesn't exist, or you can't see it.")
+  }
+  if (rules.canShare && !(await rules.canShare({ actor, ...ref }))) {
+    throw new ShortLinksError("FORBIDDEN", "You can't make links to this.")
   }
 }
 
-/** Refuses access through a link the record's rules don't allow: a person `grantView` refuses, or another organization. */
-async function checkGrant(context: Context, rules: LinkRules, ref: SubjectRef, orgId: string): Promise<void> {
+/**
+ * Refuses access through a link the record's rules don't allow: a person `grantView` refuses, a link made in another
+ * organization, or one a member owns rather than the record's organization.
+ */
+async function checkGrant(
+  context: Context,
+  rules: LinkRules,
+  ref: SubjectRef,
+  link: Pick<LinkRow, "owner" | "orgId">
+): Promise<void> {
   const { actor } = context
   if (!isTrusted(context)) {
     const allowed =
@@ -209,14 +229,48 @@ async function checkGrant(context: Context, rules: LinkRules, ref: SubjectRef, o
       throw new ShortLinksError("FORBIDDEN", "You can't let people see this through a link.")
     }
   }
-  if (((await context.subjects.getOrgId(ref, actor)) ?? "") !== orgId) {
+  if (((await context.subjects.getOrgId(ref, actor)) ?? "") !== link.orgId) {
     throw new ShortLinksError("INVALID_INPUT", "Only links made in the record's organization can let people see it.")
   }
+  if (link.orgId !== "" && link.owner !== ownerKey("org", link.orgId)) {
+    throw new ShortLinksError("INVALID_INPUT", "Only your organization's links can let people see its records.")
+  }
+}
+
+/**
+ * Refuses a link that would grant access on a host its cookie can't reach, since the grant would fail without a word.
+ * That's a setup mistake, so it's reported as one: set `cookie.domain` to a domain both hosts are under.
+ */
+async function checkReach(
+  config: Config,
+  rules: LinkRules,
+  ref: SubjectRef,
+  orgId: string,
+  prefix: string
+): Promise<void> {
+  if (!URL.canParse(prefix)) {
+    return
+  }
+  const link = `${prefix}/code`
+  const target = new URL(await rules.url({ ...ref, orgId: orgId === "" ? null : orgId }), link).href
+  if (!reachesHost(link, target, config.cookie.domain)) {
+    throw new Error(
+      `Links on ${new URL(link).host} can't let people see records on ${new URL(target).host}, since the cookie that grants access wouldn't reach it. Set short links' cookie.domain to a domain both are under.`
+    )
+  }
+}
+
+/** Whether `next` is later than `current`, where `null` is never. */
+function isLater(next: Date | null, current: Date | null): boolean {
+  if (next === null) {
+    return current !== null
+  }
+  return current !== null && next.getTime() > current.getTime()
 }
 
 const subjectType = z.string().min(1).max(255)
 const subjectId = z.string().min(1).max(255)
-const code = z.string().min(1).max(limits.maxCustom)
+const code = z.string().min(1).max(limits.maxCode)
 const url = z.string().min(1).max(limits.urlLength)
 const owner = z.enum(["user", "org"])
 const date = z.coerce.date()
@@ -240,7 +294,7 @@ const inputs = {
   update: z.object({
     code,
     url: url.optional(),
-    grantsView: z.boolean().optional(),
+    grantsView: z.literal(false).optional(),
     enabled: z.boolean().optional(),
     expiresAt: date.nullable().optional()
   }),
@@ -269,7 +323,18 @@ async function create(config: Config, context: Context): Promise<ShortLink> {
   if (input.code !== undefined && !isValidCode(input.code)) {
     throw new ShortLinksError("INVALID_INPUT", "Codes are 1 to 64 letters, digits, - and _.")
   }
+  const chosen = input.code === undefined ? undefined : normalizeCode(input.code)
+  // The code is all it takes to see the record, so a link that grants access always has a long random part.
+  const chosenLimit = codeLimits.maxCode - codeLimits.granting - 1
+  if (input.grantsView && chosen !== undefined && chosen.length > chosenLimit) {
+    throw new ShortLinksError(
+      "INVALID_INPUT",
+      `Codes of links that let people see a record are up to ${chosenLimit} characters, before the random part.`
+    )
+  }
   checkExpiry(input.expiresAt)
+  const owner = ownerKey(ownerType, ownerType === "org" ? orgId : actor.userId)
+  const prefix = prefixOf(config, context.request)
   let target: Pick<LinkRow, "url" | "subjectType" | "subjectId">
   if ("url" in input.target) {
     if (input.grantsView) {
@@ -279,29 +344,28 @@ async function create(config: Config, context: Context): Promise<ShortLink> {
   } else {
     const ref = { subjectType: input.target.subjectType, subjectId: input.target.subjectId }
     const rules = rulesOf(config, ref.subjectType)
-    if (!(await context.subjects.canView(actor, ref))) {
-      throw new ShortLinksError("NOT_FOUND", "That record doesn't exist, or you can't see it.")
-    }
-    if (rules.canShare && !(await rules.canShare({ actor, ...ref }))) {
-      throw new ShortLinksError("FORBIDDEN", "You can't make links to this.")
-    }
+    await checkSharer(context, rules, ref)
     const recordOrg = (await context.subjects.getOrgId(ref, actor)) ?? ""
     if (ownerType === "org" && recordOrg !== "" && recordOrg !== orgId) {
       throw new ShortLinksError("INVALID_INPUT", "Your organization's links can only point to its own records.")
     }
     if (input.grantsView) {
-      await checkGrant(context, rules, ref, orgId)
-      if (input.code !== undefined) {
-        checkGrantingCode(input.code)
-      }
+      await checkGrant(context, rules, ref, { owner, orgId })
+      await checkReach(config, rules, ref, orgId, prefix)
     }
     target = { url: null, ...ref }
   }
-  const prefix = prefixOf(config, context.request)
-  // Generated codes of links that grant access are long enough to stay secret, whatever `codeLength` says.
-  const length = input.grantsView ? Math.max(config.codeLength, codeLimits.minGranting) : config.codeLength
+  const random = chosen === undefined || input.grantsView === true
+  const codeFor = (): string => {
+    if (!input.grantsView) {
+      return chosen ?? generateCode(config.codeLength)
+    }
+    return chosen === undefined
+      ? generateCode(Math.max(config.codeLength, codeLimits.granting))
+      : `${chosen}-${generateCode(codeLimits.granting)}`
+  }
   const fields: Omit<LinkRow, "id" | "code"> = {
-    owner: ownerKey(ownerType, ownerType === "org" ? orgId : actor.userId),
+    owner,
     orgId,
     createdBy: actor.userId,
     ...target,
@@ -313,10 +377,10 @@ async function create(config: Config, context: Context): Promise<ShortLink> {
     createdAt: context.now,
     updatedAt: context.now
   }
-  // A generated code that's taken is replaced, up to three times. A taken code is told apart from other failed writes
-  // by reading it back.
+  // A code with a random part that's taken is replaced, up to three times. A taken code is told apart from other failed
+  // writes by reading it back.
   for (let attempt = 1; ; attempt += 1) {
-    const row: LinkRow = { id: crypto.randomUUID(), code: input.code ?? generateCode(length), ...fields }
+    const row: LinkRow = { id: crypto.randomUUID(), code: codeFor(), ...fields }
     const link = toLink(row, prefix)
     context.emit("link.created", { link })
     try {
@@ -326,7 +390,7 @@ async function create(config: Config, context: Context): Promise<ShortLink> {
       if (!(await context.db.findOne({ model: linkModel, where: byCode(row.code), select: ["id"] }))) {
         throw error
       }
-      if (input.code !== undefined) {
+      if (!random) {
         throw new ShortLinksError("CONFLICT", "That code is taken. Try another.", { cause: error })
       }
       if (attempt >= 3) {
@@ -375,16 +439,21 @@ async function list(config: Config, context: Context): Promise<LinkPage> {
     if (!actor) {
       throw new ShortLinksError("UNAUTHENTICATED", "Sign in to see your links.")
     }
-    const owners = [
-      ...(input.owner === "org" ? [] : [ownerKey("user", actor.userId)]),
-      ...(input.owner !== "user" && actor.orgId !== null && (await managesOrg(config, actor, actor.orgId))
-        ? [ownerKey("org", actor.orgId)]
-        : [])
-    ]
-    if (owners.length === 0) {
-      return { links: [], cursor: null }
+    const managed = actor.orgId !== null && (await managesOrg(config, actor, actor.orgId)) ? actor.orgId : null
+    const mine: Where = { field: "owner", value: ownerKey("user", actor.userId) }
+    if (input.owner === "user") {
+      where.push(mine)
+    } else if (input.owner === "org") {
+      if (managed === null) {
+        return { links: [], cursor: null }
+      }
+      where.push({ field: "owner", value: ownerKey("org", managed) })
+    } else if (managed === null) {
+      where.push(mine)
+    } else {
+      // A manager sees every link made in the organization, members' own included.
+      where.push({ ...mine, connector: "OR" }, { field: "orgId", value: managed, connector: "OR" })
     }
-    where.push({ field: "owner", operator: "in", value: owners })
   } else if (where.length === 0) {
     throw new ShortLinksError("INVALID_INPUT", "Server code without an actor lists one record's links at a time.")
   }
@@ -419,16 +488,8 @@ async function update(config: Config, context: Context): Promise<ShortLink> {
     }
     changes.url = await checkUrl(config, input.url, context.actor, row.orgId === "" ? null : row.orgId)
   }
-  if (input.grantsView !== undefined && input.grantsView !== row.grantsView) {
-    if (input.grantsView) {
-      if (row.subjectType === null || row.subjectId === null) {
-        throw new ShortLinksError("INVALID_INPUT", "Only links to records can let people see them.")
-      }
-      const ref = { subjectType: row.subjectType, subjectId: row.subjectId }
-      await checkGrant(context, rulesOf(config, ref.subjectType), ref, row.orgId)
-      checkGrantingCode(row.code)
-    }
-    changes.grantsView = input.grantsView
+  if (input.grantsView === false) {
+    changes.grantsView = false
   }
   if (input.enabled !== undefined) {
     changes.enabled = input.enabled
@@ -436,6 +497,18 @@ async function update(config: Config, context: Context): Promise<ShortLink> {
   if (input.expiresAt !== undefined) {
     checkExpiry(input.expiresAt)
     changes.expiresAt = input.expiresAt
+  }
+  // A link that lets people see a record, turned back on or given longer, is checked again as if it were made now, so
+  // someone who has since lost access to the record, or left its organization, can't reopen it.
+  const reopens =
+    (input.enabled === true && !row.enabled) ||
+    (input.expiresAt !== undefined && isLater(input.expiresAt, row.expiresAt))
+  const grants = (changes.grantsView ?? row.grantsView) && (changes.enabled ?? row.enabled)
+  if (grants && reopens && row.subjectType !== null && row.subjectId !== null) {
+    const ref = { subjectType: row.subjectType, subjectId: row.subjectId }
+    const rules = rulesOf(config, ref.subjectType)
+    await checkSharer(context, rules, ref)
+    await checkGrant(context, rules, ref, row)
   }
   const link = toLink({ ...row, ...changes }, prefixOf(config, context.request))
   context.emit("link.updated", { link })
@@ -459,26 +532,29 @@ async function remove(config: Config, context: Context): Promise<{ removed: bool
 }
 
 async function removeSubject(_config: Config, context: Context): Promise<{ removed: number }> {
-  const ref = context.input as LinkSubject
-  const removed = await context.db.deleteMany({
-    model: linkModel,
-    where: [
-      { field: "subjectType", value: ref.subjectType },
-      { field: "subjectId", value: ref.subjectId }
-    ]
-  })
-  context.emit("subject.removed", { ...ref, removed })
-  return { removed }
+  const { subjectType: type, subjectId: id } = context.input as LinkSubject
+  // The event is written in the same batch as the delete, so neither happens without the other.
+  context.emit("subject.removed", { subjectType: type, subjectId: id })
+  const [removed] = await context.db.batch([
+    {
+      type: "deleteMany",
+      model: linkModel,
+      where: [
+        { field: "subjectType", value: type },
+        { field: "subjectId", value: id }
+      ]
+    }
+  ])
+  return { removed: typeof removed === "number" ? removed : 0 }
 }
 
 async function removeOwner(_config: Config, context: Context): Promise<{ removed: number }> {
   const { owner: who } = context.input as { owner: { type: OwnerType; id: string } }
-  const removed = await context.db.deleteMany({
-    model: linkModel,
-    where: [{ field: "owner", value: ownerKey(who.type, who.id) }]
-  })
-  context.emit("owner.removed", { owner: { type: who.type, id: who.id }, removed })
-  return { removed }
+  context.emit("owner.removed", { owner: { type: who.type, id: who.id } })
+  const [removed] = await context.db.batch([
+    { type: "deleteMany", model: linkModel, where: [{ field: "owner", value: ownerKey(who.type, who.id) }] }
+  ])
+  return { removed: typeof removed === "number" ? removed : 0 }
 }
 
 /**
@@ -509,7 +585,7 @@ async function open(config: Config, context: RouteContext): Promise<Response> {
   }
   const headers = new Headers({ location, "cache-control": "private, no-store" })
   if (row.grantsView) {
-    headers.set("set-cookie", grantCookie(request, config.cookieName, config.cookieMaxAge, row.code))
+    headers.set("set-cookie", grantCookie(request, config.cookie, row.code))
   }
   if (request.method === "GET") {
     context.waitUntil(
@@ -525,6 +601,21 @@ async function open(config: Config, context: RouteContext): Promise<Response> {
 }
 
 /**
+ * Whether a link may still grant access: its subject type still lets links do so, and a link to an organization's
+ * record is the organization's. So turning `grantView` off ends the access existing links give at once.
+ */
+function mayGrant(config: Config, row: LinkRow): boolean {
+  const type = row.subjectType ?? ""
+  const rules = Object.hasOwn(config.subjects, type) ? config.subjects[type] : undefined
+  return (
+    rules !== undefined &&
+    rules.grantView !== undefined &&
+    rules.grantView !== false &&
+    (row.orgId === "" || row.owner === ownerKey("org", row.orgId))
+  )
+}
+
+/**
  * Which subjects a request may see through the links in its cookie: one query for the links, cached for the request,
  * then each subject is granted by a link to it that's on, unexpired, and in the record's current organization.
  */
@@ -532,7 +623,7 @@ function grantsFor(config: Config): SubjectGrants {
   const read = new WeakMap<Request, Promise<LinkRow[]>>()
   return {
     async canViewMany(refs: readonly SubjectRef[], { request }: { request: Request }, context: SubjectContext) {
-      const codes = grantCodes(request, config.cookieName)
+      const codes = grantCodes(request, config.cookie.name)
       if (codes.length === 0) {
         return refs.map(() => false)
       }
@@ -545,9 +636,7 @@ function grantsFor(config: Config): SubjectGrants {
         read.set(request, rows)
       }
       const now = new Date()
-      const granting = (await rows).filter(
-        (row) => row.grantsView && isOpen(row, now) && Object.hasOwn(config.subjects, row.subjectType ?? "")
-      )
+      const granting = (await rows).filter((row) => row.grantsView && isOpen(row, now) && mayGrant(config, row))
       const links = refs.map((ref) =>
         granting.filter((row) => row.subjectType === ref.subjectType && row.subjectId === ref.subjectId)
       )

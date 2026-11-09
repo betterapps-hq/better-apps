@@ -19,7 +19,7 @@ export interface LinkRules {
   canShare?: ((args: SubjectArgs) => boolean | Promise<boolean>) | undefined
   /**
    * Whether links to the record may let anyone who has them see it: `true`, a check per actor and record, or `false`,
-   * the default.
+   * the default. Setting it back to `false` ends the access existing links give.
    */
   grantView?: boolean | ((args: SubjectArgs) => boolean | Promise<boolean>) | undefined
 }
@@ -51,6 +51,11 @@ export interface GrantCookie {
   name?: string | undefined
   /** How long it lasts, in seconds. 30 days by default. */
   maxAge?: number | undefined
+  /**
+   * The cookie's `Domain`, such as `example.com`, so links on one host, such as `go.example.com`, grant access on
+   * another under it, such as `app.example.com`. Without it, the cookie stays on the link's host.
+   */
+  domain?: string | undefined
 }
 
 /** How short links are set up in an app. */
@@ -62,7 +67,10 @@ export interface ShortLinksOptions {
    * allowed but `javascript:`, `data:`, `vbscript:` and `file:` ones.
    */
   validateUrl?: ((args: ValidateUrlArgs) => boolean | string | Promise<boolean | string>) | undefined
-  /** Who manages an organization's links. Every member, by default. */
+  /**
+   * Who manages an organization's links: the ones it owns, and the ones its members made in it. Every member, by
+   * default.
+   */
   canManage?: ((args: ManageArgs) => boolean | Promise<boolean>) | undefined
   /** Where links open, `/s` by default, so a link is `/s/{code}`. */
   path?: string | undefined
@@ -94,11 +102,17 @@ export interface LinkSubject<SubjectType extends string = string> {
 /** The input of `create`. */
 export interface CreateLinkInput<SubjectType extends string = string> {
   target: LinkTarget<SubjectType>
-  /** A code of 1 to 64 letters, digits, `-` and `_`. A random one by default. */
+  /**
+   * A code of 1 to 64 letters, digits, `-` and `_`, which isn't case-sensitive. A link that lets people see a record
+   * adds a random part to it, so it can be up to 51. A random code, by default.
+   */
   code?: string | undefined
   /** `org` for the actor's organization, `user` for the actor. The organization's, by default, when the actor is in one. */
   owner?: OwnerType | undefined
-  /** Whether opening the link lets anyone who has it see the record. `false` by default. */
+  /**
+   * Whether opening the link lets anyone who has it see the record. `false` by default. A link to an organization's
+   * record that does is the organization's.
+   */
   grantsView?: boolean | undefined
   /** When it stops opening. Never, by default. */
   expiresAt?: Date | string | undefined
@@ -109,7 +123,8 @@ export interface UpdateLinkInput {
   code: string
   /** A new target, for a URL link. */
   url?: string | undefined
-  grantsView?: boolean | undefined
+  /** `false` stops the link letting people see the record. To let people see one, make a new link. */
+  grantsView?: false | undefined
   enabled?: boolean | undefined
   /** `null` to never expire. */
   expiresAt?: Date | string | null | undefined
@@ -120,7 +135,10 @@ export interface ListLinksInput<SubjectType extends string = string> {
   /** With `subjectId`, lists one record's links. */
   subjectType?: SubjectType | undefined
   subjectId?: string | undefined
-  /** Only the caller's own links, `user`, or their organization's, `org`. Both, by default. */
+  /**
+   * Only the caller's own links, `user`, or their organization's, `org`. By default, the caller's own, and every link
+   * made in their organization when they manage its links.
+   */
   owner?: OwnerType | undefined
   cursor?: string | undefined
   /** 20 by default, at most 50. */

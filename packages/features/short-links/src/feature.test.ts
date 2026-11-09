@@ -1,19 +1,19 @@
 import { describe, expect, it } from "vite-plus/test"
-import { cookieOf, expectCode, invoices, setup } from "../test/app.js"
-import { generateCode, isValidCode, linkModel, shortLinks } from "./index.js"
+import { cookieOf, expectCode, invoices, options, setup } from "../test/app.js"
+import { generateCode, isValidCode, linkModel, shortLinks, type LinkRules } from "./index.js"
 
 const inv1 = { subjectType: "invoice", subjectId: "inv-1" } as const
 const docs = { url: "https://docs.test/start" }
 const tomorrow = () => new Date(Date.now() + 24 * 60 * 60_000)
 
 describe("codes", () => {
-  it("are random letters and digits of the asked length", () => {
+  it("are random lowercase letters and digits of the asked length", () => {
     const codes = Array.from({ length: 200 }, () => generateCode())
-    expect(codes.every((code) => /^[A-Za-z0-9]{8}$/.test(code))).toBe(true)
+    expect(codes.every((code) => /^[a-z0-9]{8}$/.test(code))).toBe(true)
     expect(new Set(codes).size).toBe(200)
     expect(generateCode(32)).toHaveLength(32)
     // Every character turns up, so none is left out of the alphabet.
-    expect(new Set(Array.from({ length: 100 }, () => generateCode(32)).join("")).size).toBe(62)
+    expect(new Set(Array.from({ length: 100 }, () => generateCode(32)).join("")).size).toBe(36)
   })
 
   it("allow custom codes of letters, digits, - and _", () => {
@@ -32,6 +32,11 @@ describe("short links options", () => {
     expect(() => shortLinks({ baseUrl: "ftp://go.example.com" })).toThrow("`baseUrl`")
     expect(() => shortLinks({ cookie: { name: "a b" } })).toThrow("cookie name")
     expect(() => shortLinks({ cookie: { maxAge: 0 } })).toThrow("`maxAge`")
+    expect(() => shortLinks({ cookie: { domain: "example.test/" } })).toThrow("cookie's domain")
+    expect(() => shortLinks({ baseUrl: "https://go.other.test", cookie: { domain: "example.test" } })).toThrow(
+      "under the cookie's domain"
+    )
+    expect(() => shortLinks({ baseUrl: "https://go.example.test", cookie: { domain: ".example.test" } })).not.toThrow()
   })
 })
 
@@ -51,7 +56,7 @@ describe("create", () => {
       lastClickedAt: null,
       shortUrl: `/s/${link.code}`
     })
-    expect(link.code).toMatch(/^[A-Za-z0-9]{8}$/)
+    expect(link.code).toMatch(/^[a-z0-9]{8}$/)
     expect(events("link.created")[0]?.data).toMatchObject({ link: { code: link.code } })
 
     const response = await post("create", { target: docs, owner: "user" }, "bob")
@@ -134,8 +139,9 @@ describe("create", () => {
     expect((await api.create({ target: docs, code: "spring-sale" }, as("ada"))).code).toBe("spring-sale")
     await expectCode(api.create({ target: docs, code: "spring-sale" }, as("bob")), "CONFLICT")
     await expectCode(api.create({ target: docs, code: "Spring sale" }, as("ada")), "INVALID_INPUT")
-    // Codes are case-sensitive.
-    expect((await api.create({ target: docs, code: "Spring-Sale" }, as("ada"))).code).toBe("Spring-Sale")
+    // Codes aren't case-sensitive: they're stored in lowercase, so every database compares them alike.
+    await expectCode(api.create({ target: docs, code: "Spring-Sale" }, as("bob")), "CONFLICT")
+    expect((await api.create({ target: docs, code: "Q4-Report" }, as("ada"))).code).toBe("q4-report")
   })
 
   it("refuses an expiry that has passed", async () => {
@@ -145,26 +151,32 @@ describe("create", () => {
     expect((await api.create({ target: docs, expiresAt: later.toISOString() }, as("ada"))).expiresAt).toEqual(later)
   })
 
-  it("lets links grant access only to records, where the rules allow it, with codes too long to guess", async () => {
+  it("lets links grant access only to records, where the rules allow it, owned by the record's organization", async () => {
     const { api, as } = setup()
     const link = await api.create({ target: inv1, grantsView: true }, as("bob"))
-    expect(link.grantsView).toBe(true)
+    expect([link.grantsView, link.owner]).toEqual([true, { type: "org", id: "acme" }])
     await expectCode(api.create({ target: docs, grantsView: true }, as("ada")), "INVALID_INPUT")
     await expectCode(api.create({ target: inv1, grantsView: true, owner: "user" }, as("cy")), "FORBIDDEN")
-    await expectCode(api.create({ target: inv1, grantsView: true, code: "short" }, as("ada")), "INVALID_INPUT")
-    expect((await api.create({ target: inv1, grantsView: true, code: "long-enough" }, as("ada"))).code).toBe(
-      "long-enough"
-    )
+    // A member's own link can't open the organization's record to anyone, so it can't outlive their membership.
+    await expectCode(api.create({ target: inv1, grantsView: true, owner: "user" }, as("bob")), "INVALID_INPUT")
     await expectCode(
       api.create({ target: { subjectType: "page", subjectId: "intro" }, grantsView: true }, as("ada")),
       "FORBIDDEN"
     )
   })
 
-  it("makes generated codes of links that grant access at least 8 characters", async () => {
+  it("gives the codes of links that grant access a random part too long to guess", async () => {
     const { api, as } = setup({ codeLength: 6 })
     expect((await api.create({ target: docs }, as("ada"))).code).toHaveLength(6)
-    expect((await api.create({ target: inv1, grantsView: true }, as("ada"))).code).toHaveLength(8)
+    expect((await api.create({ target: inv1, grantsView: true }, as("ada"))).code).toMatch(/^[a-z0-9]{12}$/)
+    // A chosen code keeps its words, and the random part follows them.
+    const chosen = await api.create({ target: inv1, grantsView: true, code: "Invoice-1042" }, as("ada"))
+    expect(chosen.code).toMatch(/^invoice-1042-[a-z0-9]{12}$/)
+    const longest = await api.create({ target: inv1, grantsView: true, code: "x".repeat(51) }, as("ada"))
+    expect(longest.code).toHaveLength(64)
+    await expectCode(api.create({ target: inv1, grantsView: true, code: "x".repeat(52) }, as("ada")), "INVALID_INPUT")
+    const long = setup({ codeLength: 16 })
+    expect((await long.api.create({ target: inv1, grantsView: true }, long.as("ada"))).code).toHaveLength(16)
   })
 })
 
@@ -183,8 +195,12 @@ describe("opening a link", () => {
     const again = open(link.code)
     await again.response
     await Promise.all(again.kept)
-    const clicked = await api.get({ code: link.code }, as("ada"))
-    expect(clicked.clicks).toBe(2)
+    // Codes aren't case-sensitive.
+    const upper = open(link.code.toUpperCase())
+    expect((await upper.response).status).toBe(302)
+    await Promise.all(upper.kept)
+    const clicked = await api.get({ code: link.code.toUpperCase() }, as("ada"))
+    expect(clicked.clicks).toBe(3)
     expect(clicked.lastClickedAt).toBeInstanceOf(Date)
   })
 
@@ -324,10 +340,73 @@ describe("access through a link", () => {
     const feature = shortLinks({ subjects: { page: { url: () => "/" } } })
     expect(feature.grants).toBeUndefined()
   })
+
+  it("ends at once for a subject type whose grantView is turned off, while others still grant", async () => {
+    const invoice: LinkRules = { ...options.subjects.invoice }
+    const { app, api, as, open } = setup({
+      subjects: { invoice, page: { ...options.subjects.page, grantView: true } }
+    })
+    const link = await api.create({ target: inv1, grantsView: true }, as("ada"))
+    const cookie = cookieOf(await open(link.code).response)
+    expect(await app.subjects.canView(null, inv1, { request: request(cookie) })).toBe(true)
+    invoice.grantView = false
+    expect(await app.subjects.canView(null, inv1, { request: request(cookie) })).toBe(false)
+  })
+
+  it("checks a link that grants access again when it's turned back on or given longer", async () => {
+    const { app, api, as, post } = setup()
+    const inv2 = { ...inv1, subjectId: "inv-2" }
+    const soon = tomorrow()
+    const link = await api.create({ target: inv2, grantsView: true, expiresAt: soon }, as("ada"))
+    invoices.set("inv-2", { orgId: "acme", locked: true })
+    try {
+      // The record can't be shared any more, so the link's expiry can't be pushed back, nor the link turned back on.
+      const later = new Date(soon.getTime() + 60_000)
+      await expectCode(api.update({ code: link.code, expiresAt: later }, as("ada")), "FORBIDDEN")
+      await expectCode(api.update({ code: link.code, expiresAt: null }, as("ada")), "FORBIDDEN")
+      const sooner = new Date(soon.getTime() - 60_000)
+      expect((await api.update({ code: link.code, expiresAt: sooner }, as("ada"))).expiresAt).toEqual(sooner)
+      await api.update({ code: link.code, enabled: false }, as("ada"))
+      await expectCode(api.update({ code: link.code, enabled: true }, as("ada")), "FORBIDDEN")
+      // Giving up its access is never refused.
+      expect((await api.update({ code: link.code, grantsView: false }, as("ada"))).grantsView).toBe(false)
+      expect((await api.update({ code: link.code, enabled: true }, as("ada"))).enabled).toBe(true)
+    } finally {
+      invoices.set("inv-2", { orgId: "acme" })
+    }
+    // Trusted server code may turn a link back on.
+    const other = await api.create({ target: inv1, grantsView: true }, as("ada"))
+    await api.update({ code: other.code, enabled: false }, as("ada"))
+    expect((await api.update({ code: other.code, enabled: true })).enabled).toBe(true)
+    expect(await app.subjects.canView(null, inv1, { request: request(`better-apps-links=${other.code}`) })).toBe(true)
+    // Access can't be turned on for an existing link: a link that grants it is made that way.
+    expect((await post("update", { code: link.code, grantsView: true }, "ada")).status).toBe(400)
+  })
+
+  it("sets the cookie for the configured domain, and refuses links whose record is on a host the cookie misses", async () => {
+    const elsewhere: LinkRules = {
+      ...options.subjects.invoice,
+      url: ({ subjectId }) => `https://app.example.test/invoices/${subjectId}`
+    }
+    const split = setup({ subjects: { invoice: elsewhere }, baseUrl: "https://go.example.test" })
+    await expect(split.api.create({ target: inv1, grantsView: true }, split.as("ada"))).rejects.toThrow("cookie.domain")
+    // A link that doesn't grant access has no cookie to deliver.
+    expect((await split.api.create({ target: inv1 }, split.as("ada"))).grantsView).toBe(false)
+
+    const shared = setup({
+      subjects: { invoice: elsewhere },
+      baseUrl: "https://go.example.test",
+      cookie: { domain: "example.test" }
+    })
+    const link = await shared.api.create({ target: inv1, grantsView: true }, shared.as("ada"))
+    const answer = await shared.app.handler(new Request(`https://go.example.test/s/${link.code}`))
+    expect(answer.headers.get("location")).toBe("https://app.example.test/invoices/inv-1")
+    expect(answer.headers.get("set-cookie")).toContain("; Domain=example.test;")
+  })
 })
 
 describe("managing links", () => {
-  it("lists the caller's own links and their organization's, newest first, a page at a time", async () => {
+  it("lists the caller's own links, and every link made in an organization they manage, newest first", async () => {
     const { api, as } = setup()
     const at = (minute: number) => new Date(Date.UTC(2026, 10, 9, 9, minute))
     const mine = await api.create({ target: docs, owner: "user" }, { ...as("cy"), createdAt: at(1) })
@@ -335,19 +414,17 @@ describe("managing links", () => {
     for (let minute = 2; minute < 7; minute += 1) {
       orgs.push(await api.create({ target: inv1 }, { ...as("bob"), createdAt: at(minute) }))
     }
-    await api.create({ target: docs, owner: "user" }, { ...as("bob"), createdAt: at(7) })
+    const bobs = await api.create({ target: docs, owner: "user" }, { ...as("bob"), createdAt: at(7) })
     await api.create({ target: docs }, { ...as("gus"), createdAt: at(8) })
 
+    // Ada manages Acme's links, so sees members' own links made there too.
+    const all = [bobs, ...[...orgs].reverse(), mine].map((link) => link.code)
     const first = await api.list({ limit: 4 }, as("ada"))
-    expect(first.links.map((link) => link.code)).toEqual(
-      orgs
-        .map((link) => link.code)
-        .reverse()
-        .slice(0, 4)
-    )
+    expect(first.links.map((link) => link.code)).toEqual(all.slice(0, 4))
     const second = await api.list({ limit: 4, cursor: first.cursor ?? "" }, as("ada"))
-    expect(second.links.map((link) => link.code)).toEqual([orgs[0]?.code])
+    expect(second.links.map((link) => link.code)).toEqual(all.slice(4))
     expect(second.cursor).toBeNull()
+    expect((await api.list({ owner: "org" }, as("ada"))).links).toHaveLength(5)
 
     // Cy manages none of the organization's links, so sees only their own.
     expect((await api.list({}, as("cy"))).links.map((link) => link.code)).toEqual([mine.code])
@@ -368,27 +445,34 @@ describe("managing links", () => {
   })
 
   it("lets only a link's managers read, change and remove it", async () => {
-    const { api, as, post } = setup()
+    const { api, as, post, identity } = setup()
     const org = await api.create({ target: docs }, as("ada"))
     const own = await api.create({ target: docs, owner: "user" }, as("cy"))
+    const solos = await api.create({ target: docs }, as("solo"))
     expect((await api.get({ code: org.code }, as("bob"))).code).toBe(org.code)
     await expectCode(api.get({ code: org.code }, as("cy")), "NOT_FOUND")
     await expectCode(api.get({ code: org.code }, as("gus")), "NOT_FOUND")
-    await expectCode(api.get({ code: own.code }, as("ada")), "NOT_FOUND")
     expect((await api.get({ code: own.code }, as("cy"))).code).toBe(own.code)
     expect((await api.get({ code: own.code })).code).toBe(own.code)
     await expectCode(api.update({ code: org.code, enabled: false }, as("gus")), "NOT_FOUND")
-    await expectCode(api.remove({ code: own.code }, as("bob")), "NOT_FOUND")
+    await expectCode(api.get({ code: solos.code }, as("ada")), "NOT_FOUND")
     expect((await post("get", { code: org.code })).status).toBe(401)
+
+    // The organization's managers manage links its members made in it, such as after a member leaves.
+    expect((await api.update({ code: own.code, enabled: false }, as("ada"))).enabled).toBe(false)
+    await expectCode(api.remove({ code: own.code }, as("gus")), "NOT_FOUND")
+    // Someone who left the organization no longer manages its links.
+    const departed = { actor: { ...identity.actor("ada"), orgId: "globex" } }
+    await expectCode(api.update({ code: org.code, enabled: false }, departed), "NOT_FOUND")
+    expect(await api.remove({ code: own.code }, as("bob"))).toEqual({ removed: true })
   })
 
-  it("changes a link's URL, access, state and expiry, checking each like create", async () => {
+  it("changes a link's URL, state and expiry, and turns access off, checking each like create", async () => {
     const { api, as, events } = setup({ validateUrl: ({ url }) => url.hostname === "docs.test" })
     const link = await api.create({ target: docs }, as("ada"))
     const moved = await api.update({ code: link.code, url: "https://docs.test/next" }, as("bob"))
     expect(moved.target).toEqual({ type: "url", url: "https://docs.test/next" })
     await expectCode(api.update({ code: link.code, url: "https://evil.test/" }, as("ada")), "INVALID_INPUT")
-    await expectCode(api.update({ code: link.code, grantsView: true }, as("ada")), "INVALID_INPUT")
     const later = tomorrow()
     expect((await api.update({ code: link.code, expiresAt: later }, as("ada"))).expiresAt).toEqual(later)
     expect((await api.update({ code: link.code, expiresAt: null }, as("ada"))).expiresAt).toBeNull()
@@ -396,16 +480,9 @@ describe("managing links", () => {
     expect((await api.update({ code: link.code, enabled: false }, as("ada"))).enabled).toBe(false)
     expect(events("link.updated")).toHaveLength(4)
 
-    const record = await api.create({ target: inv1 }, as("ada"))
+    const record = await api.create({ target: inv1, grantsView: true }, as("ada"))
     await expectCode(api.update({ code: record.code, url: "https://docs.test/" }, as("ada")), "INVALID_INPUT")
-    expect((await api.update({ code: record.code, grantsView: true }, as("ada"))).grantsView).toBe(true)
     expect((await api.update({ code: record.code, grantsView: false }, as("ada"))).grantsView).toBe(false)
-    const short = await api.create({ target: inv1, code: "tiny" }, as("ada"))
-    await expectCode(api.update({ code: short.code, grantsView: true }, as("ada")), "INVALID_INPUT")
-    const cys = await api.create({ target: inv1, owner: "user" }, as("cy"))
-    await expectCode(api.update({ code: cys.code, grantsView: true }, as("cy")), "FORBIDDEN")
-    // Trusted server code isn't held to grantView.
-    expect((await api.update({ code: cys.code, grantsView: true })).grantsView).toBe(true)
   })
 
   it("removes a link once, and its code is free again", async () => {
@@ -427,12 +504,12 @@ describe("cleanup", () => {
     await api.create({ target: docs }, as("gus"))
     expect((await post("removeSubject", inv1, "ada")).status).toBe(404)
     expect(await api.removeSubject(inv1)).toEqual({ removed: 2 })
-    expect(events("subject.removed")[0]?.data).toEqual({ ...inv1, removed: 2 })
+    expect(events("subject.removed")[0]?.data).toEqual(inv1)
     expect(await api.removeOwner({ owner: { type: "user", id: "cy" } })).toEqual({ removed: 1 })
     expect(await api.removeOwner({ owner: { type: "org", id: "globex" } })).toEqual({ removed: 1 })
     expect(events("owner.removed").map((event) => event.data)).toEqual([
-      { owner: { type: "user", id: "cy" }, removed: 1 },
-      { owner: { type: "org", id: "globex" }, removed: 1 }
+      { owner: { type: "user", id: "cy" } },
+      { owner: { type: "org", id: "globex" } }
     ])
     expect(database.sqlite.prepare(`SELECT COUNT(*) AS count FROM shortLink`).get()).toEqual({ count: 0 })
     expect(linkModel).toBe("shortLink")

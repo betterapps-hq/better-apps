@@ -158,8 +158,7 @@ export interface UpdateLinkInput {
     // (undocumented)
     enabled?: boolean | undefined;
     expiresAt?: Date | string | null | undefined;
-    // (undocumented)
-    grantsView?: boolean | undefined;
+    grantsView?: false | undefined;
     url?: string | undefined;
 }
 

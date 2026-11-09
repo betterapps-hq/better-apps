@@ -1,6 +1,7 @@
-const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-// The largest multiple of 62 a byte holds. Bytes at or above it are drawn again, so every character is equally likely.
-const unbiased = 248
+// Lowercase letters and digits, so codes compare alike on every database, whatever its collation.
+const alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
+// The largest multiple of 36 a byte holds. Bytes at or above it are drawn again, so every character is equally likely.
+const unbiased = 252
 
 /** Code lengths and limits. */
 export const codeLimits = {
@@ -8,28 +9,36 @@ export const codeLimits = {
   minGenerated: 6,
   maxGenerated: 32,
   defaultLength: 8,
-  /** The longest custom code. */
-  maxCustom: 64,
-  /** The shortest code a link that grants access may have, since the code is all it takes to see the record. */
-  minGranting: 8
+  /** The longest code. */
+  maxCode: 64,
+  /**
+   * The length of the random part of a code that grants access, since the code is all it takes to see the record:
+   * the whole of a generated code, or what follows a chosen one.
+   */
+  granting: 12
 } as const
 
-/** A random code of letters and digits, from `crypto.getRandomValues`, without bias. */
+/** A random code of lowercase letters and digits, from `crypto.getRandomValues`, without bias. */
 export function generateCode(length: number = codeLimits.defaultLength): string {
   let code = ""
   while (code.length < length) {
     for (const byte of crypto.getRandomValues(new Uint8Array(length * 2))) {
       if (byte < unbiased && code.length < length) {
-        code += alphabet[byte % 62]
+        code += alphabet[byte % alphabet.length]
       }
     }
   }
   return code
 }
 
-const customCode = new RegExp(`^[A-Za-z0-9_-]{1,${codeLimits.maxCustom}}$`)
+const validCode = new RegExp(`^[A-Za-z0-9_-]{1,${codeLimits.maxCode}}$`)
 
-/** Whether a code an app chose can be a link's: 1 to 64 letters, digits, `-` and `_`. */
+/** Whether a code can be a link's: 1 to 64 letters, digits, `-` and `_`. */
 export function isValidCode(code: string): boolean {
-  return customCode.test(code)
+  return validCode.test(code)
+}
+
+/** A code as links store it. Codes aren't case-sensitive, so `Sale` and `sale` are the same link. */
+export function normalizeCode(code: string): string {
+  return code.toLowerCase()
 }

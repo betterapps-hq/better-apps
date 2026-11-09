@@ -40,15 +40,19 @@ with a catch-all route at `/s` in TanStack Start.
 - `subjects` lists the subject types links can point to. The app or a feature must declare each one. `url` says where a
   record lives: a path, resolved against the link's address, or an absolute URL. It runs each time a link opens.
   `canShare` says who can make links to a record: everyone who can see it, by default. `grantView` says whether links
-  may let anyone who has them see the record: `true`, a check per actor and record, or `false`, the default.
+  may let anyone who has them see the record: `true`, a check per actor and record, or `false`, the default. Setting it
+  back to `false` ends the access existing links give.
 - `validateUrl({ url, actor, orgId })` checks URL targets, returning `true`, or `false` or a message to refuse one.
   Without it, any URL is allowed, but not `javascript:`, `data:`, `vbscript:` and `file:` ones.
-- `canManage({ actor, orgId })` says who manages an organization's links: every member, by default.
+- `canManage({ actor, orgId })` says who manages an organization's links, the ones it owns and the ones its members made
+  in it: every member, by default.
 - `path` is where links open, `/s` by default. `baseUrl`, such as `https://go.example.com`, is the origin of the short
   URLs actions return: the request's, by default.
 - `codeLength` sets the length of generated codes, from 6 to 32: 8 by default.
 - `cookie` names the cookie that holds access grants, `better-apps-links` by default, and sets its `maxAge` in seconds,
-  30 days by default.
+  30 days by default. Its `domain`, such as `example.com`, lets links on one host, such as `go.example.com`, grant
+  access on another, such as `app.example.com`. Without it, the cookie stays on the link's host, and making a link that
+  grants access to a record on another host fails, since the grant couldn't reach it.
 - `notFound({ request, code })` answers links that don't exist, are turned off or have expired. A plain 404 page, by
   default. It isn't told which, so visitors can't tell which codes were links once.
 
@@ -59,17 +63,22 @@ with a catch-all route at `/s` in TanStack Start.
 - Making a link needs someone signed in; server code passes an `actor`. A link to a record needs someone who can see it
   and whom `canShare` allows. An organization's link needs a member `canManage` allows, and a record of that
   organization or of none.
-- Only a link's managers read, change and remove it: its owner, or the organization's members `canManage` allows. Others
-  get `NOT_FOUND`. Server code that passes neither an actor nor a request can manage any link.
+- Only a link's managers read, change and remove it: its owner, or, for a link made in an organization, the members
+  `canManage` allows. That covers links members made for themselves there, so the organization can turn them off after
+  the member leaves. Others get `NOT_FOUND`. Server code that passes neither an actor nor a request can manage any link.
 - Opening a link needs nothing. Whether the visitor can then see the record is up to the app, unless the link grants
   access.
 
 ## Codes
 
-Generated codes are letters and digits from `crypto.getRandomValues`, without bias. `create` also takes a custom `code`,
-such as one the app generates: 1 to 64 letters, digits, `-` and `_`. Codes are case-sensitive and unique across the app.
-A custom code that's taken returns `CONFLICT`; a generated one that collides is replaced, up to three times. Links that
-grant access need codes of at least 8 characters; their generated codes always are, whatever `codeLength` says.
+Generated codes are lowercase letters and digits from `crypto.getRandomValues`, without bias. `create` also takes a
+custom `code`, such as one the app generates: 1 to 64 letters, digits, `-` and `_`. Codes are unique across the app and
+aren't case-sensitive: they're stored in lowercase, so every database compares them alike, and `/s/Sale` opens `sale`. A
+custom code that's taken returns `CONFLICT`; a generated one that collides is replaced, up to three times.
+
+The code of a link that grants access is all it takes to see the record, so it always has 12 random characters: a
+generated code is at least that long, whatever `codeLength` says, and a custom one, up to 51 characters, gets them after
+a `-`, as in `invoice-1042-k3j9x0a1bz7q`.
 
 ## Access through a link
 
@@ -83,8 +92,12 @@ const allowed = await app.subjects.canView(actor, { subjectType: "invoice", subj
 
 The grant is for seeing the record only, for signed-in people and signed-out visitors alike. Writes keep the app's and
 each feature's own rules. A link that's turned off, has expired or was removed grants nothing from the next request on,
-and nor does one whose record moved to another organization. Only the app's own read checks that pass the request count
-the grant: comments and reactions don't pass it yet.
+and nor does one whose record moved to another organization, or whose subject type's `grantView` is now `false`. Only
+the app's own read checks that pass the request count the grant: comments and reactions don't pass it yet.
+
+A link to an organization's record that grants access must be the organization's, so it doesn't depend on one member.
+Access can't be turned on for an existing link, only off: a link that grants it is made that way. Turning such a link
+back on, or giving it a later expiry, checks again that the caller can see and share the record.
 
 ## Actions
 
@@ -95,7 +108,8 @@ the grant: comments and reactions don't pass it yet.
   first: 20 by default, up to 50. Pass `subjectType` and `subjectId` for one record's, and `owner` for only the caller's
   own, `user`, or their organization's, `org`.
 - `update({ code, url?, grantsView?, enabled?, expiresAt? })` changes a link and returns it. `url` is for URL links,
-  `enabled: false` turns a link off, and `expiresAt: null` clears its expiry. Each change is checked like `create`.
+  `grantsView: false` ends the access a link gives, `enabled: false` turns a link off, and `expiresAt: null` clears its
+  expiry. Each change is checked like `create`.
 - `remove({ code })` removes a link and returns `{ removed }`. Its code is free again.
 - Each link comes back with its `code`, `shortUrl`, `owner` as `{ type, id }`, `orgId`, `createdBy`, `target`,
   `grantsView`, `enabled`, `expiresAt`, `clicks`, `lastClickedAt`, `createdAt` and `updatedAt`.
@@ -113,13 +127,13 @@ waits. `HEAD` requests don't count. Every `GET` does, including link previews ch
 
 Call `app.api.shortLinks.removeSubject({ subjectType, subjectId })` when a record is deleted, and
 `removeOwner({ owner: { type, id } })` when a person or an organization leaves. Both are server only, remove every
-matching link in one statement, and return `{ removed }`. Until then, a link to a deleted record still redirects, and
-the app's page answers for the missing record.
+matching link in one statement, written in one batch with their event, and return `{ removed }`. Until then, a link to a
+deleted record still redirects, and the app's page answers for the missing record.
 
 ## Events
 
-`link.created`, `link.updated` and `link.removed` carry the link. `subject.removed` and `owner.removed` carry what was
-removed and how many links went. Opening a link emits nothing.
+`link.created`, `link.updated` and `link.removed` carry the link. `subject.removed` carries the record and
+`owner.removed` the owner whose links went. Opening a link emits nothing.
 
 ## In the browser
 
@@ -151,6 +165,6 @@ const { links, state, cursor, loadMore, client } = useLinks({ subjectType: "invo
 
 ## Tables
 
-`shortLink` holds the links, with a unique index on `code`, an index on the owner and creation time for lists, and one
-on the record and creation time for a record's links and their cleanup. Run `better-apps generate` from
-[`@better-apps/cli`](../../tooling/cli/README.md) to add it to your schema.
+`shortLink` holds the links, with a unique index on `code`, indexes on the owner and on the organization, each with the
+creation time, for lists, and one on the record and creation time for a record's links and their cleanup. Run
+`better-apps generate` from [`@better-apps/cli`](../../tooling/cli/README.md) to add it to your schema.

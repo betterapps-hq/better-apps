@@ -13,7 +13,7 @@ One table, `shortLink`:
 
 | Field           | Type           | Holds                                                                                                  |
 | --------------- | -------------- | ------------------------------------------------------------------------------------------------------ |
-| `code`          | string, unique | The code in the short URL. Codes are case-sensitive.                                                   |
+| `code`          | string, unique | The code in the short URL, in lowercase, since codes aren't case-sensitive.                            |
 | `owner`         | string         | `user:{userId}` or `org:{orgId}`, so a list of a person's and their organization's links is one query. |
 | `orgId`         | string         | The organization the link was made in, or `""` outside any.                                            |
 | `createdBy`     | string         | The user who made it.                                                                                  |
@@ -32,6 +32,7 @@ Indexes:
 
 - The unique index on `code` serves opening a link, which is one read.
 - `(owner, createdAt)` serves lists of a person's or an organization's links, newest first.
+- `(orgId, createdAt)` serves a manager's list of every link made in their organization.
 - `(subjectType, subjectId, createdAt)` serves a record's links and removing them when the record goes.
 
 A link targets either a URL or a record, never both.
@@ -52,7 +53,7 @@ shortLinks({
   path: "/s",
   baseUrl: "https://go.example.com",
   codeLength: 8,
-  cookie: { name: "better-apps-links", maxAge: 30 * 24 * 60 * 60 },
+  cookie: { name: "better-apps-links", maxAge: 30 * 24 * 60 * 60, domain: "example.com" },
   notFound: ({ request }) => Response.redirect(new URL("/link-not-found", request.url), 302)
 })
 ```
@@ -63,18 +64,21 @@ shortLinks({
     change.
   - `canShare(args)` says who can make links to a record. Everyone who can see it, by default.
   - `grantView` says whether links to this subject type may let anyone who has them see the record: `true`, a check per
-    actor and record, or `false`, the default.
+    actor and record, or `false`, the default. Setting it back to `false` ends the access existing links give.
 - `validateUrl({ url, actor, orgId })` checks URL targets, with `actor` `null` for trusted server code. It returns
   `true` to allow one, or `false` or a message to refuse it. Without it, any URL is allowed, as described in
   [URL targets](#url-targets).
-- `canManage({ actor, orgId })` says who manages an organization's links. Every member, by default.
+- `canManage({ actor, orgId })` says who manages an organization's links: the ones it owns, and the ones its members
+  made in it. Every member, by default.
 - `path` is where links open, `/s` by default. It can't be directly under the app's `basePath`, where a link's URL would
   look like an action's.
 - `baseUrl` is the origin of the short URLs the actions return, such as a shorter domain that serves the same app. The
   request's origin, by default.
 - `codeLength` is the length of generated codes, from 6 to 32: 8 by default.
 - `cookie` names the cookie that holds access grants, `better-apps-links` by default, and how long it lasts, in seconds:
-  30 days by default.
+  30 days by default. Its `domain` lets links on one host grant access on another under it, such as links on
+  `go.example.com` for records on `app.example.com`. Without it, the cookie stays on the link's host. `baseUrl`'s host
+  must be under the domain, or browsers drop the cookie.
 - `notFound({ request, code })` answers a link that doesn't exist, is turned off or has expired. By default it's a plain
   404 page. It doesn't say which of those it was, so codes can't be probed for links that once existed.
 
@@ -82,8 +86,11 @@ shortLinks({
 
 - A link is owned by a user or an organization. `create` takes `owner: "user" | "org"`. Without one, a link made inside
   an organization belongs to it, and one made outside any belongs to its creator.
-- An organization's link stays when the person who made it leaves. A user's link is theirs alone.
+- An organization's link stays when the person who made it leaves. A link a member made for themselves inside an
+  organization is theirs, and the organization's managers manage it too, so they can turn it off after the member
+  leaves.
 - An organization's link to a record must target a record of that organization, or a record outside any.
+- A link that grants access to an organization's record must be the organization's.
 
 ## Permissions
 
@@ -92,7 +99,7 @@ shortLinks({
   - An organization's link needs a member of it whom `canManage` allows.
   - A URL link needs a URL that passes `validateUrl`.
 - **Reading and managing a link**, through `get`, `list`, `update` and `remove`, is for whoever manages it: its owner,
-  for a user's link, or the members `canManage` allows, for an organization's. A link someone can't manage answers
+  or, for a link made in an organization, the members `canManage` allows. A link someone can't manage answers
   `NOT_FOUND`, as if it didn't exist.
 - **Server code** that passes neither an actor nor a request is trusted: it can read, change and remove any link, and
   list a record's links. It can't make links.
@@ -101,15 +108,19 @@ shortLinks({
 
 ## Codes
 
-- Generated codes are `codeLength` characters from the 62 letters and digits, picked with `crypto.getRandomValues`
-  without bias. Eight characters give about 2 × 10¹⁴ codes.
+- Generated codes are `codeLength` characters from the 36 lowercase letters and digits, picked with
+  `crypto.getRandomValues` without bias. Eight characters give about 2.8 × 10¹² codes.
 - `create` takes a custom `code`, such as one the app generates, or a readable one like `spring-sale`: 1 to 64 letters,
   digits, `-` and `_`.
-- A link that grants access needs a code of at least 8 characters, since the code is all it takes to see the record.
-  Such links' generated codes are at least 8 characters, whatever `codeLength` says.
-- Codes are unique across the app. A custom code that's taken returns `CONFLICT`. A generated code that collides is
-  replaced with another, up to three times, before `CONFLICT`. A collision is told apart from other failed writes by
-  reading the code back.
+- Codes aren't case-sensitive. They're stored in lowercase, so databases whose default collation ignores case, such as
+  MySQL's, compare them the same way as the rest, and `/s/Spring-Sale` opens `spring-sale`.
+- The code of a link that grants access is all it takes to see the record, so it has 12 random characters, about 4.7 ×
+  10¹⁸ codes: a generated code is at least that long, whatever `codeLength` says, and a custom one, up to 51 characters,
+  gets them after a `-`, as in `invoice-1042-k3j9x0a1bz7q`. A readable code alone, such as `invoice-1042`, would make
+  the record as good as public.
+- Codes are unique across the app. A custom code that's taken returns `CONFLICT`. A code with a random part that
+  collides is replaced with another, up to three times, before `CONFLICT`. A collision is told apart from other failed
+  writes by reading the code back.
 - A link's code never changes. A different code is a different link.
 
 ## URL targets
@@ -122,19 +133,28 @@ shortLinks({
 ## Access through a link
 
 A link to a record can let anyone who has it see the record: `grantsView: true`, which the subject type's `grantView`
-rule must allow for the person making or changing the link.
+rule must allow for the person making the link. Access can't be turned on for an existing link, only off, since its code
+may not have the random part such a link needs.
 
 1. Opening such a link sets an HTTP-only cookie, `Secure` over HTTPS, with `SameSite=Lax`, that holds the code. The
    cookie keeps the codes of the last 20 such links opened.
 2. The feature declares a core access grant (see [Access grants](#access-grants)). For a request with that cookie, it
    reads the links by their codes in one query, and grants viewing a record when one of them points to it, is turned on,
-   hasn't expired, and the record's organization is still the link's.
+   hasn't expired, its subject type's `grantView` isn't `false`, and the record's organization is still the link's and
+   owns it.
 3. Read checks that pass the request, such as `app.subjects.canView(actor, ref, { request })`, then allow the record,
    for signed-in people and signed-out visitors alike.
 
 The grant is for seeing the record only. Writes, such as commenting, keep the app's and each feature's own rules, which
 don't count grants. Turning a link off, letting it expire or removing it ends its grant at once, since each request
 reads the link again. A record that moves to another organization stops being granted by its old organization's links.
+Turning a link that grants access back on, or giving it a later expiry, checks again, as `create` does, that the caller
+can see and share the record, so someone who has since lost access can't reopen it.
+
+The cookie only reaches the link's host, or every host under `cookie.domain`. Making a link that grants access fails
+when the record's page is on a host the cookie wouldn't reach, rather than letting the grant fail without a word. Read
+checks only count the grant where they pass the request. The app's own pages do; comments and reactions don't yet, since
+each feature decides what a visitor with only a link sees, such as people's names.
 
 ## Clicks
 
@@ -173,7 +193,8 @@ reads the link again. A record that moves to another organization stops being gr
 - `list({ subjectType?, subjectId?, owner?, cursor?, limit? })` pages through links newest first, 20 by default, up to
   50: a record's links, or every link, that the caller manages. `owner` narrows it to the caller's own, `user`, or their
   organization's, `org`.
-- `update({ code, url?, grantsView?, enabled?, expiresAt? })` changes a link and returns it.
+- `update({ code, url?, grantsView?, enabled?, expiresAt? })` changes a link and returns it. `grantsView` only takes
+  `false`.
 - `remove({ code })` removes a link and returns `{ removed }`.
 - `removeSubject({ subjectType, subjectId })`, server only, removes a record's links in one statement and returns
   `{ removed }`.
@@ -191,8 +212,8 @@ for a code that's taken.
 ## Events
 
 - `link.created`, `link.updated` and `link.removed` carry the link.
-- `subject.removed` carries the record and how many of its links went.
-- `owner.removed` carries the owner and how many of their links went.
+- `subject.removed` carries the record whose links went.
+- `owner.removed` carries the owner whose links went.
 
 Events nobody subscribes to aren't written, as with every feature.
 
@@ -201,8 +222,9 @@ Events nobody subscribes to aren't written, as with every feature.
 Removing a record doesn't remove its links by itself. When a record is deleted, server code calls
 `app.api.shortLinks.removeSubject({ subjectType, subjectId })`, and when a person or an organization leaves the app,
 `removeOwner`. Each removes every matching link with one `deleteMany`, without a page per call, since links emit one
-event for the whole removal rather than one per link. A record link whose record is gone, before the cleanup runs, still
-redirects; the app's own page answers for the missing record.
+event for the whole removal rather than one per link. The delete and its event are written in one batch, so neither
+happens without the other. A record link whose record is gone, before the cleanup runs, still redirects; the app's own
+page answers for the missing record.
 
 ## Custom domains
 
@@ -215,6 +237,10 @@ come once `@better-apps/domains` exists. The plan:
   organization's primary domain.
 - Codes reused across organizations, such as `pricing` on two customers' domains, will need uniqueness per domain. That
   means adding the domain to the code's unique index, and a lookup by host and code, still one read.
+- The grant cookie is set on the host that opens the link. A link on a customer's domain grants access only where the
+  app serves that customer's records on the same domain, or a domain both are under. Otherwise making it fails, as
+  [Access through a link](#access-through-a-link) describes, so the domains feature will need to check where records
+  open on each domain.
 
 ## Core support
 

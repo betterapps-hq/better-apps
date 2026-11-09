@@ -6,7 +6,7 @@ export const linkModel = "shortLink"
 /** A short link as the table stores it. */
 export type LinkRow = {
   id: string
-  /** The code in the short URL. Unique and case-sensitive. */
+  /** The code in the short URL, in lowercase. Unique. */
   code: string
   /** `user:{userId}` or `org:{orgId}`, so a person's and their organization's links list in one query. */
   owner: string
@@ -49,6 +49,7 @@ export const shortLinksSchema: FeatureSchema = {
     },
     indexes: [
       { fields: ["owner", "createdAt"], name: "short_link_by_owner" },
+      { fields: ["orgId", "createdAt"], name: "short_link_by_org" },
       { fields: ["subjectType", "subjectId", "createdAt"], name: "short_link_by_subject" }
     ]
   }
