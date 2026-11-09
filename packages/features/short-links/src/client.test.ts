@@ -58,6 +58,36 @@ describe("short links client", () => {
     expect(lists()[listKey()]?.links.map((shown) => shown.code)).toEqual([url.code])
   })
 
+  it("keeps a link made while the first page was on its way, though the page was read before it", async () => {
+    const { links, hold } = browser()
+    const release = hold("list", { answer: true })
+    const loading = links.load(inv1)
+    const link = await links.create({ target: inv1, grantsView: true })
+    release()
+    await loading
+    const list = links.store.getSnapshot().lists[listKey(inv1)]
+    expect(list?.state).toBe("ready")
+    expect(list?.links.map((shown) => shown.code)).toEqual([link.code])
+  })
+
+  it("keeps a removed link out, and a change in, when a reload read before them answers after", async () => {
+    const { api, as, links, hold } = browser()
+    const gone = await api.create({ target: inv1 }, as("ada"))
+    const kept = await api.create({ target: inv1 }, as("ada"))
+    await links.load(inv1)
+    const release = hold("list", { answer: true })
+    const reloading = links.load(inv1)
+    await links.remove(gone.code)
+    await links.update({ code: kept.code, enabled: false })
+    release()
+    await reloading
+    const list = links.store.getSnapshot().lists[listKey(inv1)]
+    expect(list?.links.map((shown) => [shown.code, shown.enabled])).toEqual([[kept.code, false]])
+    // A later load has nothing to catch up on.
+    await links.load(inv1)
+    expect(links.store.getSnapshot().lists[listKey(inv1)]?.links.map((shown) => shown.code)).toEqual([kept.code])
+  })
+
   it("keeps a failed load's error, and throws it", async () => {
     const { links } = browser(null)
     await expect(links.load()).rejects.toMatchObject({ code: "UNAUTHENTICATED" })

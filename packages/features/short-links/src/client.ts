@@ -120,6 +120,33 @@ function createShortLinksClientFor<SubjectType extends string>(
   const filters = new Map<string, LinkFilter>()
   const loading = new Map<string, Promise<void>>()
 
+  // A load's answer may have been read before a change made here since it was asked, so each change is numbered and
+  // kept while a load is under way, then made again on top of its answer. Each is safe to make twice: a link listed
+  // already isn't added again, an older copy never replaces a newer one, and a removed link stays out.
+  type Change = (links: readonly ShortLink[], filter: LinkFilter) => ShortLink[]
+  let changes: { at: number; change: Change }[] = []
+  let changed = 0
+  const asked = new Map<string, number>()
+
+  const change = (made: Change) => {
+    changed += 1
+    if (asked.size > 0) {
+      changes.push({ at: changed, change: made })
+    }
+    eachList((list, filter) => ({ ...list, links: made(list.links, filter) }))
+  }
+
+  /** A load's links with the changes made since it was asked made again on top. */
+  const caughtUp = (links: readonly ShortLink[], filter: LinkFilter, since: number) =>
+    changes.reduce((next, { at, change: made }) => (at > since ? made(next, filter) : next), [...links])
+
+  /** Ends a load's claim on the changes made since it was asked, dropping the ones no load under way needs. */
+  const settle = (key: string) => {
+    asked.delete(key)
+    const oldest = Math.min(...asked.values())
+    changes = changes.filter(({ at }) => at > oldest)
+  }
+
   const setList = (key: string, change: (list: LinkList) => Partial<LinkList>) =>
     store.setState((state) => {
       const current = state.lists[key] ?? idle
@@ -127,10 +154,10 @@ function createShortLinksClientFor<SubjectType extends string>(
     })
 
   /** Applies a change to every loaded list. */
-  const eachList = (change: (list: LinkList, filter: LinkFilter) => LinkList) =>
+  const eachList = (apply: (list: LinkList, filter: LinkFilter) => LinkList) =>
     store.setState((state) => ({
       lists: Object.fromEntries(
-        Object.entries(state.lists).map(([key, list]) => [key, change(list, filters.get(key) ?? {})])
+        Object.entries(state.lists).map(([key, list]) => [key, apply(list, filters.get(key) ?? {})])
       )
     }))
 
@@ -147,6 +174,8 @@ function createShortLinksClientFor<SubjectType extends string>(
       return Promise.resolve()
     }
     setList(key, () => ({ state: "loading", error: null }))
+    const since = changed
+    asked.set(key, since)
     const page = (async () => {
       try {
         const answer = (await run("list", { ...filter, ...(cursor ? { cursor } : {}) })) as LinkPage
@@ -155,9 +184,11 @@ function createShortLinksClientFor<SubjectType extends string>(
         }
         const links = answer.links.map(revive)
         setList(key, (list) => ({
-          links: more
-            ? [...list.links, ...links.filter((link) => !list.links.some((had) => had.id === link.id))]
-            : links,
+          links: caughtUp(
+            more ? [...list.links, ...links.filter((link) => !list.links.some((had) => had.id === link.id))] : links,
+            filter,
+            since
+          ),
           cursor: answer.cursor,
           state: "ready",
           error: null
@@ -171,6 +202,7 @@ function createShortLinksClientFor<SubjectType extends string>(
         // After a reset(), the key may belong to a newer load.
         if (started === generation) {
           loading.delete(key)
+          settle(key)
         }
       }
     })()
@@ -189,7 +221,9 @@ function createShortLinksClientFor<SubjectType extends string>(
       const started = generation
       const link = revive(await run("create", input))
       if (started === generation) {
-        eachList((list, filter) => (belongs(filter, link) ? { ...list, links: [link, ...list.links] } : list))
+        change((links, filter) =>
+          belongs(filter, link) && !links.some((had) => had.id === link.id) ? [link, ...links] : [...links]
+        )
       }
       return link
     },
@@ -198,7 +232,9 @@ function createShortLinksClientFor<SubjectType extends string>(
       const started = generation
       const link = revive(await run("update", input))
       if (started === generation) {
-        eachList((list) => ({ ...list, links: list.links.map((had) => (had.id === link.id ? link : had)) }))
+        change((links) =>
+          links.map((had) => (had.id === link.id && had.updatedAt.getTime() <= link.updatedAt.getTime() ? link : had))
+        )
       }
       return link
     },
@@ -207,7 +243,7 @@ function createShortLinksClientFor<SubjectType extends string>(
       const started = generation
       const result = (await run("remove", { code })) as { removed: boolean }
       if (started === generation) {
-        eachList((list) => ({ ...list, links: list.links.filter((had) => had.code !== code) }))
+        change((links) => links.filter((had) => had.code !== code))
       }
       return result
     },
@@ -218,6 +254,8 @@ function createShortLinksClientFor<SubjectType extends string>(
       generation += 1
       loading.clear()
       filters.clear()
+      asked.clear()
+      changes = []
       store.setState(empty)
     }
   }

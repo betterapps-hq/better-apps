@@ -160,7 +160,8 @@ await links.update({ code: link.code, enabled: false })
 
 - `load(filter)` loads a list's first page, `loadMore(filter)` the next. A filter is a record, an `owner`, or nothing
   for every link the person manages. Lists are in `store`, keyed by `listKey(filter)`, with their `state` and `error`.
-- `create` puts the new link first in the loaded lists it belongs in. `update` and `remove` show in every list.
+- `create` puts the new link first in the loaded lists it belongs in. `update` and `remove` show in every list. A list
+  that was loading when one of them answered keeps the change, even when its answer was read before it.
 - Dates arrive as `Date`s.
 - `reset()` empties the store and cancels calls under way, for when someone else signs in without a page load.
 
