@@ -1,6 +1,10 @@
-import { useReactors, useSubjectReactions } from "@better-apps/reactions/react"
+import { useReactions, useReactors, useSubjectReactions } from "@better-apps/reactions/react"
 import {
   Button,
+  DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   Popover,
   PopoverContent,
   PopoverTrigger,
@@ -8,9 +12,11 @@ import {
   TooltipContent,
   TooltipTrigger
 } from "@buildkitgg/shadcn-baseui-kit"
-import { SmilePlusIcon } from "lucide-react"
+import { SmileIcon, SmilePlusIcon } from "lucide-react"
 import { useState } from "react"
-import type { ReactionTypes } from "./app-types"
+import type { App, ReactionTypes } from "./app-types"
+import { plural } from "./format"
+import { modals } from "./ui"
 
 type Emoji = ReactionTypes["emoji"]
 
@@ -103,6 +109,66 @@ export function CommentReactions({ commentId }: { commentId: string }) {
         </p>
       )}
     </fieldset>
+  )
+}
+
+interface RemoveReactionsProps {
+  commentId: string
+  onRemoved(title: string): void
+  onError(title: string, error: unknown): void
+}
+
+/**
+ * A moderator's menu for clearing a comment's reactions, all of them or one emoji's, after a confirmation. Nothing shows
+ * while the comment has none.
+ */
+export function RemoveReactionsMenu({ commentId, onRemoved, onError }: RemoveReactionsProps) {
+  const subject = { subjectType: "comments.comment", subjectId: commentId } as const
+  const client = useReactions<App>()
+  const { reactions, state } = useSubjectReactions<ReactionTypes>(subject)
+  const used = emojis.flatMap(({ emoji, name }) => {
+    const count = reactions.find((item) => item.emoji === emoji)?.count ?? 0
+    return count > 0 ? [{ emoji, name, count }] : []
+  })
+  if (state !== "ready" || used.length === 0) {
+    return null
+  }
+  const total = used.reduce((sum, { count }) => sum + count, 0)
+
+  async function remove(emoji?: Emoji) {
+    const confirmed = await modals.confirm({
+      title: emoji ? `Remove all ${nameOf(emoji)} reactions?` : "Remove all reactions?",
+      description: "They’re removed for everyone. People can react again afterward.",
+      confirmLabel: "Remove"
+    })
+    if (!confirmed) {
+      return
+    }
+    try {
+      // The client calls the server until every page is removed.
+      const { removed } = await client.removeReactions({ ...subject, ...(emoji ? { emoji } : {}) })
+      onRemoved(`${plural(removed, "reaction", "reactions")} removed`)
+    } catch (error) {
+      onError("The reactions couldn’t be removed", error)
+    }
+  }
+
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger>
+        <SmileIcon />
+        Remove reactions
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent>
+        <DropdownMenuItem onClick={() => void remove()}>All reactions ({total})</DropdownMenuItem>
+        {used.map(({ emoji, name, count }) => (
+          <DropdownMenuItem key={emoji} onClick={() => void remove(emoji)}>
+            <span aria-hidden="true">{emoji}</span>
+            {name} ({count})
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
   )
 }
 

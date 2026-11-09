@@ -56,7 +56,7 @@ import {
 import { createContext, use, useEffect, useRef, useState, type FormEvent, type ReactNode, type RefObject } from "react"
 import { initials } from "./app-shell"
 import type { CommentTypes } from "./app-types"
-import { CommentReactions } from "./comment-reactions"
+import { CommentReactions, RemoveReactionsMenu } from "./comment-reactions"
 import { formatTime, plural } from "./format"
 import { CommentText, emptyDraft, MentionTextarea, pickedName, toBody, toDraft, type Draft } from "./mention-textarea"
 import { alerts, modals } from "./ui"
@@ -729,7 +729,7 @@ function CommentItem({ comment, author, pending, own, threadId, nameOf, onDelete
               >
                 <EllipsisIcon />
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
+              <DropdownMenuContent align="end" style={{ width: "auto" }}>
                 {own && (
                   <DropdownMenuItem
                     onClick={() => {
@@ -740,6 +740,9 @@ function CommentItem({ comment, author, pending, own, threadId, nameOf, onDelete
                     <PencilIcon />
                     Edit
                   </DropdownMenuItem>
+                )}
+                {viewer?.isOwner && (
+                  <RemoveReactionsMenu commentId={comment.id} onRemoved={done} onError={reportError} />
                 )}
                 {canDelete && (
                   <DropdownMenuItem variant="destructive" onClick={onDelete}>

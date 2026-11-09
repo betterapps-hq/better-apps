@@ -95,9 +95,12 @@ const invoiceComments = comments({
   anchors: [elementAnchor()]
 })
 
-/** Emoji reactions on comments, from a short list. Whoever can see a comment can react to it. */
+/**
+ * Emoji reactions on comments, from a short list. Whoever can see a comment can react to it, and the workspace owner
+ * can remove its reactions.
+ */
 const commentReactions = reactions({
-  subjects: { [commentSubjectTypes.comment]: {} },
+  subjects: { [commentSubjectTypes.comment]: { canModerate: ({ actor }) => isOwner(actor.userId) } },
   emojis: ["👍", "🎉", "❤️", "👀"],
   maxPerUser: 1
 })

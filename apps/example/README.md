@@ -37,8 +37,9 @@ Then open <http://127.0.0.1:4190>. `build` and `preview` run the production buil
   which shows as the person's name. The composer is `src/mention-textarea.tsx`.
 - **Reactions** from [`@better-apps/reactions`](../../packages/features/reactions/README.md) attach to comments. Each
   person picks one of four emoji, and picking another replaces it (`maxPerUser: 1` in `src/features.ts`). Hovering or
-  focusing a reaction shows who reacted with it. The UI is in `src/comment-reactions.tsx`; a thread's comments load
-  their reactions in one call.
+  focusing a reaction shows who reacted with it. The workspace owner can remove a comment's reactions, all of them or
+  one emoji's, from the comment's menu. The UI is in `src/comment-reactions.tsx`; a thread's comments load their
+  reactions in one call.
 - **Notes**, at `/notes`, is a tiny feature in `src/features.ts`. Its loader calls a server function that calls
   `api.notes.list()` as the request's user, and the form posts to `/api/apps/notes/add` from the browser.
 - Pages render on the server with their comments. Loaders call server functions in `src/comments.functions.ts`, which
@@ -48,9 +49,10 @@ Then open <http://127.0.0.1:4190>. `build` and `preview` run the production buil
 - **Sign-in** is Better Auth's email and password sign-in, in `src/auth.server.ts`, served at `/api/auth`. On its first
   start the app signs up three demo people, Ada, Grace and Alan, with the password `better-apps-example`, and the
   sign-in page has a button for each. Ada owns the workspace, so she moderates comments: she can delete any comment or
-  thread and move any pin (`src/people.server.ts`). On the first start the app also writes a few conversations on the
-  sample invoices as the demo people, with mentions and reactions, from `src/db/seed-comments.server.ts`. Comments are
-  for signed-in people. Signing in or out reloads the page, so nothing loaded for one person stays in the browser.
+  thread, move any pin and remove reactions (`src/people.server.ts`). On the first start the app also writes a few
+  conversations on the sample invoices as the demo people, with mentions and reactions, from
+  `src/db/seed-comments.server.ts`. Comments are for signed-in people. Signing in or out reloads the page, so nothing
+  loaded for one person stays in the browser.
 - `src/start.ts` only lets same-origin requests call server functions.
 
 ## Interface
