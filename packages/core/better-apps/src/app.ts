@@ -371,8 +371,9 @@ export function createBetterApps<const Features extends readonly BetterAppsFeatu
         waitUntil: keep
       })
       if (request.method === "HEAD" && response.body) {
-        // Cancelling the body lets the handler's source, such as a file being read from storage, close at once.
-        await response.body.cancel().catch(() => undefined)
+        // Cancelling the body lets the handler's source, such as a file being read from storage, close at once. It isn't
+        // awaited: when the handler kept a clone, cancelling this branch settles only once the clone is read.
+        void response.body.cancel().catch(() => undefined)
         return new Response(null, response)
       }
       return response

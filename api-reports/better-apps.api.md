@@ -279,6 +279,7 @@ export interface DeliveryReport {
 
 // @public
 export interface EmitOptions {
+    availableAt?: Date | undefined;
     later?: boolean | undefined;
 }
 
