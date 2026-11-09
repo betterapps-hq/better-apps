@@ -451,6 +451,40 @@ describe("drafts", () => {
     expect(await api.sweep()).toEqual({ removed: 0, done: true })
   })
 
+  it("are reported once by the sweep when deleting their bytes fails and it runs again", async () => {
+    const { app, api, upload, storage, events } = setup()
+    const { file } = await upload("bob", { subjectType: "invoice" })
+    const remove = storage.delete.bind(storage)
+    storage.delete = async () => {
+      storage.delete = remove
+      throw new Error("Storage is down.")
+    }
+    vi.useFakeTimers({ toFake: ["Date"] })
+    try {
+      vi.setSystemTime(Date.now() + 2 * 24 * 60 * 60_000)
+      await expect(api.sweep()).rejects.toThrow("Storage is down.")
+      await app.deliverEvents()
+      expect(await api.sweep()).toEqual({ removed: 1, done: true })
+      await app.deliverEvents()
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(storage.objects.size).toBe(0)
+    expect(events("file.deleted").map((event) => (event.data as { file: { id: string } }).file.id)).toEqual([file.id])
+  })
+
+  it("are reported by the next sweep when one stopped after marking them", async () => {
+    const { api, upload, database, events } = setup()
+    const { file } = await upload("bob", { subjectType: "invoice" })
+    // As a sweep leaves an expired draft when it stops between marking it and writing its event.
+    database.sqlite.prepare(`UPDATE ${fileModel} SET status = 'deleted', expiresAt = ? WHERE id = ?`).run(1, file.id)
+    expect(await api.sweep()).toEqual({ removed: 1, done: true })
+    expect(await api.sweep()).toEqual({ removed: 0, done: true })
+    expect(events("file.deleted").map((event) => (event.data as { file: { id: string } }).file)).toMatchObject([
+      { id: file.id, status: "ready" }
+    ])
+  })
+
   it("can be cancelled by their uploader", async () => {
     const { api, as, upload, storage } = setup()
     const { file } = await upload("bob", { subjectType: "invoice" })

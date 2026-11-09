@@ -36,7 +36,9 @@ export interface SweepResult extends BulkStep {
 /**
  * Removes expired uploads and drafts, and the rows of deleted files once their upload address closed, deleting their
  * bytes again in case some arrived late or failed to go. Expired files are marked with a guard on their expiry, so a
- * draft attached meanwhile is never taken, and read back to see which were.
+ * draft attached meanwhile is never taken, and read back to see which were. An expired draft keeps its `expiresAt` until
+ * its `file.deleted` is written, with the batch that clears it, before any bytes are touched. A page that fails partway,
+ * such as when storage is down, leaves the event for the next sweep, which writes it once.
  */
 export async function sweep(config: Config, writer: Writer): Promise<SweepResult> {
   const { db } = writer
@@ -49,12 +51,13 @@ export async function sweep(config: Config, writer: Writer): Promise<SweepResult
     ],
     limit: removalPage
   })
+  // Deleted drafts whose event is still owed, which a sweep that stopped partway left, are taken again.
   const expired =
     leftovers.length < removalPage
       ? await db.findMany<AttachmentFile>({
           model: fileModel,
           where: [
-            { field: "status", operator: "in", value: ["pending", "ready"] },
+            { field: "status", operator: "in", value: ["pending", "ready", "deleted"] },
             { field: "expiresAt", operator: "lt", value: now }
           ],
           sortBy: { field: "expiresAt", direction: "asc" },
@@ -63,19 +66,23 @@ export async function sweep(config: Config, writer: Writer): Promise<SweepResult
       : []
   let marked: AttachmentFile[] = []
   if (expired.length > 0) {
-    await db.batch(
-      chunks(expired.map((file) => file.id)).map((ids): WriteOperation => ({
+    const mark = (status: "pending" | "ready", update: { status: "deleted"; expiresAt?: null }) =>
+      chunks(expired.filter((file) => file.status === status).map((file) => file.id)).map((ids): WriteOperation => ({
         type: "updateMany",
         model: fileModel,
         where: [
           { field: "id", operator: "in", value: ids },
-          { field: "status", operator: "in", value: ["pending", "ready"] },
+          { field: "status", value: status },
           { field: "expiresAt", operator: "lt", value: now }
         ],
-        update: { status: "deleted" }
+        update
       }))
-    )
-    const deleted = new Set(
+    // A ready draft keeps its expiry until its event is written. An unfinished upload has no event.
+    await db.batch([
+      ...mark("ready", { status: "deleted" }),
+      ...mark("pending", { status: "deleted", expiresAt: null })
+    ])
+    const after = new Map(
       (
         await Promise.all(
           chunks(expired.map((file) => file.id)).map(async (ids) =>
@@ -85,19 +92,32 @@ export async function sweep(config: Config, writer: Writer): Promise<SweepResult
                 { field: "id", operator: "in", value: ids },
                 { field: "status", value: "deleted" }
               ],
-              select: ["id"]
+              select: ["id", "expiresAt"]
             })
           )
         )
       )
         .flat()
-        .map((file) => file.id)
+        .map((file) => [file.id, file])
     )
-    marked = expired.filter((file) => deleted.has(file.id))
-    for (const file of marked) {
-      if (file.status === "ready") {
-        writer.emit("file.deleted", { file: eventFile(file), reason: "expired" })
-      }
+    marked = expired.filter((file) => after.has(file.id))
+    // Files deleted another way meanwhile have no expiry left, and their own event.
+    const owed = marked.filter((file) => (after.get(file.id) as AttachmentFile).expiresAt !== null)
+    for (const file of owed) {
+      writer.emit("file.deleted", { file: eventFile({ ...file, status: "ready" }), reason: "expired" })
+    }
+    if (owed.length > 0) {
+      await db.batch(
+        chunks(owed.map((file) => file.id)).map((ids): WriteOperation => ({
+          type: "updateMany",
+          model: fileModel,
+          where: [
+            { field: "id", operator: "in", value: ids },
+            { field: "status", value: "deleted" }
+          ],
+          update: { expiresAt: null }
+        }))
+      )
     }
   }
   const gone = [...leftovers, ...marked]

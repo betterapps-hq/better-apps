@@ -290,12 +290,14 @@ and the original is served.
 
 `app.api.attachments.sweep()` removes all of these, a page at a time: up to 100 files whose `expiresAt` has passed or
 that are `deleted`. Each page marks the expired ones `deleted` in one batch, guarded by their `expiresAt`, so a draft
-attached meanwhile is never taken. It reads back which ones it marked, deletes their bytes in one storage call, then
-their rows and any attachments left pointing at them. It returns `done`. Call it a few pages a run from its own cron
-trigger, apart from `app.deliverEvents()`, since D1 allows 50 queries a Worker invocation on the Free plan. A page takes
-up to about ten, not counting its events: when a feature subscribes to them, such as to `file.deleted`, they're
-delivered in the same invocation, a few queries each, and any that don't fit stay in the outbox for `deliverEvents`. A
-backlog, such as many drafts expiring at once, drains over the next runs.
+attached meanwhile is never taken. It reads back which ones it marked and writes their `file.deleted` events in a batch
+of their own. Then it deletes their bytes in one storage call, and their rows and any attachments left pointing at them.
+A marked draft keeps its `expiresAt` until its event is written, so a page that fails partway, such as when storage is
+down, leaves the event to the next sweep, which writes it once. It returns `done`. Call it a few pages a run from its
+own cron trigger, apart from `app.deliverEvents()`, since D1 allows 50 queries a Worker invocation on the Free plan. A
+page takes up to about a dozen, not counting its events: when a feature subscribes to them, such as to `file.deleted`,
+they're delivered in the same invocation, a few queries each, and any that don't fit stay in the outbox for
+`deliverEvents`. A backlog, such as many drafts expiring at once, drains over the next runs.
 
 A deleted file's bytes go at once, but its row stays `deleted` until an hour after `uploadClosesAt`, since a signed
 upload address keeps working until it expires, and a slow upload that started in time may finish later still. The sweep
