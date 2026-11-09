@@ -111,6 +111,46 @@ describe("with comments", () => {
     expect(listed["c-1"]?.map((file) => file.orgId)).toEqual(["globex"])
   })
 
+  it("moves the files of a thread's comments that are left when its first comment was deleted", async () => {
+    const { emit, attach, threads, api } = withComments()
+    await attach("comments.comment", "c-1")
+    await attach("comments.comment", "c-2")
+    // c-1 is deleted, and its own cleanup hasn't run yet, when the thread moves.
+    threads.set("t-1", { orgId: "globex", comments: new Set(["c-2"]) })
+    await emit({
+      type: "thread.moved",
+      data: { thread: { id: "t-1", orgId: "globex" }, commentIds: ["c-1", "c-2"], fromOrgId: "acme" }
+    })
+    const listed = await api.listFiles({ subjectType: "comments.comment", subjectIds: ["c-2"] })
+    expect(listed["c-2"]?.map((file) => file.orgId)).toEqual(["globex"])
+  })
+
+  it("keeps moving a thread's comments over several runs when the next one is deleted between them", async () => {
+    const { emit, attach, threads, api, deliver, events } = withComments()
+    const fillers = Array.from({ length: 1999 }, (_, index) => `n-${index}`)
+    threads.set("t-1", { orgId: "acme", comments: new Set(["c-1", ...fillers, "c-2"]) })
+    await attach("comments.comment", "c-1")
+    await attach("comments.comment", "c-2")
+    threads.set("t-1", { orgId: "globex", comments: new Set(["c-1", ...fillers, "c-2"]) })
+    await emit({
+      type: "thread.moved",
+      data: { thread: { id: "t-1", orgId: "globex" }, commentIds: ["c-1", ...fillers, "c-2"], fromOrgId: "acme" }
+    })
+    // Each delivery reads ten lists of 90 ids, so the first stops partway, and the comments where the next run starts
+    // are deleted before it.
+    expect(events("cleanup.continued")).toHaveLength(0)
+    const deleted = new Set(fillers.slice(700, 1000))
+    threads.set("t-1", {
+      orgId: "globex",
+      comments: new Set(["c-1", ...fillers.filter((id) => !deleted.has(id)), "c-2"])
+    })
+    await deliver()
+    await deliver()
+    expect(events("cleanup.continued")).toHaveLength(2)
+    const listed = await api.listFiles({ subjectType: "comments.comment", subjectIds: ["c-1", "c-2"] })
+    expect([listed["c-1"]?.[0]?.orgId, listed["c-2"]?.[0]?.orgId]).toEqual(["globex", "globex"])
+  })
+
   it("continues a long cleanup in the next delivery run", async () => {
     const { emit, deliver, count, events } = withComments()
     const commentIds = Array.from({ length: 2000 }, (_, index) => `gone-${index}`)

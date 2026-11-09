@@ -44,20 +44,27 @@ describe("attachments hooks", () => {
       const { upload, wrapper, requests } = rendered("bob", { secret, downloadTtl: 120 })
       await upload("bob", inv1)
       const { result } = renderHook(() => useAttachments(inv1), { wrapper })
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(10)
-      })
+      const loads = () => requests.filter((name) => name === "listFiles").length
+      // Moves the faked clock on a little at a time, letting the real event loop turn between steps, as signing with
+      // Web Crypto needs, until the check passes or two seconds of faked time have gone by.
+      const until = async (check: () => boolean) => {
+        for (let step = 0; step < 400 && !check(); step += 1) {
+          await act(async () => {
+            await vi.advanceTimersByTimeAsync(5)
+          })
+          await new Promise((resolve) => setImmediate(resolve))
+        }
+      }
+      await until(() => result.current.files.length === 1)
       const first = result.current.files[0]?.urlExpiresAt as Date
       expect(first).toBeInstanceOf(Date)
-      expect(requests.filter((name) => name === "listFiles")).toHaveLength(1)
+      expect(loads()).toBe(1)
       await act(async () => {
         await vi.advanceTimersByTimeAsync(first.getTime() - Date.now() - 61_000)
       })
-      expect(requests.filter((name) => name === "listFiles")).toHaveLength(1)
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(2000)
-      })
-      expect(requests.filter((name) => name === "listFiles")).toHaveLength(2)
+      expect(loads()).toBe(1)
+      await until(() => (result.current.files[0]?.urlExpiresAt?.getTime() ?? 0) > first.getTime())
+      expect(loads()).toBe(2)
       expect(result.current.files[0]?.urlExpiresAt?.getTime()).toBeGreaterThan(first.getTime())
     } finally {
       vi.useRealTimers()

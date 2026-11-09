@@ -424,18 +424,25 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
    */
   async function finishUpload(prepared: PreparedUpload, { signal }: { signal?: AbortSignal } = {}): Promise<FileInfo> {
     const current = scoped()
+    const { subjectType, subjectId } = prepared.target
+    const key = subjectType !== undefined && subjectId !== undefined ? subjectKey(subjectType, subjectId) : null
+    const started = key === null ? 0 : (versions.get(key) ?? 0)
     const completed = await (call("attachments", "completeUpload", { fileId: prepared.file.id }, { signal }) as Promise<
       Serialized<CompleteUploadResult>
     >)
-    const { subjectType, subjectId } = prepared.target
-    if (current() && completed.attachment && subjectType !== undefined && subjectId !== undefined) {
-      const key = subjectKey(subjectType, subjectId)
-      const attached = reviveFile<AttachedFile>(completed.attachment)
+    if (current() && completed.attachment && key !== null && subjectId !== undefined) {
+      const changed = (versions.get(key) ?? 0) !== started
       bump(key)
-      // At the place the server saved it, so uploads that finish together keep the server's order whichever answer
-      // lands first.
-      setBase(key, [...(bases.get(key) ?? []).filter((item) => item.id !== attached.id), attached])
-      refresh(key)
+      if (changed) {
+        // The record changed while the upload finished, such as the file being taken off after a load showed it, so
+        // this answer may be stale, and the record loads again instead.
+        await load(subjectType as Types["subjectType"], [subjectId]).catch(() => undefined)
+      } else {
+        // At the place the server saved it, so the server's order shows whichever answer lands first.
+        const attached = reviveFile<AttachedFile>(completed.attachment)
+        setBase(key, [...(bases.get(key) ?? []).filter((item) => item.id !== attached.id), attached])
+        refresh(key)
+      }
     }
     return reviveFile<FileInfo>(completed.file)
   }

@@ -54,7 +54,7 @@ export const attachmentEvents = {
    */
   "cleanup.continued": defineEvent<{
     records: { subjectType: string; subjectIds: string[] }[]
-    toOrgId?: string | undefined
+    move?: { toOrgId: string; subject: { subjectType: string; subjectId: string } } | undefined
   }>()
 }
 

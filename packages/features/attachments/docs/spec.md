@@ -319,8 +319,9 @@ With files on comments' threads or comments, attachments follow comments' events
 thread loses its files, and a moved thread takes its and its comments' files along. Each delivery handles one page,
 reading at most ten lists of 90 ids, and the rest continues with attachments' own `cleanup.continued` event, emitted
 `{ later: true }` for the next `app.deliverEvents()` run. A move continues only while the thread is still in the
-organization it moved to. A comment deleted while a file is attached to it can't keep the file: `attach` checks the
-record again after it's written and takes the file back off when the record went away meanwhile.
+organization it moved to; a comment deleted meanwhile doesn't stop it, since the comment's own removal takes its files.
+A comment deleted while a file is attached to it can't keep the file: `attach` checks the record again after it's
+written and takes the file back off when the record went away meanwhile.
 
 ## Events
 

@@ -329,10 +329,13 @@ export async function removeUser(config: Config, context: Context): Promise<{ re
   })
 }
 
-/** Records to clean up after, by subject type, and the organization they moved to, when they moved. */
+/**
+ * Records to clean up after, by subject type. For a move, the organization they moved to, and the record whose move
+ * they follow, such as a thread for its comments.
+ */
 export interface Cleanup {
   records: { subjectType: string; subjectIds: string[] }[]
-  toOrgId?: string | undefined
+  move?: { toOrgId: string; subject: { subjectType: string; subjectId: string } } | undefined
 }
 
 /**
@@ -341,19 +344,16 @@ export interface Cleanup {
  * event in the next `app.deliverEvents()` run. Subject types attachments are no longer set up on are skipped.
  */
 export async function cleanUp(config: Config, writer: Writer, job: Cleanup): Promise<void> {
-  const { toOrgId } = job
+  const toOrgId = job.move?.toOrgId
   const records = job.records.filter(
     (record) => record.subjectIds.length > 0 && Object.hasOwn(config.subjects, record.subjectType)
   )
-  if (toOrgId !== undefined && records.length > 0) {
-    // A move runs over several deliveries, so its records may have moved again since; one no longer in this job's
-    // organization stops it, so an older job never undoes a newer move.
-    const orgIds = await orgsOf(
-      writer.subjects,
-      records.map((record) => ({ subjectType: record.subjectType, subjectId: record.subjectIds[0] as string })),
-      null
-    )
-    if (orgIds.some((orgId) => orgId !== toOrgId)) {
+  if (job.move && records.length > 0) {
+    // A move runs over several deliveries, so the record it follows may have moved again since, or gone; either stops
+    // it, so an older job never undoes a newer move. Records of its that went away meanwhile, such as a deleted comment,
+    // don't stop it: their files go with their own removal.
+    const [orgId] = await orgsOf(writer.subjects, [job.move.subject], null)
+    if (orgId !== job.move.toOrgId) {
       return
     }
   }
@@ -419,7 +419,7 @@ export function commentHandlers(config: Config): Record<string, EventHandler> | 
       const data = event.data as ThreadData
       await cleanUp(config, context, {
         records: threadRecords([data.thread.id], data.commentIds ?? []),
-        toOrgId: data.thread.orgId
+        move: { toOrgId: data.thread.orgId, subject: { subjectType: commentTypes.thread, subjectId: data.thread.id } }
       })
     }
   }

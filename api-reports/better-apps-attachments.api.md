@@ -88,7 +88,13 @@ export const attachmentEvents: {
     subjectType: string;
     subjectIds: string[];
     }[];
-    toOrgId?: string | undefined;
+    move?: {
+    toOrgId: string;
+    subject: {
+    subjectType: string;
+    subjectId: string;
+    };
+    } | undefined;
     }>;
 };
 
@@ -161,7 +167,13 @@ export function attachments<const Options extends AttachmentsOptions>(options: O
         subjectType: string;
         subjectIds: string[];
         }[];
-        toOrgId?: string | undefined;
+        move?: {
+        toOrgId: string;
+        subject: {
+        subjectType: string;
+        subjectId: string;
+        };
+        } | undefined;
         }>;
     };
     readonly subjects: {

@@ -323,6 +323,25 @@ describe("attachments client", () => {
     ])
   })
 
+  it("loads a record again instead of adding a finished upload when the record changed meanwhile", async () => {
+    const { attachments, upload, holdAnswer, send } = browser()
+    const kept = (await upload("bob", inv1)).file.id
+    await attachments.load("invoice", ["inv-1"])
+    const ids = () => attachments.store.getSnapshot().subjects[key1]?.files.map((entry) => entry.id)
+    const prepared = await attachments.prepareUpload(pick("late", "late.txt"), inv1)
+    await send(prepared.upload, "late")
+    // The upload is saved, but its answer arrives only after a load shows the file and it's taken off again.
+    const answerHeld = holdAnswer("completeUpload")
+    const finishing = attachments.finishUpload(prepared)
+    await tick(10)
+    await attachments.load("invoice", ["inv-1"])
+    expect(ids()).toEqual([kept, prepared.file.id])
+    await attachments.detach(inv1, prepared.file.id)
+    answerHeld()
+    await finishing
+    expect(ids()).toEqual([kept])
+  })
+
   it("keeps a reorder under way when an upload finishes meanwhile, with the new file after", async () => {
     const { attachments, upload, hold } = browser()
     const a = (await upload("bob", inv1)).file.id
