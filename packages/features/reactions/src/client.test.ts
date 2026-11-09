@@ -96,6 +96,19 @@ describe("reactions client", () => {
     expect(reactions.store.getSnapshot().subjects[key1]?.reactions).toEqual([{ emoji: "🎉", count: 1, reacted: true }])
   })
 
+  it("takes the viewer off another emoji's reactors when another tab already swapped it, and each person has one", async () => {
+    const { api, as, reactions } = browser("bob", { maxPerUser: 1 })
+    await api.react({ ...inv1, emoji: "👍" }, as("ada"))
+    await api.react({ ...inv1, emoji: "👍" }, as("bob"))
+    await reactions.load("invoice", ["inv-1"])
+    await reactions.loadReactors({ ...inv1, emoji: "👍" })
+    const key = reactionKey("invoice", "inv-1", "👍")
+    expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada", "bob"])
+    await api.react({ ...inv1, emoji: "🎉" }, as("bob"))
+    await reactions.react({ ...inv1, emoji: "🎉" })
+    expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada"])
+  })
+
   it("loads who reacted again after taking back a reaction another tab already took back", async () => {
     const { api, as, reactions } = browser()
     const target = { ...inv1, emoji: "👍" }

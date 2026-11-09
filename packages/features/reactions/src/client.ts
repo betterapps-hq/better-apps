@@ -425,6 +425,17 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
       // The server names the reactor, so a loaded list of reactors gains or loses them now.
       if (reaction) {
         next = withReactor(next, target, reacted ? 1 : -1, reaction.userId)
+        if (replaces) {
+          // When each person has one, the viewer leaves every other emoji's list, even ones the server didn't replace now
+          // because another tab already had.
+          const prefix = `${record.slice(0, -1)},`
+          for (const name of Object.keys(next.reactors)) {
+            const [, , emoji] = JSON.parse(name) as [string, string, string]
+            if (name.startsWith(prefix) && emoji !== target.emoji) {
+              next = withReactor(next, { ...target, emoji }, -1, reaction.userId)
+            }
+          }
+        }
       } else {
         // The server had nothing to change, such as a reaction another tab already took back, and doesn't say who the
         // viewer is, so the emoji's list of reactors loads again.
