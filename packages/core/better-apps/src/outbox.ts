@@ -104,6 +104,10 @@ export function createOutbox(options: {
       if (!feature.events || !Object.hasOwn(feature.events, type)) {
         throw new Error(`The "${feature.id}" feature doesn't declare a "${type}" event.`)
       }
+      const due = options?.availableAt
+      if (due !== undefined && !(due instanceof Date && Number.isFinite(due.getTime()))) {
+        throw new TypeError(`The "${type}" event's \`availableAt\` must be a valid Date.`)
+      }
       if (subscribersOf(feature.id, type).length === 0) {
         return
       }
@@ -116,10 +120,11 @@ export function createOutbox(options: {
         author: scope.author,
         silent: scope.silent,
         createdAt: scope.now,
-        availableAt: new Date(),
+        availableAt: due ?? new Date(),
         attempts: 0
       }
-      if (options?.later === true) {
+      // An event with a due time is left for later, so this run doesn't deliver it, even once it's due.
+      if (options?.later === true || due !== undefined) {
         later.add(String(row.id))
         if (holdLater) {
           held.push(row)

@@ -47,6 +47,11 @@ export interface EmitOptions {
    * step per run, such as a few pages at a time, and continue in the next instead of in one long request.
    */
   later?: boolean | undefined
+  /**
+   * When the event is due, such as tomorrow for a scheduled recheck. It's delivered by the first `app.deliverEvents()`
+   * run at or after that time, and implies `later`, so it's never delivered in this run.
+   */
+  availableAt?: Date | undefined
 }
 
 /** Handles another feature's event. Throwing leaves the event in the outbox to be retried. */

@@ -621,6 +621,71 @@ describe("events", () => {
     expect(received).toEqual(["relayed"])
   })
 
+  it("delivers an event emitted with a due time only once it's due, written with its event's removal", async () => {
+    const received: string[] = []
+    let failures = 1
+    const tomorrow = new Date(Date.now() + 24 * 60 * 60_000)
+    const relay = defineFeature({
+      id: "relay",
+      events: { relayed: defineEvent<{ from: string }>() },
+      on: {
+        notes: { "note.added": (event, { emit }) => emit("relayed", { from: event.id }, { availableAt: tomorrow }) }
+      }
+    })
+    const flaky = defineFeature({
+      id: "flaky",
+      on: {
+        notes: {
+          "note.added": () => {
+            if (failures-- > 0) {
+              throw new Error("Not yet")
+            }
+          }
+        }
+      }
+    })
+    const sink = defineFeature({ id: "sink", on: { relay: { relayed: (event) => void received.push(event.type) } } })
+    const { app, memory } = setup({ features: [relay, flaky, sink] })
+    const relayed = () => (memory.tables.get(eventModel) ?? []).filter((row) => row.type === "relayed")
+    await app.api.notes.add({ text: "Hi" })
+    // The delivery failed, so the scheduled event isn't written yet.
+    expect(relayed()).toHaveLength(0)
+    for (const row of memory.tables.get(eventModel) ?? []) {
+      row.availableAt = new Date(0)
+    }
+    expect(await app.deliverEvents()).toEqual({ delivered: 1, failed: 0 })
+    expect(relayed().map((row) => row.availableAt)).toEqual([tomorrow])
+    // Runs before it's due leave it alone.
+    expect(await app.deliverEvents()).toEqual({ delivered: 0, failed: 0 })
+    expect(received).toEqual([])
+    vi.useFakeTimers({ now: tomorrow, toFake: ["Date"] })
+    try {
+      expect(await app.deliverEvents()).toEqual({ delivered: 1, failed: 0 })
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(received).toEqual(["relayed"])
+  })
+
+  it("never delivers an event with a due time in the run that emits it, even one already due", async () => {
+    const received: string[] = []
+    const early = defineFeature({
+      id: "early",
+      events: { noted: defineEvent<null>() },
+      actions: {
+        note: defineAction({ handler: ({ emit }) => emit("noted", null, { availableAt: new Date(0) }) }),
+        broken: defineAction({ handler: ({ emit }) => emit("noted", null, { availableAt: new Date(Number.NaN) }) })
+      }
+    })
+    const sink = defineFeature({ id: "sink", on: { early: { noted: (event) => void received.push(event.type) } } })
+    const { app } = setup({ features: [early, sink] })
+    await app.api.early.note()
+    expect(received).toEqual([])
+    expect(await app.deliverEvents()).toEqual({ delivered: 1, failed: 0 })
+    expect(received).toEqual(["noted"])
+    await expect(app.api.early.broken()).rejects.toThrow("must be a valid Date")
+  })
+
   it("writes events left for later only once their event is delivered, so a retry emits them once", async () => {
     let failures = 1
     const relay = defineFeature({

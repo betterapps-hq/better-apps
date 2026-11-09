@@ -255,6 +255,9 @@ await client.notes.add({ text: "Hi" })
 - `emit(type, data, { later: true })` writes an event the same way but leaves it for the next `app.deliverEvents()` run,
   so a bulk job can do a step per run and continue in the next instead of in one long request. A subscriber's later
   events are written with its event's removal, so a delivery that fails or is retried emits them once.
+- `emit(type, data, { availableAt })` writes an event that's due at that time, such as a recheck scheduled for tomorrow.
+  The first `app.deliverEvents()` run at or after it delivers the event, and runs before then don't read it, so a
+  scheduled event costs nothing until it's due. It implies `later`.
 - Events nobody subscribes to aren't written. The outbox table, `betterAppsEvent`, is generated only when a feature
   subscribes to events.
 
