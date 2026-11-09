@@ -713,7 +713,10 @@ async function stillShared(config: Config, context: SubjectContext, rows: readon
   try {
     const shared = new Set(await sharedByMaker(config, context, rows))
     return rows.map((row) => shared.has(row))
-  } catch {
+  } catch (error) {
+    // Grants have no onError to report to, so the failure is logged the way the default onError logs, rather than links
+    // quietly stopping granting, such as after an identity key rotation.
+    console.error("Better Apps (shortLinks): links made outside an organization grant nothing for this request.", error)
     return rows.map(() => false)
   }
 }

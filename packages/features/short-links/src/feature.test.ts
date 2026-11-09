@@ -386,10 +386,19 @@ describe("access through a link", () => {
     expect(await app.subjects.canView(null, document, { request: holder })).toBe(true)
     expect(lookups).toHaveBeenCalledTimes(1)
 
-    lookups.mockRejectedValue(new Error("The identity service is down."))
-    const checks = [document, inv1].map((ref) => ({ actor: null, ...ref, request: request(cookie) }))
-    expect(await app.subjects.canViewMany(checks)).toEqual([false, true])
-    lookups.mockRestore()
+    const down = new Error("The identity service is down.")
+    lookups.mockRejectedValue(down)
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    // Both checks carry one request, so they're asked of the grant together.
+    const shared = request(cookie)
+    const checks = [document, inv1].map((ref) => ({ actor: null, ...ref, request: shared }))
+    try {
+      expect(await app.subjects.canViewMany(checks)).toEqual([false, true])
+      expect(logged).toHaveBeenCalledWith(expect.stringContaining("shortLinks"), down)
+    } finally {
+      lookups.mockRestore()
+      logged.mockRestore()
+    }
   })
 
   it("is off when no subject type lets links grant access", async () => {
