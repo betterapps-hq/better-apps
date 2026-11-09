@@ -1,6 +1,7 @@
 import { elementAnchor } from "@better-apps/anchors"
 import { comments, commentSubjectTypes } from "@better-apps/comments"
 import { reactions } from "@better-apps/reactions"
+import { shortLinks } from "@better-apps/short-links"
 import { BetterAppsError, defineAction, defineFeature, type SubjectDefinition } from "better-apps"
 import { z } from "zod"
 
@@ -105,5 +106,13 @@ const commentReactions = reactions({
   maxPerUser: 1
 })
 
+/**
+ * Short links to invoices, at `/s/{code}`. Whoever can see an invoice can share it, and a link can let anyone who has it
+ * see the invoice without signing in.
+ */
+const invoiceLinks = shortLinks({
+  subjects: { invoice: { url: ({ subjectId }) => `/invoices/${subjectId}`, grantView: true } }
+})
+
 /** The features the app enables. `better-apps.config.ts` reads them to generate their tables. */
-export const features = [notes, invoiceComments, commentReactions] as const
+export const features = [notes, invoiceComments, commentReactions, invoiceLinks] as const

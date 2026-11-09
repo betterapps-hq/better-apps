@@ -98,6 +98,32 @@ export const reactionRemoval = sqliteTable(
   (table) => [index("reaction_removal_by_time").on(table.createdAt)]
 )
 
+export const shortLink = sqliteTable(
+  "short_link",
+  {
+    id: text("id").primaryKey(),
+    code: text("code").notNull().unique(),
+    owner: text("owner").notNull(),
+    orgId: text("org_id").default("").notNull(),
+    createdBy: text("created_by").notNull(),
+    url: text("url"),
+    subjectType: text("subject_type"),
+    subjectId: text("subject_id"),
+    grantsView: integer("grants_view", { mode: "boolean" }).default(false).notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).default(true).notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+    clicks: integer("clicks").default(0).notNull(),
+    lastClickedAt: integer("last_clicked_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull()
+  },
+  (table) => [
+    index("short_link_by_owner").on(table.owner, table.createdAt),
+    index("short_link_by_org").on(table.orgId, table.createdAt),
+    index("short_link_by_subject").on(table.subjectType, table.subjectId, table.createdAt)
+  ]
+)
+
 export const betterAppsEvent = sqliteTable(
   "better_apps_event",
   {
