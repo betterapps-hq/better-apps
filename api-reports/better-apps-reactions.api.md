@@ -92,6 +92,13 @@ export interface ListReactorsInput<Types extends ReactionsTypes = ReactionsTypes
 }
 
 // @public
+export interface LiveViewer {
+    // (undocumented)
+    actor: Actor | null;
+    request?: Request | null | undefined;
+}
+
+// @public
 export function normalizeEmoji(value: string): string;
 
 // @public
@@ -286,10 +293,10 @@ export function reactions<const Options extends ReactionsOptions>(options: Optio
         };
         toClientEvents: ActionDefinition<StandardSchemaV1<{
         event: BetterAppsEvent;
-        viewers: readonly (Actor | null)[];
+        viewers: readonly LiveViewer[];
         }, {
         event: BetterAppsEvent;
-        viewers: readonly (Actor | null)[];
+        viewers: readonly LiveViewer[];
         }>, (ClientReactionEvent | null)[]> & {
             serverOnly?: true | undefined;
         };

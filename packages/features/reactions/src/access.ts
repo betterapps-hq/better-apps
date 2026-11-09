@@ -84,13 +84,19 @@ export async function requireReactor(rules: ReactionRules, context: Context, ref
   return actor
 }
 
-/** Whether the caller is trusted server code, or a signed-in user `canModerate` allows on the subject. */
+/**
+ * Whether the caller is trusted server code, or a signed-in user who can see the subject by the app's rules and whom
+ * `canModerate` allows on it. A grant the request carries, such as a share link, never makes anyone a moderator.
+ */
 export async function isModerator(rules: ReactionRules, context: Context, ref: SubjectRef): Promise<boolean> {
   if (isTrusted(context)) {
     return true
   }
-  const { actor } = context
-  return actor !== null && rules.canModerate !== undefined && (await rules.canModerate({ actor, ...ref }))
+  const { actor, subjects } = context
+  if (!actor || !rules.canModerate) {
+    return false
+  }
+  return (await subjects.canView(actor, ref)) && (await rules.canModerate({ actor, ...ref }))
 }
 
 /** Allows trusted server code, and signed-in users who can see the subject and moderate its reactions. */

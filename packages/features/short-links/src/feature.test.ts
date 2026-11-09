@@ -336,15 +336,13 @@ describe("access through a link", () => {
     expect(answer.headers.get("set-cookie")).not.toContain("Secure")
   })
 
-  it("reads the links once per request, whatever is checked", async () => {
-    const { app, api, as, database } = setup()
+  it("reads the links again for each check, so a request reused by a live connection sees changes at once", async () => {
+    const { app, api, as } = setup()
     const link = await api.create({ target: inv1, grantsView: true }, as("ada"))
     const holder = request(`better-apps-links=${link.code}`)
     expect(await app.subjects.canView(null, inv1, { request: holder })).toBe(true)
-    database.sqlite.prepare("DELETE FROM shortLink").run()
-    // The same request still holds what it read.
-    expect(await app.subjects.canView(null, inv1, { request: holder })).toBe(true)
-    expect(await app.subjects.canView(null, inv1, { request: request(`better-apps-links=${link.code}`) })).toBe(false)
+    await api.update({ code: link.code, enabled: false })
+    expect(await app.subjects.canView(null, inv1, { request: holder })).toBe(false)
   })
 
   it("grants through a link outside any organization only while its maker could still make it", async () => {
@@ -374,7 +372,7 @@ describe("access through a link", () => {
     expect(await held()).toBe(false)
   })
 
-  it("checks each maker once per request, and lets other links grant when the identity lookup fails", async () => {
+  it("checks each maker once per check, and lets other links grant when the identity lookup fails", async () => {
     const { app, api, as, identity, errors } = setup()
     const document = { subjectType: "document", subjectId: "doc-1" } as const
     const loose = await api.create({ target: document, grantsView: true }, as("solo"))
@@ -382,8 +380,9 @@ describe("access through a link", () => {
     const cookie = `better-apps-links=${loose.code}.${org.code}`
     const lookups = vi.spyOn(identity, "getActorsFor")
     const holder = request(cookie)
-    expect(await app.subjects.canView(null, document, { request: holder })).toBe(true)
-    expect(await app.subjects.canView(null, document, { request: holder })).toBe(true)
+    // Two checks of the record in one call, which asks the grant once.
+    const twice = [document, document].map((ref) => ({ actor: null, ...ref, request: holder }))
+    expect(await app.subjects.canViewMany(twice)).toEqual([true, true])
     expect(lookups).toHaveBeenCalledTimes(1)
 
     const down = new Error("The identity service is down.")

@@ -36,7 +36,8 @@ export interface GrantArgs {
   request: Request
   /**
    * Reports an error the grants recovered from, such as a lookup that failed and so granted nothing, to the app's
-   * `onError`, named as the feature's. It never throws, and it doesn't wait for the report.
+   * `onError`, named as the feature's, handing the report to the request's `waitUntil` when it's being served with one.
+   * It never throws, and it doesn't wait for the report.
    */
   reportError: (error: unknown) => void
 }
@@ -150,22 +151,11 @@ export function createSubjects(
     db: DatabaseAdapter
     identity: Identity
     grants?: readonly FeatureGrants[] | undefined
-    onError?: ((error: unknown, context: ErrorContext) => void) | undefined
+    /** Reports a grant's error as its feature's, for the request it was checking. It never throws. */
+    reportError?: ((error: unknown, context: ErrorContext, request: Request) => void) | undefined
   }
 ): Subjects {
   const grants = options.grants ?? []
-  const reporters = new Map(
-    grants.map(({ feature }) => [
-      feature,
-      (error: unknown) => {
-        try {
-          options.onError?.(error, { feature })
-        } catch {
-          // Reporting never fails a check.
-        }
-      }
-    ])
-  )
   const definitionOf = (subjectType: string): SubjectDefinition => {
     const definition = declared.get(subjectType)
     if (!definition) {
@@ -269,9 +259,16 @@ export function createSubjects(
           return { subjectType, subjectId }
         })
         const answers = await Promise.all(
-          grants.map(async ({ feature, grants: granted }) =>
-            granted.canViewMany(refs, { request, reportError: reporters.get(feature) ?? (() => undefined) }, context)
-          )
+          grants.map(async ({ feature, grants: granted }) => {
+            const reportError = (error: unknown) => options.reportError?.(error, { feature }, request)
+            try {
+              return await granted.canViewMany(refs, { request, reportError }, context)
+            } catch (error) {
+              // A grant that fails grants nothing, rather than failing the check and other features' grants with it.
+              reportError(error)
+              return refs.map(() => false)
+            }
+          })
         )
         for (const [position, index] of indexes.entries()) {
           allowed[index] = answers.some((granted) => granted[position] === true)

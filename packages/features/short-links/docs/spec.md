@@ -143,9 +143,9 @@ may not have the random part such a link needs.
 1. Opening such a link sets an HTTP-only cookie, `Secure` over HTTPS, with `SameSite=Lax`, that holds the code. The
    cookie keeps the codes of the last 20 such links opened.
 2. The feature declares a core access grant (see [Access grants](#access-grants)). For a request with that cookie, it
-   reads the links by their codes in one query, and grants viewing a record when one of them points to it, is turned on,
-   hasn't expired, its subject type's `grantView` isn't `false`, and the record's organization is still the link's and
-   owns it.
+   reads the links by their codes in one query on each check, and grants viewing a record when one of them points to it,
+   is turned on, hasn't expired, its subject type's `grantView` isn't `false`, and the record's organization is still
+   the link's and owns it.
 3. Read checks that pass the request, such as `app.subjects.canView(actor, ref, { request })`, then allow the record,
    for signed-in people and signed-out visitors alike.
 
@@ -157,7 +157,7 @@ can see and share the record, so someone who has since lost access can't reopen 
 
 Whose access a link stands for depends on where it was made:
 
-- A link made outside any organization stands for its maker. Once per request, the maker is rebuilt with
+- A link made outside any organization stands for its maker. Once per check, the maker is rebuilt with
   `identity.getActorsFor`, and the link grants access only while they can still see the record, by a check that doesn't
   pass the request, and `canShare` and `grantView` still allow them. Someone who loses access to a record, or loses the
   right to share it, takes their links' access with them. A maker the identity adapter no longer finds grants nothing,

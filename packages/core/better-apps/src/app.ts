@@ -231,11 +231,13 @@ export function createBetterApps<const Features extends readonly BetterAppsFeatu
       // The runtime refused it, such as after its context ended, so the report runs on without it.
     }
   }
+  // Each request's waitUntil while it's served, so a grant's report from a check on it isn't cut off.
+  const waitUntils = new WeakMap<Request, (promise: Promise<unknown>) => void>()
   const subjects = createSubjects(declareSubjects(options), {
     db,
     identity,
     grants: features.flatMap((feature) => (feature.grants ? [{ feature: feature.id, grants: feature.grants }] : [])),
-    onError: (error, context) => onError(error, context)
+    reportError: (error, context, request) => onError(error, context, waitUntils.get(request))
   })
   const outbox = createOutbox({ db, features, identity, subjects, onError })
 
@@ -313,6 +315,9 @@ export function createBetterApps<const Features extends readonly BetterAppsFeatu
     for (const [name, { feature, action }] of byName) {
       methods[name] = async (input, callOptions = {}) => {
         const { request, actor: given, author, createdAt, silent, waitUntil } = callOptions
+        if (request && waitUntil) {
+          waitUntils.set(request, waitUntil)
+        }
         let actor: Actor | null = null
         if (given !== undefined) {
           actor = given
@@ -390,6 +395,9 @@ export function createBetterApps<const Features extends readonly BetterAppsFeatu
   }
 
   async function handler(request: Request, context: HandlerContext = {}): Promise<Response> {
+    if (context.waitUntil) {
+      waitUntils.set(request, context.waitUntil.bind(context))
+    }
     const url = new URL(request.url)
     const { pathname } = url
     if (routes.length > 0) {

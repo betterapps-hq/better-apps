@@ -43,7 +43,7 @@ export function sharing(...invoiceIds: string[]): Request {
   return new Request("https://app.test/", { headers: { "x-share": invoiceIds.join(",") } })
 }
 
-const shares = defineFeature({
+export const shares = defineFeature({
   id: "shares",
   grants: {
     canViewMany: (refs, { request }) => {

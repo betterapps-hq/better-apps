@@ -642,28 +642,23 @@ function mayGrant(config: Config, row: LinkRow): boolean {
 }
 
 /**
- * Which subjects a request may see through the links in its cookie: one query for the links, cached for the request,
- * then each subject is granted by a link to it that's on, unexpired, and in the record's current organization.
+ * Which subjects a request may see through the links in its cookie: one query for the links, then each subject is
+ * granted by a link to it that's on, unexpired, and in the record's current organization. Nothing is kept between
+ * checks, so a link turned off counts at once, even for a live connection that reuses its request.
  */
 function grantsFor(config: Config): SubjectGrants {
-  const read = new WeakMap<Request, Promise<LinkRow[]>>()
-  const makersChecked = new WeakMap<Request, Map<string, Promise<boolean>>>()
   return {
     async canViewMany(refs: readonly SubjectRef[], { request, reportError }: GrantArgs, context: SubjectContext) {
       const codes = grantCodes(request, config.cookie.name)
       if (codes.length === 0) {
         return refs.map(() => false)
       }
-      let rows = read.get(request)
-      if (!rows) {
-        rows = context.db.findMany<LinkRow>({
-          model: linkModel,
-          where: [{ field: "code", operator: "in", value: codes }]
-        })
-        read.set(request, rows)
-      }
+      const rows = await context.db.findMany<LinkRow>({
+        model: linkModel,
+        where: [{ field: "code", operator: "in", value: codes }]
+      })
       const now = new Date()
-      const granting = (await rows).filter((row) => row.grantsView && isOpen(row, now) && mayGrant(config, row))
+      const granting = rows.filter((row) => row.grantsView && isOpen(row, now) && mayGrant(config, row))
       const links = refs.map((ref) =>
         granting.filter((row) => row.subjectType === ref.subjectType && row.subjectId === ref.subjectId)
       )
@@ -677,22 +672,11 @@ function grantsFor(config: Config): SubjectGrants {
       const valid = new Set(placed.filter((row) => row.orgId !== ""))
       const loose = placed.filter((row) => row.orgId === "")
       if (loose.length > 0) {
-        // Each link's maker is checked once per request, however many checks ask about the record.
-        const known = makersChecked.get(request) ?? new Map<string, Promise<boolean>>()
-        makersChecked.set(request, known)
-        const fresh = loose.filter((row) => !known.has(row.id))
-        if (fresh.length > 0) {
-          const answers = stillShared(config, context, fresh, reportError)
-          for (const [index, row] of fresh.entries()) {
-            known.set(
-              row.id,
-              answers.then((shared) => shared[index] === true)
-            )
-          }
-        }
-        const shared = await Promise.all(loose.map(async (row) => known.get(row.id)))
-        for (const [index, row] of loose.entries()) {
-          if (shared[index]) {
+        // Each link's maker is checked once, however many of the check's subjects it links to.
+        const distinct = [...new Set(loose)]
+        const answers = await stillShared(config, context, distinct, reportError)
+        for (const [index, row] of distinct.entries()) {
+          if (answers[index]) {
             valid.add(row)
           }
         }

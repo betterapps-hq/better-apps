@@ -73,9 +73,9 @@ export const app = createBetterApps({
   whether they depend on the organization as `emojisByOrg`, `maxPerUser`, `maxEmojis` and `reactorVisibility`, such as
   for a picker.
 - These three reads count the [access grants](../../core/better-apps/README.md#access-grants) the request carries, such
-  as a share link to the record. Someone who sees the record only through one isn't among its viewers, so they see who
-  reacted only when that's `public`. `react`, `unreact` and `removeReactions` never count a grant, so a link never lets
-  anyone react.
+  as a share link to the record. Someone who sees the record only through one isn't among its viewers and can't moderate
+  it, so they see who reacted only when that's `public`. `react`, `unreact` and `removeReactions` never count a grant,
+  so a link never lets anyone react.
 - `react` and `unreact` take `{ subjectType, subjectId, emoji }`. Both are safe to repeat: `react` returns
   `added: false` when the person had already reacted, and `unreact` returns `removed: false` when they hadn't, or when
   another removal, such as from another tab, got there first.
@@ -128,8 +128,8 @@ may see, or `null` when they can't see the record. With the viewer's request, gr
 reads. Its `mine` says whether the viewer made the change, and its `userId` is `""` when `reactorVisibility` keeps who
 reacted from that viewer. Removals marked `bulk` aren't sent to browsers; instead `subject.changed` and `subject.moved`
 become one `subject.changed` client event for the record, so browsers load it again.
-`toClientEvents({ event, viewers })` does the same for many viewers, in order, with one `canViewMany` call, for a live
-updates feature with many connections.
+`toClientEvents({ event, viewers })` does the same for many viewers, each `{ actor, request? }`, in order, with one
+`canViewMany` call by the app's rules and one for grants, for a live updates feature with many connections.
 
 ## In the browser
 

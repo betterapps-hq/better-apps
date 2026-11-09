@@ -139,7 +139,8 @@ await app.subjects.canView(actor, { subjectType: "invoice", subjectId }, { reque
   subjects in one call.
 - A signed-in user and a signed-out visitor are granted alike. `isPublic` stays about the app's rules.
 - Grants that recover from an error, such as a lookup that failed and so granted nothing, pass it to `reportError`. It
-  goes to the app's `onError` as the feature's, and the check goes on.
+  goes to the app's `onError` as the feature's, with the request's `waitUntil` when it has one, and the check goes on. A
+  grant that throws grants nothing for that check, and its error goes to `onError` the same way.
 
 ## Identity
 

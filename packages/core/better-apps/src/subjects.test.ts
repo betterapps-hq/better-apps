@@ -229,4 +229,66 @@ describe("subjects", () => {
     expect(await subjects.canView(ada, { subjectType: "invoice", subjectId: "inv-2" }, { request })).toBe(false)
     expect(onError).toHaveBeenCalledWith(failure, { feature: "shares" })
   })
+
+  it("fails a throwing grant closed and reports it, while other grants and the check go on", async () => {
+    const failure = new Error("The share service is down.")
+    const broken = defineFeature({
+      id: "broken",
+      grants: {
+        canViewMany: () => {
+          throw failure
+        }
+      }
+    })
+    const shares = defineFeature({
+      id: "shares",
+      grants: { canViewMany: (refs) => refs.map((ref) => ref.subjectId === "inv-2") }
+    })
+    const onError = vi.fn<(error: unknown, context: ErrorContext) => void>()
+    const { subjects } = setup({ invoice, page }, [broken, shares], onError)
+    const request = new Request("https://app.test/")
+    expect(await subjects.canView(ada, { subjectType: "invoice", subjectId: "inv-2" }, { request })).toBe(true)
+    expect(await subjects.canView(ada, { subjectType: "invoice", subjectId: "inv-3" }, { request })).toBe(false)
+    expect(onError).toHaveBeenCalledWith(failure, { feature: "broken" })
+
+    // An onError that throws doesn't fail the check either.
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    try {
+      const { subjects: strict } = setup({ invoice, page }, [broken, shares], () => {
+        throw new Error("The reporter is down.")
+      })
+      expect(await strict.canView(ada, { subjectType: "invoice", subjectId: "inv-2" }, { request })).toBe(true)
+    } finally {
+      logged.mockRestore()
+    }
+  })
+
+  it("hands a grant's report to the waitUntil of the request it was checking", async () => {
+    const shares = defineFeature({
+      id: "shares",
+      grants: {
+        canViewMany: (refs, { reportError }) => {
+          reportError(new Error("A link's maker couldn't be checked."))
+          return refs.map(() => false)
+        }
+      },
+      actions: {
+        peek: defineAction({
+          handler: async ({ actor, subjects, request }) =>
+            subjects.canView(actor, { subjectType: "invoice", subjectId: "inv-2" }, { request })
+        })
+      }
+    })
+    const app = createBetterApps({
+      database: memoryDatabase().database,
+      identity,
+      subjects: { invoice, page },
+      features: [shares],
+      onError: async () => undefined
+    })
+    const waitUntil = vi.fn<(promise: Promise<unknown>) => void>()
+    const request = new Request("https://app.test/")
+    expect(await app.api.shares.peek(undefined, { actor: ada, request, waitUntil })).toBe(false)
+    expect(waitUntil).toHaveBeenCalledWith(expect.any(Promise))
+  })
 })

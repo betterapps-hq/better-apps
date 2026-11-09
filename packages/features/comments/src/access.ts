@@ -1,4 +1,4 @@
-import type { Actor, SubjectArgs, SubjectRef, Subjects } from "better-apps"
+import type { Actor, SubjectArgs, SubjectCheck, SubjectRef, Subjects } from "better-apps"
 import { CommentsError } from "./errors.js"
 import type { CommentRules } from "./options.js"
 import type { CommentThread } from "./schema.js"
@@ -138,26 +138,14 @@ export async function viewThreads(
   subjects: Subjects,
   pairs: readonly { actor: Actor | null; thread: CommentThread; request?: Request | null | undefined }[]
 ): Promise<ThreadView[]> {
-  const allowed = await viewThreadsByRules(rules, subjects, pairs)
+  const placed = await inPlace(rules, subjects, pairs)
+  const allowed = await viewThreadsByRules(rules, subjects, pairs, placed)
   const views: ThreadView[] = allowed.map((seen) => (seen ? "rules" : null))
-  const askable = pairs.flatMap(({ thread, request }, index) =>
-    !allowed[index] && request && thread.visibility === "default" && Object.hasOwn(rules, thread.subjectType)
-      ? [index]
-      : []
+  const candidates = pairs.flatMap(({ thread, request }, index) =>
+    !allowed[index] && request && placed[index] && thread.visibility === "default" ? [index] : []
   )
-  if (askable.length === 0) {
-    return views
-  }
-  const sameOrg = await Promise.all(
-    askable.map(async (index) => {
-      const { actor, thread } = pairs[index] as (typeof pairs)[number]
-      return (
-        subjects.has(thread.subjectType) && (await orgOf(subjects, { actor, trusted: false }, thread)) === thread.orgId
-      )
-    })
-  )
-  const candidates = askable.filter((_, position) => sameOrg[position])
-  const granted = await subjects.canViewMany(
+  const granted = await canViewDistinct(
+    subjects,
     candidates.map((index) => {
       const { actor, thread, request } = pairs[index] as (typeof pairs)[number]
       return { actor, subjectType: thread.subjectType, subjectId: thread.subjectId, request }
@@ -171,25 +159,68 @@ export async function viewThreads(
   return views
 }
 
-async function viewThreadsByRules(
+/**
+ * Whether each thread is on a subject type comments are set up for, and in its subject's current organization, with
+ * one organization lookup per subject type for the threads' distinct subjects.
+ */
+async function inPlace(
   rules: Readonly<Record<string, CommentRules>>,
   subjects: Subjects,
   pairs: readonly { actor: Actor | null; thread: CommentThread }[]
 ): Promise<boolean[]> {
   // Threads on a subject type comments are no longer set up for can't be seen.
   const known = pairs.map(({ thread }) => Object.hasOwn(rules, thread.subjectType) && subjects.has(thread.subjectType))
-  const orgs = new Map<string, Promise<string>>()
-  const orgOfThread = async (actor: Actor | null, { subjectType, subjectId }: CommentThread) => {
-    const key = JSON.stringify([subjectType, subjectId])
-    const org = orgs.get(key) ?? orgOf(subjects, { actor, trusted: false }, { subjectType, subjectId })
-    orgs.set(key, org)
-    return org
+  const keyOf = ({ subjectType, subjectId }: SubjectRef) => JSON.stringify([subjectType, subjectId])
+  const refs = new Map<string, SubjectRef>()
+  for (const [index, { thread }] of pairs.entries()) {
+    if (known[index]) {
+      refs.set(keyOf(thread), { subjectType: thread.subjectType, subjectId: thread.subjectId })
+    }
   }
-  const sameOrg = await Promise.all(
-    pairs.map(async ({ actor, thread }, index) => known[index] && (await orgOfThread(actor, thread)) === thread.orgId)
-  )
-  const candidates = pairs.flatMap((pair, index) => (sameOrg[index] ? [index] : []))
-  const viewers = await subjects.canViewMany(
+  const signedIn = pairs.find(({ actor }) => actor !== null)?.actor ?? null
+  const found = await subjects.getOrgIds([...refs.values()], signedIn)
+  const orgs = new Map([...refs.keys()].map((key, index) => [key, found[index] ?? ""]))
+  return pairs.map(({ thread }, index) => known[index] === true && orgs.get(keyOf(thread)) === thread.orgId)
+}
+
+/**
+ * `canViewMany` for checks that may repeat, such as one per comment on the same record, asking about each distinct
+ * actor, subject and request once.
+ */
+async function canViewDistinct(subjects: Subjects, checks: readonly SubjectCheck[]): Promise<boolean[]> {
+  if (checks.length === 0) {
+    return []
+  }
+  const ids = new Map<object, number>()
+  const idOf = (value: object | null | undefined) => {
+    if (!value) {
+      return null
+    }
+    if (!ids.has(value)) {
+      ids.set(value, ids.size)
+    }
+    return ids.get(value) ?? null
+  }
+  const distinct = new Map<string, SubjectCheck>()
+  const keys = checks.map((check) => {
+    const key = JSON.stringify([idOf(check.actor), idOf(check.request), check.subjectType, check.subjectId])
+    distinct.set(key, check)
+    return key
+  })
+  const answers = await subjects.canViewMany([...distinct.values()])
+  const byKey = new Map([...distinct.keys()].map((key, index) => [key, answers[index] === true]))
+  return keys.map((key) => byKey.get(key) === true)
+}
+
+async function viewThreadsByRules(
+  rules: Readonly<Record<string, CommentRules>>,
+  subjects: Subjects,
+  pairs: readonly { actor: Actor | null; thread: CommentThread }[],
+  placed: readonly boolean[]
+): Promise<boolean[]> {
+  const candidates = pairs.flatMap((_, index) => (placed[index] ? [index] : []))
+  const viewers = await canViewDistinct(
+    subjects,
     candidates.map((index) => {
       const { actor, thread } = pairs[index] as (typeof pairs)[number]
       return { actor, subjectType: thread.subjectType, subjectId: thread.subjectId }

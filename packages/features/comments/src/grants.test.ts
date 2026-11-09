@@ -1,6 +1,6 @@
 import type { BetterAppsEvent } from "better-apps"
-import { describe, expect, it } from "vite-plus/test"
-import { expectCode, setup, sharing } from "../test/app.js"
+import { describe, expect, it, vi } from "vite-plus/test"
+import { expectCode, setup, sharing, subjects } from "../test/app.js"
 import { commentSubjectTypes } from "./index.js"
 
 // Gus's organization owns inv-globex; Bob, in another one, sees it only through a grant, such as a share link.
@@ -86,5 +86,21 @@ describe("comments a request's grant reaches", () => {
     ).toMatchObject({ thread: { createdBy: "" }, comment: { authorId: "", body: null, bodyText: "Due Friday" } })
     const hidden = created.find((found) => found !== event) as BetterAppsEvent
     expect(await api.toClientEvent({ event: hidden, viewer, request: sharing("inv-globex") })).toBeNull()
+  })
+
+  it("look up each record's organization once, however many of its comments are asked about", async () => {
+    const getOrgId = vi.fn<typeof subjects.invoice.getOrgId>(subjects.invoice.getOrgId)
+    const { app, api, as } = setup({}, { invoice: { ...subjects.invoice, getOrgId } })
+    const { comment } = await api.createThread({ ...shared, body: "One" }, as("gus"))
+    const ids = [comment.id]
+    for (const body of ["Two", "Three", "Four", "Five"]) {
+      ids.push((await api.reply({ threadId: comment.threadId, body }, as("gus"))).comment.id)
+    }
+    getOrgId.mockClear()
+    const request = sharing("inv-globex")
+    const checks = ids.map((id) => ({ actor: null, subjectType: commentSubjectTypes.comment, subjectId: id, request }))
+    expect(await app.subjects.canViewMany(checks)).toEqual([true, true, true, true, true])
+    // Once for the app's rules and once for the grant, not once per comment.
+    expect(getOrgId).toHaveBeenCalledTimes(2)
   })
 })
