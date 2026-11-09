@@ -35,6 +35,7 @@ import { Link, useLocation, useMatch } from "@tanstack/react-router"
 import {
   ChevronsUpDownIcon,
   FileTextIcon,
+  GlobeIcon,
   LogInIcon,
   LogOutIcon,
   MonitorIcon,
@@ -126,6 +127,16 @@ function AppSidebar() {
                   <span>Notes</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={pathname === "/settings/domains"}
+                  render={<Link to="/settings/domains" />}
+                  tooltip="Domains"
+                >
+                  <GlobeIcon />
+                  <span>Domains</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -138,7 +149,12 @@ function AppSidebar() {
   )
 }
 
-const pageNames: Record<string, string> = { "/invoices": "Invoices", "/notes": "Notes", "/sign-in": "Sign in" }
+const pageNames: Record<string, string> = {
+  "/invoices": "Invoices",
+  "/notes": "Notes",
+  "/settings/domains": "Domains",
+  "/sign-in": "Sign in"
+}
 
 /** Where the page sits in the app, ending with the page itself. */
 function Crumbs() {

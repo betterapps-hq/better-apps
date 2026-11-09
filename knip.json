@@ -26,6 +26,9 @@
     "packages/features/short-links": {
       "entry": ["src/index.ts", "src/client.ts", "src/react.tsx"]
     },
+    "packages/features/domains": {
+      "entry": ["src/index.ts", "src/client.ts", "src/react.tsx"]
+    },
     "packages/adapters/database-drizzle": {
       "entry": ["src/index.ts"]
     },
@@ -39,6 +42,9 @@
       "entry": ["src/index.ts"]
     },
     "packages/adapters/storage-r2": {
+      "entry": ["src/index.ts"]
+    },
+    "packages/adapters/hostnames-cloudflare": {
       "entry": ["src/index.ts"]
     },
     "packages/integrations/react": {

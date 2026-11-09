@@ -18,6 +18,7 @@
     "@better-apps/attachments": "workspace:*",
     "@better-apps/comments": "workspace:*",
     "@better-apps/database-drizzle": "workspace:*",
+    "@better-apps/domains": "workspace:*",
     "@better-apps/identity-better-auth": "workspace:*",
     "@better-apps/mentions": "workspace:*",
     "@better-apps/react": "workspace:*",

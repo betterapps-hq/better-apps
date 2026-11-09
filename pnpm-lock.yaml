@@ -223,6 +223,9 @@ importers:
       '@better-apps/database-drizzle':
         specifier: workspace:*
         version: link:../../packages/adapters/database-drizzle
+      '@better-apps/domains':
+        specifier: workspace:*
+        version: link:../../packages/features/domains
       '@better-apps/identity-better-auth':
         specifier: workspace:*
         version: link:../../packages/adapters/identity-better-auth
@@ -370,6 +373,36 @@ importers:
       pg:
         specifier: 8.23.1
         version: 8.23.1
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+      vite-plus:
+        specifier: 'catalog:'
+        version: 1.4.0(@types/node@24.19.2)(@vitest/coverage-v8@5.0.5)(@vitest/ui@5.0.5)(esbuild@0.28.2)(happy-dom@21.0.4)(jiti@2.7.0)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1)
+      vitest:
+        specifier: 'catalog:'
+        version: 5.0.5(@types/node@24.19.2)(@vitest/browser-preview@5.0.5)(@vitest/coverage-v8@5.0.5)(@vitest/ui@5.0.5)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1))(esbuild@0.28.2)(happy-dom@21.0.4)(jiti@2.7.0)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1)
+
+  packages/adapters/hostnames-cloudflare:
+    devDependencies:
+      '@better-apps/domains':
+        specifier: workspace:*
+        version: link:../../features/domains
+      '@repo/typescript-config':
+        specifier: workspace:*
+        version: link:../../../internal/typescript-config
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
+      '@vitest/coverage-v8':
+        specifier: 'catalog:'
+        version: 5.0.5(@vitest/browser@5.0.5)(vitest@5.0.5)
+      better-apps:
+        specifier: workspace:*
+        version: link:../../core/better-apps
+      cloudflare:
+        specifier: 7.3.0
+        version: 7.3.0
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -617,6 +650,61 @@ importers:
       '@better-apps/mentions':
         specifier: workspace:*
         version: link:../mentions
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@better-apps/react':
+        specifier: workspace:*
+        version: link:../../integrations/react
+      '@better-apps/testing':
+        specifier: workspace:*
+        version: link:../../tooling/testing
+      '@repo/typescript-config':
+        specifier: workspace:*
+        version: link:../../../internal/typescript-config
+      '@testing-library/react':
+        specifier: ^16.3.3
+        version: 16.3.3(@testing-library/dom@10.4.2)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
+      '@types/react':
+        specifier: ^19.3.0
+        version: 19.3.0
+      '@types/react-dom':
+        specifier: ^19.3.0
+        version: 19.3.0(@types/react@19.3.0)
+      '@vitest/coverage-v8':
+        specifier: 'catalog:'
+        version: 5.0.5(@vitest/browser@5.0.5)(vitest@5.0.5)
+      better-apps:
+        specifier: workspace:*
+        version: link:../../core/better-apps
+      drizzle-orm:
+        specifier: 0.45.4
+        version: 0.45.4(@neondatabase/serverless@1.2.0)(@types/pg@8.23.1)(kysely@0.29.7)(mysql2@3.24.6(@types/node@24.19.2))(pg@8.23.1)
+      happy-dom:
+        specifier: ^21.0.4
+        version: 21.0.4
+      react:
+        specifier: 19.3.1
+        version: 19.3.1
+      react-dom:
+        specifier: 19.3.1
+        version: 19.3.1(react@19.3.1)
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+      vite-plus:
+        specifier: 'catalog:'
+        version: 1.4.0(@types/node@24.19.2)(@vitest/coverage-v8@5.0.5)(@vitest/ui@5.0.5)(esbuild@0.28.2)(happy-dom@21.0.4)(jiti@2.7.0)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1)
+      vitest:
+        specifier: 'catalog:'
+        version: 5.0.5(@types/node@24.19.2)(@vitest/browser-preview@5.0.5)(@vitest/coverage-v8@5.0.5)(@vitest/ui@5.0.5)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1))(esbuild@0.28.2)(happy-dom@21.0.4)(jiti@2.7.0)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1)
+
+  packages/features/domains:
+    dependencies:
       zod:
         specifier: ^4.6.7
         version: 4.6.7
@@ -4179,6 +4267,10 @@ packages:
   cli-width@4.1.0:
     resolution: {integrity: sha512-ouuZd4/dm2Sw5Gmqy6bGyNNNe1qt9RpmxveLSO7KcgsTnU7RXfsw+/bukWGo1abgBiMAic068rclZsO4IWmmxQ==}
     engines: {node: '>= 12'}
+
+  cloudflare@7.3.0:
+    resolution: {integrity: sha512-0P4cMFjzdIe388E57xNCV2wKzv1ZVZqMFu7+p2gsZuggbXs39xTKtXJN8FACkKh+xjLQ7dNruNlT/aT+9ajJtg==}
+    hasBin: true
 
   clsx@2.1.1:
     resolution: {integrity: sha512-eYm0QWBtUrBWZWG0d386OGAw16Z995PiOVo2B7bjWSbHedGl5e0ZWaq65kOGgUSNesEIDkB9ISbTg/JK9dhCZA==}
@@ -8647,6 +8739,8 @@ snapshots:
       clsx: 2.1.1
 
   cli-width@4.1.0: {}
+
+  cloudflare@7.3.0: {}
 
   clsx@2.1.1: {}
 

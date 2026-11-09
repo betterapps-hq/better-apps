@@ -8,3 +8,4 @@
 - [Releases](releases.md)
 - [Deploying on Void](deploy-plan.md)
 - [Attachments spec: files on records, uploads, downloads and cleanup](../packages/features/attachments/docs/spec.md)
+- [Domains spec, with the one-time Cloudflare for SaaS setup](../packages/features/domains/docs/spec.md)

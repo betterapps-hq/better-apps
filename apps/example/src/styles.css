@@ -1182,3 +1182,173 @@ code {
     padding: 0;
   }
 }
+
+/* Domains */
+
+.domain-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.domain-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+}
+
+.domain-kinds [data-slot="field"] {
+  width: auto;
+}
+
+.domains {
+  display: grid;
+  gap: 1rem;
+}
+
+.domain {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.domain-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.domain-title {
+  display: grid;
+  gap: 0.375rem;
+  min-width: 0;
+}
+
+.domain-title h3 {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.domain-badges,
+.domain-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.domain-kind,
+.domain-checked,
+.dns-purpose {
+  font-size: 0.8125rem;
+}
+
+.domain-status-active {
+  color: var(--status-paid);
+  background: var(--status-paid-bg);
+}
+
+.domain-status-pending {
+  color: var(--status-sent);
+  background: var(--status-sent-bg);
+}
+
+.domain-status-failed {
+  color: var(--status-overdue);
+  background: var(--status-overdue-bg);
+}
+
+.domain-error {
+  font-size: 0.875rem;
+}
+
+.dns-records {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.dns-records-intro {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.dns-records ul {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.dns-record {
+  display: grid;
+  gap: 0.375rem;
+  padding: 0.75rem;
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--muted);
+}
+
+.dns-record-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.dns-type {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.dns-found {
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.dns-found-true {
+  color: var(--status-paid);
+}
+
+.dns-found-false,
+.dns-found-null {
+  color: var(--muted-foreground);
+}
+
+.dns-record dl {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.dns-value {
+  display: grid;
+  grid-template-columns: 3.5rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+}
+
+.dns-value dt {
+  color: var(--muted-foreground);
+}
+
+.dns-value dd {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.dns-value code {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.domain-title h3:focus-visible,
+#your-domains:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
