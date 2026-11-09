@@ -73,7 +73,7 @@ shortLinks({
 - `path` is where links open, `/s` by default. It can't be directly under the app's `basePath`, where a link's URL would
   look like an action's.
 - `baseUrl` is the origin of the short URLs the actions return, such as a shorter domain that serves the same app. The
-  request's origin, by default.
+  request's origin, by default. `hosts` needs it.
 - `hosts` opens links on organizations' own domains and shares them there, as
   [Organizations' domains](#organizations-domains) describes. Without it, every host that serves the app opens every
   link.
@@ -258,30 +258,37 @@ page answers for the missing record.
 An organization with a ready domain, a subdomain such as `acme.yourapp.com` or its own such as `links.acme.com`, can
 share its links there: `links.acme.com/s/abc123`. Short links never import the domains feature. The app connects them
 through `hosts`, usually with [`@better-apps/domains`](../../domains/docs/spec.md)' server-only `lookup` and
-`getPrimary`:
+`getPrimary`. The app's file imports the features, so `linkDomains()` returns the domains the app passes in once it
+exists, and throws before then, as the [README](../README.md#organizations-domains) shows:
 
 ```ts
+baseUrl: "https://app.yourapp.com",
 hosts: {
   resolve: async ({ hostname }) => {
     if (hostname === "app.yourapp.com") {
       return "app"
     }
-    const match = await app.api.domains.lookup({ hostname })
+    const match = await linkDomains().lookup({ hostname })
     return match?.verified && match.orgId ? { orgId: match.orgId } : null
   },
-  origin: async ({ owner }) => {
-    if (owner.type !== "org") {
+  origin: async ({ orgId }) => {
+    if (orgId === null) {
       return null
     }
-    const primary = await app.api.domains.getPrimary({ orgId: owner.id })
+    const primary = await linkDomains().getPrimary({ orgId })
     return primary?.status === "active" ? `https://${primary.hostname}` : null
   }
 }
 ```
 
+`hosts` needs `baseUrl`, the app's own origin, which `resolve` calls `"app"`. An action can be called from an
+organization's domain, and the request's origin there doesn't open everyone's links.
+
 ### Which host opens which links
 
-`resolve({ hostname, request })` runs for each link opened, with the host lowercase and without its port:
+`resolve({ hostname, request })` runs for each link opened. `hostname` is the request URL's, lowercase and without its
+port or a trailing dot, so `Links.Acme.com.:443` is `links.acme.com`. Headers such as `X-Forwarded-Host` play no part.
+It returns:
 
 - `"app"`: the app's own host, which opens every link, such as ones shared before the organization had a domain.
 - `{ orgId }`: a domain the organization verified, which opens only the links that organization owns. A link a member
@@ -291,8 +298,9 @@ hosts: {
   and the link isn't read.
 
 A link the host doesn't open answers as a missing one does, through `notFound`, which isn't told why. So
-`links.acme.com` never opens Globex's links and gives nothing away about which codes Globex has. Codes stay unique
-across the app, so a code means the same link on every host that opens it, and opening one is still one read.
+`links.acme.com` never opens Globex's links and gives nothing away about which codes Globex has when they're opened.
+Codes stay unique across the app, so a code means the same link on every host that opens it, and opening one is still
+one read.
 
 An app without organizations, such as one whose workspace has its own domains, can return `"app"` for its workspace's
 ready domains, so they open every link.
@@ -306,24 +314,35 @@ route at `path`, every host already reaches the link route.
 
 ### Short URLs
 
-`origin({ owner, orgId })` gives the origin of a link's short URL, such as `https://links.acme.com`, or `null` for the
-app's own: `baseUrl`, or the request's origin. It runs once per owner in a call, so `list` asks once for a page of one
-organization's links. It should name a host that opens the link: the owning organization's domain for its links, or a
-host `resolve` calls `"app"`. An app's share dialog, and anything else that shows `shortUrl`, then shows the
-organization's primary domain once it's ready, and the app's host before then.
+`origin({ orgId })` gives the origin of an organization's short URLs, such as `https://links.acme.com`, or `null` for
+`baseUrl`. Links made outside any organization ask with `orgId` `null`. A person's own links made in an organization
+always use `baseUrl` without asking, since only the app's host opens them. It runs once per organization in a call, so
+`list` asks once for a page of one organization's links. It should name a host that opens the organization's links: its
+domain, or a host `resolve` calls `"app"`. An app's share dialog, and anything else that shows `shortUrl`, then shows
+the organization's primary domain once it's ready, and the app's host before then.
 
 ### Links that grant access
 
 The grant cookie is set on the host that opens the link, and browsers only send it to that host, or to every host under
-`cookie.domain`.
+`cookie.domain`. On a host outside `cookie.domain`, such as an organization's own domain, it's set for that host alone,
+since browsers drop a cookie for a domain that doesn't cover the host setting it.
 
 - A subdomain such as `acme.yourapp.com`, with records on `app.yourapp.com`, works with
   `cookie: { domain: "yourapp.com" }`: the link is shared on the subdomain and grants access on the app's host.
 - A domain of the organization's own, such as `links.acme.com`, can't share a cookie with `app.yourapp.com`. A link that
   grants access to a record there keeps its short URL on the app's host. Opened on the domain anyway, it sends the
-  visitor to the same link on the record's host, which sets the cookie there and counts the click.
+  visitor to the same link on the record's host, which sets the cookie there and counts the click. That host is never
+  the one the link was opened on, so a link sends a visitor on once at most.
 - A record the domain serves itself, when `url` returns a path the app serves on every host, is reached from the domain,
   so such links are shared there.
+
+Writing the short URL of a link that grants access asks the record's `url`, to see which host reaches it. It's asked
+once per record in a call, so `list` asks once per record on the page, however many of its links there are.
+
+### Known limits
+
+- Codes are unique across the app, not per domain. Two organizations can't both have a custom code such as `pricing`,
+  and the second to ask gets `CONFLICT`, which tells it the code is taken.
 
 ## Core support
 

@@ -68,15 +68,17 @@ export type LinkHost = "app" | { orgId: string } | null
 
 /** What `hosts.resolve` receives. */
 export interface ResolveHostArgs {
-  /** The host a link was opened on, lowercase and without the port, such as `links.acme.com`. */
+  /**
+   * The host of the request's URL, lowercase and without the port or a trailing dot, such as `links.acme.com`. Headers
+   * such as `X-Forwarded-Host` play no part.
+   */
   hostname: string
   request: Request
 }
 
-/** What `hosts.origin` receives: the link whose short URL is being written. */
+/** What `hosts.origin` receives: the links whose short URLs are being written. */
 export interface LinkOriginArgs {
-  owner: { type: OwnerType; id: string }
-  /** The organization the link was made in, or `null` outside any. */
+  /** The organization that owns the links, or `null` for links made outside any. */
   orgId: string | null
 }
 
@@ -88,9 +90,9 @@ export interface LinkHosts {
   /** Says whose links a host opens, for the host a link was opened on. It runs before the link is read. */
   resolve: (args: ResolveHostArgs) => LinkHost | Promise<LinkHost>
   /**
-   * The origin of a link's short URL, such as `https://links.acme.com`, or `null` for the app's own. Return a host that
-   * opens the link: its organization's domain for an organization's link, or a host `resolve` says is the app's. The
-   * app's own, by default.
+   * The origin of an organization's short URLs, such as `https://links.acme.com`, or `null` for `baseUrl`. Return a
+   * host that opens its links: the organization's domain, or a host `resolve` says is the app's. A person's own links
+   * made in an organization always use `baseUrl`, the only host that opens them. `baseUrl`, by default.
    */
   origin?: ((args: LinkOriginArgs) => string | null | Promise<string | null>) | undefined
 }
@@ -111,11 +113,14 @@ export interface ShortLinksOptions {
   canManage?: ((args: ManageArgs) => boolean | Promise<boolean>) | undefined
   /** Where links open, `/s` by default, so a link is `/s/{code}`. */
   path?: string | undefined
-  /** The origin of the short URLs actions return, such as `https://go.example.com`. The request's, by default. */
+  /**
+   * The origin of the short URLs actions return, such as `https://go.example.com`. The request's, by default. Required
+   * with `hosts`.
+   */
   baseUrl?: string | undefined
   /**
-   * Opens links on organizations' own domains, each only its organization's, and shares them there. Without it, every
-   * host that serves the app opens every link.
+   * Opens links on organizations' own domains, each only its organization's, and shares them there. It needs `baseUrl`,
+   * the app's own host, which opens every link. Without it, every host that serves the app opens every link.
    */
   hosts?: LinkHosts | undefined
   /** The length of generated codes, from 6 to 32. 8 by default. */

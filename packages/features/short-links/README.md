@@ -48,8 +48,8 @@ with a catch-all route at `/s` in TanStack Start.
   in it, and who makes its URL links: every member, by default. Who shares records is up to `canShare`.
 - `path` is where links open, `/s` by default. `baseUrl`, such as `https://go.example.com`, is the origin of the short
   URLs actions return: the request's, by default.
-- `hosts` opens links on organizations' own domains, each only its organization's, and shares them there. See
-  [Organizations' domains](#organizations-domains).
+- `hosts` opens links on organizations' own domains, each only its organization's, and shares them there. It needs
+  `baseUrl`. See [Organizations' domains](#organizations-domains).
 - `codeLength` sets the length of generated codes, from 6 to 32: 8 by default.
 - `cookie` names the cookie that holds access grants, `better-apps-links` by default, and sets its `maxAge` in seconds,
   30 days by default. Its `domain`, such as `example.com`, lets links on one host, such as `go.example.com`, grant
@@ -138,10 +138,31 @@ waits. `HEAD` requests don't count. Every `GET` does, including link previews ch
 
 `hosts` lets an organization share its links on its own domain, such as `links.acme.com/s/abc123` or
 `acme.yourapp.com/s/abc123`. Short links never import the domains feature. The app connects the two with
-[`@better-apps/domains`](../domains/README.md)' server-only `lookup` and `getPrimary`:
+[`@better-apps/domains`](../domains/README.md)' server-only `lookup` and `getPrimary`. The app's file imports the
+features, so the features can't import the app. The app passes its domains in once it exists:
 
 ```ts
-const links = shortLinks({
+// features.ts
+import type { Domain, HostnameMatch } from "@better-apps/domains"
+
+interface LinkDomains {
+  lookup(input: { hostname: string }): Promise<HostnameMatch | null>
+  getPrimary(input: { orgId: string | null }): Promise<Domain | null>
+}
+let connected: LinkDomains | undefined
+
+export function connectLinkDomains(api: LinkDomains) {
+  connected = api
+}
+
+function linkDomains(): LinkDomains {
+  if (!connected) {
+    throw new Error("Call connectLinkDomains(app.api.domains) once the app is created.")
+  }
+  return connected
+}
+
+export const links = shortLinks({
   subjects: { invoice: { url: ({ subjectId }) => `https://app.yourapp.com/invoices/${subjectId}`, grantView: true } },
   baseUrl: "https://app.yourapp.com",
   hosts: {
@@ -149,32 +170,43 @@ const links = shortLinks({
       if (hostname === "app.yourapp.com") {
         return "app"
       }
-      const match = await app.api.domains.lookup({ hostname })
+      const match = await linkDomains().lookup({ hostname })
       return match?.verified && match.orgId ? { orgId: match.orgId } : null
     },
-    origin: async ({ owner }) => {
-      if (owner.type !== "org") {
+    origin: async ({ orgId }) => {
+      if (orgId === null) {
         return null
       }
-      const primary = await app.api.domains.getPrimary({ orgId: owner.id })
+      const primary = await linkDomains().getPrimary({ orgId })
       return primary?.status === "active" ? `https://${primary.hostname}` : null
     }
   }
 })
+
+// app.ts
+const app = createBetterApps({ features: [links, domains({ subdomains: { zone: "yourapp.com" } })] })
+connectLinkDomains(app.api.domains)
 ```
 
+- `baseUrl` is the app's own origin, which `resolve` calls `"app"`. `hosts` needs it: links that no organization's
+  domain opens are shared there, whichever host an action is called from.
 - `resolve({ hostname, request })` says whose links a host opens: `"app"` for the app's own host, which opens every
   link; `{ orgId }` for a domain the organization verified, which opens only the links it owns; or `null` for any other
   host, such as a domain that's still pending, which opens none. A link the host doesn't open answers as a missing one
-  does, through `notFound`, so a domain gives nothing away about other organizations' codes.
-- `origin({ owner, orgId })` is the origin of a link's short URL, or `null` for the app's own. A person's own links stay
-  on the app's host, which is the only host that opens them.
+  does, through `notFound`, so a domain gives nothing away about other organizations' codes. `hostname` is the request
+  URL's, lowercase and without its port or a trailing dot. Headers such as `X-Forwarded-Host` play no part.
+- `origin({ orgId })` is the origin of an organization's short URLs, or `null` for `baseUrl`, asked once per
+  organization in a call. Links made outside any organization ask with `orgId` `null`. A person's own links made in an
+  organization always use `baseUrl`, the only host that opens them.
 - Links open at the same `path` on every host, so the catch-all route that serves `/s` serves them on every domain.
-- A link that grants access sets its cookie on the host that opens it. When that cookie can't reach the record, such as
-  a record on `app.yourapp.com` from a link on `links.acme.com`, the link's short URL stays on the app's host, and
-  opening it on the domain sends the visitor to the same link on the record's host, which sets the cookie there. A
-  subdomain such as `acme.yourapp.com` reaches the app's host with `cookie: { domain: "yourapp.com" }`.
-- Codes stay unique across the app, so a code means the same link on every host that opens it.
+- A link that grants access sets its cookie on the host that opens it, for that host alone outside `cookie.domain`. When
+  that cookie can't reach the record, such as a record on `app.yourapp.com` from a link on `links.acme.com`, the link's
+  short URL stays on the app's host, and opening it on the domain sends the visitor to the same link on the record's
+  host, which sets the cookie there. A subdomain such as `acme.yourapp.com` reaches the app's host with
+  `cookie: { domain: "yourapp.com" }`. Writing such a link's short URL asks the record's `url`, once per record in a
+  call.
+- Codes stay unique across the app, so a code means the same link on every host that opens it. So two organizations
+  can't both have a code such as `pricing`, and the second to ask is told it's taken.
 
 ## Records and owners that go
 

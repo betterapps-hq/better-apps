@@ -76,11 +76,6 @@ export const linkModel = "shortLink";
 // @public
 export interface LinkOriginArgs {
     orgId: string | null;
-    // (undocumented)
-    owner: {
-        type: OwnerType;
-        id: string;
-    };
 }
 
 // @public

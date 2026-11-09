@@ -128,11 +128,19 @@ interface LinkDomains {
   lookup(input: { hostname: string }): Promise<HostnameMatch | null>
   getPrimary(input: { orgId: string | null }): Promise<Domain | null>
 }
-let linkDomains: LinkDomains | undefined
+let connectedDomains: LinkDomains | undefined
 
 /** Lets short links ask the workspace's domains where links open, once the app is created. */
 export function connectLinkDomains(api: LinkDomains) {
-  linkDomains = api
+  connectedDomains = api
+}
+
+/** The workspace's domains, or an error that says they were never connected rather than every domain answering 404. */
+function linkDomains(): LinkDomains {
+  if (!connectedDomains) {
+    throw new Error("Short links can't ask about domains until connectLinkDomains(app.api.domains) runs.")
+  }
+  return connectedDomains
 }
 
 /**
@@ -142,6 +150,7 @@ export function connectLinkDomains(api: LinkDomains) {
  */
 const invoiceLinks = shortLinks({
   subjects: { invoice: { url: ({ subjectId }) => `${appUrl.origin}/invoices/${subjectId}`, grantView: true } },
+  baseUrl: appUrl.origin,
   hosts: {
     // The app's own address opens every link, and a ready domain its organization's links. This app has no
     // organizations, so the workspace's domains are the app's own. Any other host, such as a pending domain, opens none.
@@ -149,19 +158,16 @@ const invoiceLinks = shortLinks({
       if (appHosts.has(hostname)) {
         return "app"
       }
-      const match = await linkDomains?.lookup({ hostname })
+      const match = await linkDomains().lookup({ hostname })
       if (!match?.verified) {
         return null
       }
       return match.orgId === null ? "app" : { orgId: match.orgId }
     },
-    // A link is shared on its organization's primary domain when that's ready, or the workspace's outside any
-    // organization. A member's own link in an organization stays on the app's address, which opens it.
-    origin: async ({ owner, orgId }) => {
-      if (orgId !== null && owner.type !== "org") {
-        return null
-      }
-      const primary = await linkDomains?.getPrimary({ orgId })
+    // Links are shared on their organization's primary domain once it's ready, or the workspace's outside any
+    // organization. Short links keep a member's own links in an organization on the app's address, which opens them.
+    origin: async ({ orgId }) => {
+      const primary = await linkDomains().getPrimary({ orgId })
       if (primary?.status !== "active") {
         return null
       }

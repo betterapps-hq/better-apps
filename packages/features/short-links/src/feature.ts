@@ -13,10 +13,10 @@ import {
 } from "better-apps"
 import { z } from "zod"
 import { codeLimits, generateCode, isValidCode, normalizeCode } from "./codes.js"
-import { grantCodes, grantCookie, reachesHost, type CookieSettings } from "./cookie.js"
+import { grantCodes, grantCookie, isUnder, reachesHost, type CookieSettings } from "./cookie.js"
 import { ShortLinksError } from "./errors.js"
 import { shortLinkEvents } from "./events.js"
-import { isOpen, ownerKey, ownerOf, toLink, type ShortLink } from "./link.js"
+import { isOpen, ownerKey, toLink, type ShortLink } from "./link.js"
 import type {
   CreateLinkInput,
   LinkHosts,
@@ -87,8 +87,14 @@ function resolve(options: ShortLinksOptions): Config {
     }
     baseUrl = parsed.href.replace(/\/+$/, "")
   }
-  if (options.hosts !== undefined && typeof options.hosts.resolve !== "function") {
-    throw new Error("`hosts.resolve` must be a function that says whose links a host opens.")
+  if (options.hosts !== undefined) {
+    if (typeof options.hosts.resolve !== "function") {
+      throw new Error("`hosts.resolve` must be a function that says whose links a host opens.")
+    }
+    // An action can be called from an organization's domain, which doesn't open everyone's links.
+    if (baseUrl === undefined) {
+      throw new Error("Short links with `hosts` need `baseUrl`, the app's own origin, which opens every link.")
+    }
   }
   const cookieName = options.cookie?.name ?? "better-apps-links"
   if (!/^[\w\-.]+$/.test(cookieName)) {
@@ -103,7 +109,7 @@ function resolve(options: ShortLinksOptions): Config {
     if (!/^\.?([a-z\d-]+\.)*[a-z\d-]+$/i.test(domain)) {
       throw new Error(`The cookie's domain "${domain}" must be a host name, such as example.com.`)
     }
-    if (baseUrl !== undefined && !reachesHost(baseUrl, baseUrl, domain)) {
+    if (baseUrl !== undefined && !isUnder(new URL(baseUrl).hostname, domain)) {
       throw new Error(`\`baseUrl\`'s host must be under the cookie's domain, "${domain}", or browsers drop the cookie.`)
     }
   }
@@ -139,10 +145,24 @@ function originOf(value: string): string {
 /** Writes each link's short URL prefix within one call, such as `https://links.acme.com/s`. */
 type Prefixer = (row: LinkRow) => Promise<string>
 
+/** Loads each key once, sharing the promise with later asks for the same key. */
+function loadOnce<T>(): (key: string, load: () => T | Promise<T>) => Promise<T> {
+  const loaded = new Map<string, Promise<T>>()
+  return (key, load) => {
+    let pending = loaded.get(key)
+    if (!pending) {
+      pending = Promise.resolve().then(load)
+      loaded.set(key, pending)
+    }
+    return pending
+  }
+}
+
 /**
- * The prefix of each link's short URL in a call: `hosts.origin`'s for the link, or the app's own. A link that grants
- * access stays on the app's host when the cookie it would set on the other host can't reach the record. Each owner's
- * origin is asked once per call.
+ * The prefix of each link's short URL in a call: `hosts.origin`'s for the link's organization, or the app's own. A
+ * person's own link in an organization stays on the app's host, the only one that opens it. A link that grants access
+ * also stays there when the cookie it would set on the other host can't reach the record. Each organization's origin,
+ * and each record's `url`, is asked once per call.
  */
 function prefixer(config: Config, request: Request | null): Prefixer {
   const own = prefixOf(config, request)
@@ -150,27 +170,29 @@ function prefixer(config: Config, request: Request | null): Prefixer {
   if (!origin) {
     return async () => own
   }
-  const asked = new Map<string, Promise<string | null>>()
+  const origins = loadOnce<string | null>()
+  const urls = loadOnce<string>()
   return async (row) => {
-    const key = `${row.owner} ${row.orgId}`
-    let pending = asked.get(key)
-    if (!pending) {
-      const args = { owner: ownerOf(row.owner), orgId: row.orgId === "" ? null : row.orgId }
-      pending = Promise.resolve(origin(args)).then((value) => (value === null ? null : originOf(value)))
-      asked.set(key, pending)
+    if (row.orgId !== "" && row.owner !== ownerKey("org", row.orgId)) {
+      return own
     }
-    const found = await pending
+    const orgId = row.orgId === "" ? null : row.orgId
+    const found = await origins(row.orgId, async () => {
+      const value = await origin({ orgId })
+      return value === null ? null : originOf(value)
+    })
     if (found === null) {
       return own
     }
     const prefix = `${found}${config.path}`
     const type = row.subjectType ?? ""
     const rules = Object.hasOwn(config.subjects, type) ? config.subjects[type] : undefined
-    if (row.grantsView && rules && row.subjectId !== null) {
+    const subjectId = row.subjectId
+    if (row.grantsView && rules && subjectId !== null) {
       const link = `${prefix}/${row.code}`
-      const orgId = row.orgId === "" ? null : row.orgId
-      const target = new URL(await rules.url({ subjectType: type, subjectId: row.subjectId, orgId }), link).href
-      if (!reachesHost(link, target, config.cookie.domain)) {
+      const key = JSON.stringify([type, subjectId, row.orgId])
+      const path = await urls(key, () => rules.url({ subjectType: type, subjectId, orgId }))
+      if (!reachesHost(link, new URL(path, link).href, config.cookie.domain)) {
         return own
       }
     }
@@ -648,14 +670,15 @@ async function removeOwner(_config: Config, context: Context): Promise<{ removed
 }
 
 /**
- * The organization whose links a host opens, `""` for the app's own host, which opens every link, or `null` for a host
- * that opens none. Every host opens every link without `hosts`.
+ * The organization whose links a request's host opens, `""` for the app's own host, which opens every link, or `null`
+ * for a host that opens none. Every host opens every link without `hosts`. The host is the request URL's, without a
+ * trailing dot, so `acme.com.` is `acme.com`.
  */
-async function scopeOf(config: Config, request: Request, hostname: string): Promise<string | null> {
+async function scopeOf(config: Config, request: Request, url: URL): Promise<string | null> {
   if (!config.hosts) {
     return ""
   }
-  const host = await config.hosts.resolve({ hostname, request })
+  const host = await config.hosts.resolve({ hostname: url.hostname.replace(/\.$/, ""), request })
   if (host === "app") {
     return ""
   }
@@ -672,7 +695,7 @@ async function open(config: Config, context: RouteContext): Promise<Response> {
   const wanted = params.code ?? ""
   // A host that opens no links, and another organization's link, answer as a missing link does, so a domain tells
   // nothing about the codes it doesn't open.
-  const scope = await scopeOf(config, request, context.url.hostname)
+  const scope = await scopeOf(config, request, context.url)
   if (scope === null) {
     return config.notFound({ request, code: wanted })
   }

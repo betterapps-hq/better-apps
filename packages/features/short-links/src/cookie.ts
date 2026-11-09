@@ -32,29 +32,33 @@ export interface CookieSettings {
   domain: string | undefined
 }
 
+/** Whether a host is the cookie's domain or under it, so it can set a cookie for that domain. */
+export function isUnder(host: string, domain: string): boolean {
+  const bare = domain.replace(/^\./, "").toLowerCase()
+  return host === bare || host.endsWith(`.${bare}`)
+}
+
 /**
  * The `Set-Cookie` header that adds a code to the request's cookie, last, so the oldest go once it's full. It's
- * HTTP-only, `Secure` over HTTPS, and `SameSite=Lax`, so it's sent when the visitor follows the redirect.
+ * HTTP-only, `Secure` over HTTPS, and `SameSite=Lax`, so it's sent when the visitor follows the redirect. On a host
+ * outside the cookie's domain, such as an organization's own domain, it's for that host alone, since browsers drop a
+ * cookie for a domain that doesn't cover the host that sets it.
  */
 export function grantCookie(request: Request, settings: CookieSettings, code: string): string {
   const { name, maxAge, domain } = settings
   const codes = [...grantCodes(request, name).filter((held) => held !== code), code].slice(-rememberedGrants)
-  const secure = new URL(request.url).protocol === "https:" ? "; Secure" : ""
-  const scope = domain === undefined ? "" : `; Domain=${domain}`
+  const url = new URL(request.url)
+  const secure = url.protocol === "https:" ? "; Secure" : ""
+  const scope = domain !== undefined && isUnder(url.hostname, domain) ? `; Domain=${domain}` : ""
   return `${name}=${codes.join(".")}; Path=/${scope}; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${secure}`
 }
 
 /**
  * Whether a link's target gets the cookie the link sets: it's on the link's host, or both are under the cookie's
- * domain. Browsers drop a cookie whose domain doesn't cover the host that sets it.
+ * domain.
  */
 export function reachesHost(link: string, target: string, domain: string | undefined): boolean {
   const from = new URL(link).hostname
   const to = new URL(target).hostname
-  if (domain === undefined) {
-    return from === to
-  }
-  const bare = domain.replace(/^\./, "").toLowerCase()
-  const under = (host: string) => host === bare || host.endsWith(`.${bare}`)
-  return under(from) && under(to)
+  return from === to || (domain !== undefined && isUnder(from, domain) && isUnder(to, domain))
 }
