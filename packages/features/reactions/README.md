@@ -140,10 +140,10 @@ await reactions.toggle({ subjectType: "invoice", subjectId: "inv-1", emoji: "ðŸ‘
   refused write simply stops showing. Writes to one record go to the server in order, so quick toggles end where the
   last one left them. Emoji are stored in the server's spelling.
 - `subjects[key].pending` lists the emoji still waiting for the server.
-- Each record has a version, raised by every answer, write and live event, even before it first loads. Changes made
-  while a load was under way are made again on its answer, so an older answer never undoes a newer change and a busy
-  record doesn't keep loading: the viewer's own are set, and someone else's are set by their event's `count`. When one
-  can't be made again, such as a `subject.changed` event, the answer is dropped and the record loads again.
+- Each record has a version, raised by every answer, write and live event, even before it first loads. The viewer's own
+  changes made while a load was under way are made again on its answer, since they're set rather than counted, so an
+  older answer never undoes them. When someone else's change or a `subject.changed` event came meanwhile, the answer may
+  or may not have it, so it's dropped and the record loads again.
 - `applyEvent` applies an event from `toClientEvent` once. A `subject.changed` event loads the record again and drops
   its lists of reactors. The viewer's own changes are set, not counted, so one that arrives both as an answer and as a
   live event counts once. Someone else's shows at once. When its `count` doesn't match what the store then shows, such

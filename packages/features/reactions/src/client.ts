@@ -130,26 +130,7 @@ function setMine(reactions: readonly ReactionSummary[], emoji: string, reacted: 
   return (current?.reacted ?? false) === reacted ? reactions : change(reactions, emoji, reacted ? 1 : -1, true)
 }
 
-/**
- * Sets how many reactions with an emoji a record has, from a live event's count, keeping whether the viewer reacted.
- */
-function setCount(reactions: readonly ReactionSummary[], emoji: string, count: number): readonly ReactionSummary[] {
-  const current = reactions.find((reaction) => reaction.emoji === emoji)
-  if (count <= 0) {
-    return reactions.filter((reaction) => reaction.emoji !== emoji)
-  }
-  return current
-    ? reactions.map((reaction) => (reaction === current ? { ...reaction, count } : reaction))
-    : [...reactions, { emoji, count, reacted: false }]
-}
-
 type Fix = (reactions: readonly ReactionSummary[]) => readonly ReactionSummary[]
-
-/** What a remembered change sets: whether the viewer reacted with an emoji, or its count from someone else's event. */
-interface Mark {
-  kind: "mine" | "count"
-  emoji: string
-}
 
 /** How many of a record's latest changes are kept, to make again on a load's answer that went out before them. */
 const keptChanges = 50
@@ -279,37 +260,24 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
   // Each record's version, raised whenever what the server said about it changes here, with the latest changes and how
   // to make each again, or `null` when it can't be, so a load that went out before them doesn't undo them.
   const versions = new Map<string, number>()
-  const history = new Map<string, { version: number; fix: Fix | null; mark?: Mark }[]>()
-  const bump = (key: string, fix: Fix | null, mark?: Mark) => {
+  const history = new Map<string, { version: number; fix: Fix | null }[]>()
+  const bump = (key: string, fix: Fix | null) => {
     const version = (versions.get(key) ?? 0) + 1
     versions.set(key, version)
-    history.set(key, [...(history.get(key) ?? []), { version, fix, ...(mark ? { mark } : {}) }].slice(-keptChanges))
+    history.set(key, [...(history.get(key) ?? []), { version, fix }].slice(-keptChanges))
   }
 
   /**
    * A load's answer with the changes made here since it was asked made again on top, in order, or `null` when one of
-   * them can't be, such as another load's answer, and the record should load again instead. The viewer's own changes
-   * are set rather than counted and others' carry their counts, so making one the answer already has again changes
-   * nothing.
+   * them can't be, and the record should load again instead. Only the viewer's own changes can be made again: they
+   * are set rather than counted, so making one the answer already has changes nothing. Someone else's change, another
+   * load's answer or many changes at once can't, since whether the answer already has them can't be told.
    */
   const caughtUp = (key: string, asked: number, answer: readonly ReactionSummary[]) => {
     const now = versions.get(key) ?? 0
     const since = (history.get(key) ?? []).filter((entry) => entry.version > asked)
     if (since.length !== now - asked) {
       return null
-    }
-    // Someone else's count was read at one moment, so it may or may not include the viewer's own change to the same
-    // emoji; with both to make again, which comes first can't be told, and the record loads again.
-    const kinds = new Map<string, Set<Mark["kind"]>>()
-    for (const { mark } of since) {
-      if (mark) {
-        const seen = kinds.get(mark.emoji) ?? new Set()
-        seen.add(mark.kind)
-        if (seen.size > 1) {
-          return null
-        }
-        kinds.set(mark.emoji, seen)
-      }
     }
     let reactions = answer
     for (const { fix } of since) {
@@ -325,12 +293,12 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
    * Changes what the server last said about a record, once loaded, and remembers the change for a load under way.
    * `again` is how to make it again on a newer answer, or `null` when it can't be.
    */
-  const confirm = (key: string, next: Fix, again: Fix | null = next, mark?: Mark) => {
+  const confirm = (key: string, next: Fix, again: Fix | null = next) => {
     const base = confirmed.get(key)
     if (base) {
       confirmed.set(key, next(base))
     }
-    bump(key, again, mark)
+    bump(key, again)
   }
 
   const setReactors = (state: ReactionsState, key: string, value: Partial<Reactors>): ReactionsState => {
@@ -443,11 +411,9 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
       reaction?: { userId: string } | null
       replaced?: { emoji: string; userId: string }[]
     }
-    const own = (reactions: readonly ReactionSummary[]) => setMine(reactions, target.emoji, reacted)
-    confirm(record, own, own, { kind: "mine", emoji: target.emoji })
+    confirm(record, (reactions) => setMine(reactions, target.emoji, reacted))
     for (const gone of replaced) {
-      const cleared = (reactions: readonly ReactionSummary[]) => setMine(reactions, gone.emoji, false)
-      confirm(record, cleared, cleared, { kind: "mine", emoji: gone.emoji })
+      confirm(record, (reactions) => setMine(reactions, gone.emoji, false))
     }
     update((state) => {
       let next = show(state, record)
@@ -732,7 +698,6 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
       const added = event.type === "reaction.added"
       // The viewer's own changes are set rather than counted, so one this tab already applied counts once. Someone
       // else's shows at once, and the record loads again to match the server.
-      const { count } = event
       const base = confirmed.get(key)
       const before = base?.find((reaction) => reaction.emoji === event.emoji)?.count ?? 0
       // An own change the store doesn't have yet, such as from another tab, or a late event for one this tab has since
@@ -743,19 +708,14 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
         (base.find((reaction) => reaction.emoji === event.emoji)?.reacted ?? false) !== added &&
         !(writes.get(key) ?? []).some((write) => write.emoji === event.emoji && write.reacted === added)
       if (event.mine) {
-        const own = (reactions: readonly ReactionSummary[]) => setMine(reactions, event.emoji, added)
-        confirm(key, own, own, { kind: "mine", emoji: event.emoji })
+        confirm(key, (reactions) => setMine(reactions, event.emoji, added))
         if (surprising) {
           refresh(event.subjectType, event.subjectId)
         }
       } else {
-        // Someone else's change is counted now, and made again on a newer answer by its count, when the event has one.
-        confirm(
-          key,
-          (reactions) => change(reactions, event.emoji, added ? 1 : -1, false),
-          count === undefined ? null : (reactions) => setCount(reactions, event.emoji, count),
-          { kind: "count", emoji: event.emoji }
-        )
+        // Someone else's change is counted now. A load under way may or may not have it, so its answer can't be kept,
+        // and the record loads again once it lands.
+        confirm(key, (reactions) => change(reactions, event.emoji, added ? 1 : -1, false), null)
       }
       update((state) =>
         // An event without a user id comes from someone the viewer may not see, so lists of reactors stay as they are.

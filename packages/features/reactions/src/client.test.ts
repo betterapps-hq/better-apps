@@ -164,32 +164,48 @@ describe("reactions client", () => {
     expect(reactions.store.getSnapshot().settings[key1]).toMatchObject({ maxPerUser: 1, emojis: null })
   })
 
-  it("keeps a load's answer that's older than changes made meanwhile, making them again on top", async () => {
-    const { api, as, events, holdAnswer, identity, reactions, requests } = browser()
+  it("keeps a load's answer that's older than the viewer's changes made meanwhile, making them again on top", async () => {
+    const { holdAnswer, reactions, requests } = browser()
     await reactions.load("invoice", ["inv-1"])
     const release = holdAnswer("listReactions")
     const loading = reactions.load("invoice", ["inv-1"])
     // The load reaches the server before the changes, and its answer arrives after.
     await new Promise((resolve) => setTimeout(resolve, 20))
     await reactions.react({ ...inv1, emoji: "👍" })
-    await api.react({ ...inv1, emoji: "🎉" }, as("ada"))
+    await reactions.react({ ...inv1, emoji: "🎉" })
+    const loads = requests.filter((name) => name === "listReactions").length
+    release()
+    await loading
+    expect(reactions.store.getSnapshot().subjects[key1]?.reactions).toEqual([
+      { emoji: "👍", count: 1, reacted: true },
+      { emoji: "🎉", count: 1, reacted: true }
+    ])
+    // The viewer's own changes don't make it load again.
+    expect(requests.filter((name) => name === "listReactions")).toHaveLength(loads)
+  })
+
+  it("loads again rather than keep a load's answer that someone else's change came during", async () => {
+    const { api, as, events, hold, identity, reactions } = browser()
+    const target = { ...inv1, emoji: "👍" }
+    await reactions.load("invoice", ["inv-1"])
+    // The load goes out first, but the server reads after both reactions, so its answer is newer than Ada's event.
+    const release = hold("listReactions")
+    const loading = reactions.load("invoice", ["inv-1"])
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await api.react(target, as("ada"))
+    await api.react(target, as("cy"))
     const event = await api.toClientEvent({
-      event: events("reaction.added").at(-1) as BetterAppsEvent,
+      event: events("reaction.added").at(-2) as BetterAppsEvent,
       viewer: identity.actor("bob")
     })
     if (!event) {
       throw new Error("No event was shown.")
     }
     reactions.applyEvent(event)
-    const loads = requests.filter((name) => name === "listReactions").length
     release()
     await loading
-    expect(reactions.store.getSnapshot().subjects[key1]?.reactions).toEqual([
-      { emoji: "👍", count: 1, reacted: true },
-      { emoji: "🎉", count: 1, reacted: false }
-    ])
-    // A busy record doesn't keep loading again.
-    expect(requests.filter((name) => name === "listReactions")).toHaveLength(loads)
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(reactions.store.getSnapshot().subjects[key1]?.reactions).toEqual([{ emoji: "👍", count: 2, reacted: false }])
   })
 
   it("keeps a toggle made before a record's first load answered", async () => {
