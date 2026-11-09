@@ -404,8 +404,7 @@ export async function deleteFile(config: Config, context: Context): Promise<{ de
       }
     }
   }
-  await deleteFiles(config, context, [file], "deleted")
-  return { deleted: true }
+  return { deleted: await deleteFiles(config, context, [file], "deleted") }
 }
 
 /** What files a record of a subject type takes, or a file on its own without one. */

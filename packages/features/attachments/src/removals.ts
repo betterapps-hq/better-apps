@@ -10,8 +10,11 @@ import { attachmentModel, fileModel, removalModel, type Attachment, type Attachm
 /** What removals write with: an action's or a subscriber's database, events and subjects. */
 export type Writer = Pick<Context, "db" | "emit" | "subjects">
 
-/** How long a removal is remembered, which only needs to outlast requests under way. */
-const removalMemoryMs = 60 * 60_000
+/**
+ * How long a request under way may still write what it read, such as an attach that found a draft just before it
+ * expired. Removals are remembered this long, and the sweep leaves expired files this long, so neither races one.
+ */
+export const settleMs = 60 * 60_000
 
 /** How many attachments one page of a bulk job removes, each a few statements per page besides its events. */
 export const removalPage = 100
@@ -61,31 +64,38 @@ export function recordsOf(links: readonly Attachment[]): SubjectRef[] {
 }
 
 /**
- * The writes that remove attachments: each is deleted and remembered by its id, so a batch that removes one another
- * removal already took fails, with its events, rather than reporting it twice. Old memories go at the same time.
+ * Remembers removed attachments and deleted files by id, so a batch that removes one another removal already took
+ * fails, with its events, rather than reporting it twice. Memories older than `settleMs` go first.
  */
-function linkRemovals(links: readonly Attachment[]): WriteOperation[] {
-  if (links.length === 0) {
+export function remember(ids: readonly string[]): WriteOperation[] {
+  if (ids.length === 0) {
     return []
   }
   const now = new Date()
+  return [
+    {
+      type: "deleteMany",
+      model: removalModel,
+      where: [{ field: "createdAt", operator: "lt", value: new Date(now.getTime() - settleMs) }]
+    },
+    { type: "createMany", model: removalModel, data: ids.map((id) => ({ id, createdAt: now })) }
+  ]
+}
+
+/** Deletes attachments, and remembers them and the files marked `deleted` with them. */
+function linkRemovals(links: readonly Attachment[], files: readonly AttachmentFile[]): WriteOperation[] {
   return [
     ...chunks(links.map((link) => link.id)).map((ids): WriteOperation => ({
       type: "deleteMany",
       model: attachmentModel,
       where: [{ field: "id", operator: "in", value: ids }]
     })),
-    { type: "createMany", model: removalModel, data: links.map((link) => ({ id: link.id, createdAt: now })) },
-    {
-      type: "deleteMany",
-      model: removalModel,
-      where: [{ field: "createdAt", operator: "lt", value: new Date(now.getTime() - removalMemoryMs) }]
-    }
+    ...remember([...links.map((link) => link.id), ...files.map((file) => file.id)])
   ]
 }
 
 /** Marks files `deleted`, so nobody sees them while their bytes go. */
-function markDeleted(files: readonly AttachmentFile[], guard: readonly Where[] = []): WriteOperation[] {
+export function markDeleted(files: readonly AttachmentFile[], guard: readonly Where[] = []): WriteOperation[] {
   return chunks(files.map((file) => file.id)).map((ids) => ({
     type: "updateMany",
     model: fileModel,
@@ -168,24 +178,25 @@ export async function removeLinks(
   for (const file of doomed) {
     writer.emit("file.deleted", { file: eventFile(file), reason: fileReasons[reason] })
   }
-  await writer.db.batch([...linkRemovals(links), ...markDeleted(doomed)])
+  await writer.db.batch([...linkRemovals(links, doomed), ...markDeleted(doomed)])
   await purge(config, writer.db, doomed)
 }
 
 /**
  * Deletes files, such as a person's own or a draft. Each comes off the records it's on: the first hundred of those are
- * reported, with `attachment.removed` and one `subject.changed` per record, and the rest go with the file's row.
+ * reported, with `attachment.removed` and one `subject.changed` per record, and the rest go with the file's row. Returns
+ * whether this call deleted them, rather than another removal, such as the sweep, that took them all first.
  */
 export async function deleteFiles(
   config: Config,
   writer: Writer,
   files: readonly AttachmentFile[],
   reason: FileDeletedReason
-): Promise<void> {
+): Promise<boolean> {
   const live = files.filter((file) => file.status !== "deleted")
   if (live.length === 0) {
     await purge(config, writer.db, files)
-    return
+    return false
   }
   const links = (
     await Promise.all(
@@ -220,9 +231,23 @@ export async function deleteFiles(
       writer.emit("file.deleted", { file: eventFile(file), reason })
     }
   }
-  await writer.db.batch([
-    ...linkRemovals(links),
-    ...markDeleted(live, [{ field: "status", operator: "ne", value: "deleted" }])
-  ])
+  try {
+    await writer.db.batch([
+      ...linkRemovals(links, live),
+      ...markDeleted(live, [{ field: "status", operator: "ne", value: "deleted" }])
+    ])
+  } catch (error) {
+    // Another removal took some of them first, so this batch failed with its events. When it took them all, it reported
+    // and deletes them itself; otherwise the caller reads them again.
+    const after = await filesById(
+      writer.db,
+      live.map((file) => file.id)
+    )
+    if ([...after.values()].some((file) => file.status !== "deleted")) {
+      throw error
+    }
+    return false
+  }
   await purge(config, writer.db, files)
+  return true
 }

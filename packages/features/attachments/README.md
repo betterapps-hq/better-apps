@@ -46,7 +46,7 @@ export const app = createBetterApps({
 
 Call the sweep from a scheduled job, so uploads that never finish and drafts that are never attached are removed, and
 deleted files' rows go once their upload address has closed. Give it its own cron trigger, apart from event delivery,
-since each Worker invocation gets its own D1 queries, 50 on the Free plan. A sweep page takes up to about a dozen. That
+since each Worker invocation gets its own D1 queries, 50 on the Free plan. A sweep page takes up to about ten. That
 doesn't count its events: when a feature subscribes to them, such as to `file.deleted`, they're delivered in the same
 invocation, a few queries each, and any that don't fit stay in the outbox for `deliverEvents`. A backlog, such as many
 drafts expiring at once, drains over the next runs.

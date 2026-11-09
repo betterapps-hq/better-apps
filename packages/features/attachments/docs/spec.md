@@ -102,8 +102,9 @@ Indexes:
   the same moment. This is how reactions hold `maxPerUser`.
 - `(fileId)` serves a file's records.
 
-`attachmentRemoval` remembers each attachment removed in the last hour, by its id, so a second removal of the same
-attachment, such as one racing a cleanup, fails and is reported once. Reactions does the same.
+`attachmentRemoval` remembers each attachment removed and each file deleted in the last hour, by its id. A second
+removal of the same one, such as a person deleting a draft while the sweep removes it, fails with its events, so each is
+reported once. Reactions does the same for its reactions.
 
 ## Ownership
 
@@ -288,16 +289,16 @@ and the original is served.
 - A draft that's never attached expires after `draftTtl`.
 - A file that leaves its only record is marked `deleted` at once.
 
-`app.api.attachments.sweep()` removes all of these, a page at a time: up to 100 files whose `expiresAt` has passed or
-that are `deleted`. Each page marks the expired ones `deleted` in one batch, guarded by their `expiresAt`, so a draft
-attached meanwhile is never taken. It reads back which ones it marked and writes their `file.deleted` events in a batch
-of their own. Then it deletes their bytes in one storage call, and their rows and any attachments left pointing at them.
-A marked draft keeps its `expiresAt` until its event is written, so a page that fails partway, such as when storage is
-down, leaves the event to the next sweep, which writes it once. It returns `done`. Call it a few pages a run from its
-own cron trigger, apart from `app.deliverEvents()`, since D1 allows 50 queries a Worker invocation on the Free plan. A
-page takes up to about a dozen, not counting its events: when a feature subscribes to them, such as to `file.deleted`,
-they're delivered in the same invocation, a few queries each, and any that don't fit stay in the outbox for
-`deliverEvents`. A backlog, such as many drafts expiring at once, drains over the next runs.
+`app.api.attachments.sweep()` removes all of these, a page at a time: up to 100 files that are `deleted`, or whose
+`expiresAt` passed over an hour ago, since an attach or a `completeUpload` that found one just in time may still be
+under way. Each page marks the expired ones `deleted` in one batch with their `file.deleted` events, guarded by their
+`expiresAt`, so a file is never deleted without its event. Then it deletes their bytes in one storage call, and their
+rows and any attachments left pointing at them. A page that stops partway leaves nothing half done: either the batch
+wrote the files and their events, and the next sweep deletes their bytes, or it wrote nothing. It returns `done`. Call
+it a few pages a run from its own cron trigger, apart from `app.deliverEvents()`, since D1 allows 50 queries a Worker
+invocation on the Free plan. A page takes up to about ten, not counting its events: when a feature subscribes to them,
+such as to `file.deleted`, they're delivered in the same invocation, a few queries each, and any that don't fit stay in
+the outbox for `deliverEvents`. A backlog, such as many drafts expiring at once, drains over the next runs.
 
 A deleted file's bytes go at once, but its row stays `deleted` until an hour after `uploadClosesAt`, since a signed
 upload address keeps working until it expires, and a slow upload that started in time may finish later still. The sweep

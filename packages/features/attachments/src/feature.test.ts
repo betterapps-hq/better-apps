@@ -444,45 +444,179 @@ describe("drafts", () => {
     const kept = await upload("bob", inv1)
     await new Promise((resolve) => setTimeout(resolve, 1100))
     await expect(api.attach({ ...inv1, fileIds: [file.id] }, as("bob"))).rejects.toMatchObject({ code: "CONFLICT" })
-    expect(await api.sweep()).toEqual({ removed: 2, done: true })
-    expect(count(fileModel)).toBe(1)
-    expect([...storage.objects.keys()]).toEqual([`attachments/${kept.file.id}`])
-    expect(events("file.deleted").map((event) => (event.data as { reason: string }).reason)).toEqual(["expired"])
-    expect(await api.sweep()).toEqual({ removed: 0, done: true })
-  })
-
-  it("are reported once by the sweep when deleting their bytes fails and it runs again", async () => {
-    const { app, api, upload, storage, events } = setup()
-    const { file } = await upload("bob", { subjectType: "invoice" })
-    const remove = storage.delete.bind(storage)
-    storage.delete = async () => {
-      storage.delete = remove
-      throw new Error("Storage is down.")
-    }
     vi.useFakeTimers({ toFake: ["Date"] })
     try {
-      vi.setSystemTime(Date.now() + 2 * 24 * 60 * 60_000)
-      await expect(api.sweep()).rejects.toThrow("Storage is down.")
-      await app.deliverEvents()
-      expect(await api.sweep()).toEqual({ removed: 1, done: true })
-      await app.deliverEvents()
+      // An attach that read a draft before it expired may still be under way, so the sweep waits an hour.
+      expect(await api.sweep()).toEqual({ removed: 0, done: true })
+      vi.setSystemTime(Date.now() + 60 * 60_000)
+      expect(await api.sweep()).toEqual({ removed: 2, done: true })
+      expect(count(fileModel)).toBe(1)
+      expect([...storage.objects.keys()]).toEqual([`attachments/${kept.file.id}`])
+      expect(events("file.deleted").map((event) => (event.data as { reason: string }).reason)).toEqual(["expired"])
+      expect(await api.sweep()).toEqual({ removed: 0, done: true })
     } finally {
       vi.useRealTimers()
     }
-    expect(storage.objects.size).toBe(0)
-    expect(events("file.deleted").map((event) => (event.data as { file: { id: string } }).file.id)).toEqual([file.id])
   })
 
-  it("are reported by the next sweep when one stopped after marking them", async () => {
-    const { api, upload, database, events } = setup()
+  it("are reported once whichever step a sweep stops at, and the next sweep finishes", async () => {
+    const days = 3 * 24 * 60 * 60_000
+    /** An expired draft, an upload never finished, and a deleted file, with every call counted from `start`. */
+    const fixture = async () => {
+      const test = setup()
+      const { app, api, as, upload, send, storage } = test
+      const draft = (await upload("bob", { subjectType: "invoice" })).file.id
+      const created = await api.createUpload(
+        { subjectType: "invoice", name: "a.txt", contentType: "text/plain", size: 3 },
+        as("bob")
+      )
+      await send(created.upload, "abc")
+      const deleted = (await upload("bob", { subjectType: "invoice" })).file.id
+      await api.deleteFile({ fileId: deleted }, as("bob"))
+      let calls = 0
+      let stopAt = Number.POSITIVE_INFINITY
+      const counted =
+        <Args extends unknown[], Result>(call: (...args: Args) => Promise<Result>) =>
+        async (...args: Args): Promise<Result> => {
+          calls += 1
+          if (calls >= stopAt) {
+            throw new Error("The run stopped.")
+          }
+          return call(...args)
+        }
+      const db = app.db as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>
+      for (const key of ["findOne", "findMany", "count", "create", "createMany", "updateMany", "deleteMany", "batch"]) {
+        db[key] = counted((db[key] as (...args: unknown[]) => Promise<unknown>).bind(app.db))
+      }
+      storage.delete = counted(storage.delete.bind(storage))
+      const start = (at = Number.POSITIVE_INFINITY) => {
+        calls = 0
+        stopAt = at
+        return () => calls
+      }
+      return { ...test, draft, deleted, start }
+    }
+    vi.useFakeTimers({ toFake: ["Date"] })
+    try {
+      const clean = await fixture()
+      vi.setSystemTime(Date.now() + days)
+      const steps = clean.start()
+      await clean.api.sweep()
+      const count = steps()
+      expect(count).toBeGreaterThanOrEqual(5)
+      for (let step = 1; step <= count; step += 1) {
+        vi.useRealTimers()
+        vi.useFakeTimers({ toFake: ["Date"] })
+        const { app, api, storage, database, events, draft, deleted, start } = await fixture()
+        vi.setSystemTime(Date.now() + days)
+        start(step)
+        await api.sweep().catch(() => undefined)
+        start()
+        await app.deliverEvents()
+        expect(await api.sweep()).toMatchObject({ done: true })
+        await app.deliverEvents()
+        // Delivery is at least once, so events count once per id.
+        const reported = new Map(
+          events("file.deleted").map((event) => [event.id, event.data as { file: { id: string } }])
+        )
+        expect([...reported.values()].map((data) => data.file.id).sort(), `stopped at step ${step}`).toEqual(
+          [draft, deleted].sort()
+        )
+        expect(storage.objects.size).toBe(0)
+        expect(database.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${fileModel}`).get()).toEqual({ count: 0 })
+      }
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("aren't reported by the sweep while an attach that found them in time is under way", async () => {
+    const { app, api, as, upload, storage, events } = setup({ draftTtl: 60 })
     const { file } = await upload("bob", { subjectType: "invoice" })
-    // As a sweep leaves an expired draft when it stops between marking it and writing its event.
-    database.sqlite.prepare(`UPDATE ${fileModel} SET status = 'deleted', expiresAt = ? WHERE id = ?`).run(1, file.id)
-    expect(await api.sweep()).toEqual({ removed: 1, done: true })
-    expect(await api.sweep()).toEqual({ removed: 0, done: true })
-    expect(events("file.deleted").map((event) => (event.data as { file: { id: string } }).file)).toMatchObject([
-      { id: file.id, status: "ready" }
-    ])
+    const uploaded = Date.now()
+    const batch = app.db.batch.bind(app.db)
+    let order = 0
+    let reached!: () => void
+    const atBatch = new Promise<void>((resolve) => (reached = resolve))
+    let attachGo!: () => void
+    const attachMayGo = new Promise<void>((resolve) => (attachGo = resolve))
+    let sweepGo!: () => void
+    const sweepMayGo = new Promise<void>((resolve) => (sweepGo = resolve))
+    // The attach writes after the sweep read the draft, and the sweep writes after the attach.
+    app.db.batch = async (operations) => {
+      order += 1
+      if (order === 1) {
+        reached()
+        await attachMayGo
+        const results = await batch(operations)
+        sweepGo()
+        return results
+      }
+      if (order === 2) {
+        attachGo()
+        await sweepMayGo
+      }
+      return batch(operations)
+    }
+    vi.useFakeTimers({ toFake: ["Date"] })
+    try {
+      vi.setSystemTime(uploaded + 59_000)
+      const attaching = api.attach({ ...inv1, fileIds: [file.id] }, as("bob"))
+      await atBatch
+      vi.setSystemTime(uploaded + 61_000)
+      expect(await api.sweep()).toEqual({ removed: 0, done: true })
+      attachGo()
+      expect((await attaching).files.map((attached) => attached.id)).toEqual([file.id])
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(events("file.deleted")).toHaveLength(0)
+    expect(storage.objects.size).toBe(1)
+  })
+
+  it("are reported once when their owner deletes one just before the sweep marks it", async () => {
+    const { app, api, as, upload, storage, events } = setup()
+    const { file } = await upload("bob", { subjectType: "invoice" })
+    const batch = app.db.batch.bind(app.db)
+    let first: (() => Promise<unknown>) | undefined = async () => api.deleteFile({ fileId: file.id }, as("bob"))
+    app.db.batch = async (operations) => {
+      const run = first
+      first = undefined
+      await run?.()
+      return batch(operations)
+    }
+    vi.useFakeTimers({ toFake: ["Date"] })
+    try {
+      vi.setSystemTime(Date.now() + 3 * 24 * 60 * 60_000)
+      // The sweep's batch fails with its event, and reading again finds the file gone.
+      expect(await api.sweep()).toEqual({ removed: 0, done: true })
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(events("file.deleted").map((event) => (event.data as { reason: string }).reason)).toEqual(["deleted"])
+    expect(storage.objects.size).toBe(0)
+  })
+
+  it("are reported once when the sweep marks one just before its owner deletes it", async () => {
+    const { app, api, as, upload, storage, events } = setup()
+    const { file } = await upload("bob", { subjectType: "invoice" })
+    const batch = app.db.batch.bind(app.db)
+    let first: (() => Promise<unknown>) | undefined = async () => api.sweep()
+    app.db.batch = async (operations) => {
+      const run = first
+      first = undefined
+      await run?.()
+      return batch(operations)
+    }
+    vi.useFakeTimers({ toFake: ["Date"] })
+    try {
+      vi.setSystemTime(Date.now() + 3 * 24 * 60 * 60_000)
+      expect(await api.deleteFile({ fileId: file.id }, as("bob"))).toEqual({ deleted: false })
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(events("file.deleted").map((event) => (event.data as { reason: string }).reason)).toEqual(["expired"])
+    expect(storage.objects.size).toBe(0)
   })
 
   it("can be cancelled by their uploader", async () => {
