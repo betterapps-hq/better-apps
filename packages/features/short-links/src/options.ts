@@ -19,7 +19,8 @@ export interface LinkRules {
   canShare?: ((args: SubjectArgs) => boolean | Promise<boolean>) | undefined
   /**
    * Whether links to the record may let anyone who has them see it: `true`, a check per actor and record, or `false`,
-   * the default. Setting it back to `false` ends the access existing links give.
+   * the default. Setting it back to `false` ends the access existing links give. A check per record runs again on each
+   * request only for links made outside any organization; an organization's links keep the access they were made with.
    */
   grantView?: boolean | ((args: SubjectArgs) => boolean | Promise<boolean>) | undefined
 }
@@ -68,8 +69,8 @@ export interface ShortLinksOptions {
    */
   validateUrl?: ((args: ValidateUrlArgs) => boolean | string | Promise<boolean | string>) | undefined
   /**
-   * Who manages an organization's links: the ones it owns, and the ones its members made in it. Every member, by
-   * default.
+   * Who manages an organization's links: the ones it owns, and the ones its members made in it, and makes its URL links.
+   * Every member, by default. Members who may share a record make the organization's links to it either way.
    */
   canManage?: ((args: ManageArgs) => boolean | Promise<boolean>) | undefined
   /** Where links open, `/s` by default, so a link is `/s/{code}`. */
@@ -107,7 +108,10 @@ export interface CreateLinkInput<SubjectType extends string = string> {
    * adds a random part to it, so it can be up to 51. A random code, by default.
    */
   code?: string | undefined
-  /** `org` for the actor's organization, `user` for the actor. The organization's, by default, when the actor is in one. */
+  /**
+   * `org` for the actor's organization, `user` for the actor. Inside an organization, the organization's by default when
+   * the actor manages its links or the link grants access, and the actor's otherwise.
+   */
   owner?: OwnerType | undefined
   /**
    * Whether opening the link lets anyone who has it see the record. `false` by default. A link to an organization's
@@ -136,8 +140,8 @@ export interface ListLinksInput<SubjectType extends string = string> {
   subjectType?: SubjectType | undefined
   subjectId?: string | undefined
   /**
-   * Only the caller's own links, `user`, or their organization's, `org`. By default, the caller's own, and every link
-   * made in their organization when they manage its links.
+   * Only the caller's own links, `user`, or their organization's, `org`. By default, every link the caller manages where
+   * they are now: in their organization, or outside any.
    */
   owner?: OwnerType | undefined
   cursor?: string | undefined

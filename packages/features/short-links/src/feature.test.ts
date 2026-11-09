@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test"
-import { cookieOf, expectCode, invoices, options, setup } from "../test/app.js"
+import { cookieOf, documents, expectCode, invoices, options, setup } from "../test/app.js"
 import { generateCode, isValidCode, linkModel, shortLinks, type LinkRules } from "./index.js"
 
 const inv1 = { subjectType: "invoice", subjectId: "inv-1" } as const
@@ -79,10 +79,21 @@ describe("create", () => {
     expect((await post("create", { target: docs })).status).toBe(401)
   })
 
-  it("lets only managers make an organization's links", async () => {
-    const { api, as } = setup()
-    await expectCode(api.create({ target: docs }, as("cy")), "FORBIDDEN")
-    expect((await api.create({ target: docs, owner: "user" }, as("cy"))).owner).toEqual({ type: "user", id: "cy" })
+  it("lets only managers make an organization's URL links, and members who may share make its record links", async () => {
+    const invoice: LinkRules = { ...options.subjects.invoice, grantView: true }
+    const { api, as, identity } = setup({ subjects: { ...options.subjects, invoice } })
+    // Cy doesn't manage Acme's links, so a link is Cy's own by default, and a URL link can't be Acme's.
+    expect((await api.create({ target: docs }, as("cy"))).owner).toEqual({ type: "user", id: "cy" })
+    expect((await api.create({ target: inv1 }, as("cy"))).owner).toEqual({ type: "user", id: "cy" })
+    await expectCode(api.create({ target: docs, owner: "org" }, as("cy")), "FORBIDDEN")
+    // A link that grants access is Acme's, and Cy, who made it, manages it while a member.
+    const shared = await api.create({ target: inv1, grantsView: true }, as("cy"))
+    expect(shared.owner).toEqual({ type: "org", id: "acme" })
+    expect((await api.update({ code: shared.code, enabled: false }, as("cy"))).enabled).toBe(false)
+    expect((await api.list({ owner: "org" }, as("cy"))).links.map((link) => link.code)).toEqual([shared.code])
+    const departed = { actor: { ...identity.actor("cy"), orgId: "globex" } }
+    await expectCode(api.update({ code: shared.code, enabled: true }, departed), "NOT_FOUND")
+    expect((await api.update({ code: shared.code, enabled: true }, as("ada"))).enabled).toBe(true)
   })
 
   it("checks URLs: full ones only, no unsafe schemes, and what validateUrl says", async () => {
@@ -336,6 +347,27 @@ describe("access through a link", () => {
     expect(await app.subjects.canView(null, inv1, { request: request(`better-apps-links=${link.code}`) })).toBe(false)
   })
 
+  it("grants through a link outside any organization only while its maker could still make it", async () => {
+    const { app, api, as } = setup()
+    const document = { subjectType: "document", subjectId: "doc-1" } as const
+    const link = await api.create({ target: document, grantsView: true }, as("solo"))
+    expect(link.owner).toEqual({ type: "user", id: "solo" })
+    const held = async () =>
+      app.subjects.canView(null, document, { request: request(`better-apps-links=${link.code}`) })
+    expect(await held()).toBe(true)
+    try {
+      // The document's grantView no longer allows it.
+      documents.set("doc-1", { viewers: ["solo"], shareable: false })
+      expect(await held()).toBe(false)
+      // Its maker can't see the document any more.
+      documents.set("doc-1", { viewers: [] })
+      expect(await held()).toBe(false)
+    } finally {
+      documents.set("doc-1", { viewers: ["solo"] })
+    }
+    expect(await held()).toBe(true)
+  })
+
   it("is off when no subject type lets links grant access", async () => {
     const feature = shortLinks({ subjects: { page: { url: () => "/" } } })
     expect(feature.grants).toBeUndefined()
@@ -464,6 +496,10 @@ describe("managing links", () => {
     // Someone who left the organization no longer manages its links.
     const departed = { actor: { ...identity.actor("ada"), orgId: "globex" } }
     await expectCode(api.update({ code: org.code, enabled: false }, departed), "NOT_FOUND")
+    // Nor do links they made for themselves there, so the organization's decisions stand.
+    const cyLeft = { actor: { ...identity.actor("cy"), orgId: null } }
+    await expectCode(api.update({ code: own.code, enabled: true }, cyLeft), "NOT_FOUND")
+    await expectCode(api.remove({ code: own.code }, cyLeft), "NOT_FOUND")
     expect(await api.remove({ code: own.code }, as("bob"))).toEqual({ removed: true })
   })
 

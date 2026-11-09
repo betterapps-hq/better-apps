@@ -45,7 +45,7 @@ with a catch-all route at `/s` in TanStack Start.
 - `validateUrl({ url, actor, orgId })` checks URL targets, returning `true`, or `false` or a message to refuse one.
   Without it, any URL is allowed, but not `javascript:`, `data:`, `vbscript:` and `file:` ones.
 - `canManage({ actor, orgId })` says who manages an organization's links, the ones it owns and the ones its members made
-  in it: every member, by default.
+  in it, and who makes its URL links: every member, by default. Who shares records is up to `canShare`.
 - `path` is where links open, `/s` by default. `baseUrl`, such as `https://go.example.com`, is the origin of the short
   URLs actions return: the request's, by default.
 - `codeLength` sets the length of generated codes, from 6 to 32: 8 by default.
@@ -58,14 +58,16 @@ with a catch-all route at `/s` in TanStack Start.
 
 ## Owners and permissions
 
-- `create` takes `owner: "user" | "org"`. Without one, a link made inside an organization belongs to it, and one made
-  outside any belongs to its maker. An organization's links stay when the person who made them leaves.
+- `create` takes `owner: "user" | "org"`. Without one, inside an organization, a link belongs to the organization when
+  its maker manages the organization's links or the link grants access, and to its maker otherwise. Outside any
+  organization, it belongs to its maker. An organization's links stay when the person who made them leaves.
 - Making a link needs someone signed in; server code passes an `actor`. A link to a record needs someone who can see it
-  and whom `canShare` allows. An organization's link needs a member `canManage` allows, and a record of that
-  organization or of none.
-- Only a link's managers read, change and remove it: its owner, or, for a link made in an organization, the members
-  `canManage` allows. That covers links members made for themselves there, so the organization can turn them off after
-  the member leaves. Others get `NOT_FOUND`. Server code that passes neither an actor nor a request can manage any link.
+  and whom `canShare` allows, and any such member can make it the organization's. An organization's URL link needs a
+  member `canManage` allows. An organization's link needs a record of that organization or of none.
+- Only a link's managers read, change and remove it. For a link made outside any organization, that's its owner. For a
+  link made in one, it's the member who owns or made it, while they're a member, and the members `canManage` allows. So
+  someone who leaves can't change what they left behind, and the organization can turn it off. Others get `NOT_FOUND`.
+  Server code that passes neither an actor nor a request can manage any link.
 - Opening a link needs nothing. Whether the visitor can then see the record is up to the app, unless the link grants
   access.
 
@@ -95,7 +97,13 @@ each feature's own rules. A link that's turned off, has expired or was removed g
 and nor does one whose record moved to another organization, or whose subject type's `grantView` is now `false`. Only
 the app's own read checks that pass the request count the grant: comments and reactions don't pass it yet.
 
-A link to an organization's record that grants access must be the organization's, so it doesn't depend on one member.
+A link to an organization's record that grants access must be the organization's, so it doesn't depend on one member. A
+link outside any organization stands for its maker instead: each time it's asked, it grants access only while its maker
+can still see the record, and `canShare` and `grantView` still allow them. For an organization's link, a `grantView` or
+`canShare` check per record runs when the link is made or turned back on, not on each request, so unsetting it doesn't
+end existing links' access. Turn those links' access off with `update({ code, grantsView: false })`, or remove them with
+`removeSubject`.
+
 Access can't be turned on for an existing link, only off: a link that grants it is made that way. Turning such a link
 back on, or giving it a later expiry, checks again that the caller can see and share the record.
 
@@ -104,9 +112,9 @@ back on, or giving it a later expiry, checks again that the caller can see and s
 - `create({ target, code?, owner?, grantsView?, expiresAt? })`, where `target` is `{ url }` or
   `{ subjectType, subjectId }`, returns the new link.
 - `get({ code })` returns a link.
-- `list({ subjectType?, subjectId?, owner?, cursor?, limit? })` pages through the links the caller manages, newest
-  first: 20 by default, up to 50. Pass `subjectType` and `subjectId` for one record's, and `owner` for only the caller's
-  own, `user`, or their organization's, `org`.
+- `list({ subjectType?, subjectId?, owner?, cursor?, limit? })` pages through the links the caller manages where they
+  are now, in their organization or outside any, newest first: 20 by default, up to 50. Pass `subjectType` and
+  `subjectId` for one record's, and `owner` for only the caller's own, `user`, or their organization's, `org`.
 - `update({ code, url?, grantsView?, enabled?, expiresAt? })` changes a link and returns it. `url` is for URL links,
   `grantsView: false` ends the access a link gives, `enabled: false` turns a link off, and `expiresAt: null` clears its
   expiry. Each change is checked like `create`.

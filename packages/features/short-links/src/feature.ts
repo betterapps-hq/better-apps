@@ -137,7 +137,10 @@ async function managesOrg(config: Config, actor: Actor, orgId: string): Promise<
   return actor.orgId === orgId && (config.canManage ? (await config.canManage({ actor, orgId })) === true : true)
 }
 
-/** Whether the caller manages a link: its owner, a manager of its organization, or trusted server code. */
+/**
+ * Whether the caller manages a link: trusted server code, the owner of a link made outside any organization, or, for a
+ * link made in one, a member who owns or made it and the organization's managers.
+ */
 async function manages(config: Config, context: Context, row: LinkRow): Promise<boolean> {
   if (isTrusted(context)) {
     return true
@@ -146,11 +149,19 @@ async function manages(config: Config, context: Context, row: LinkRow): Promise<
   if (!actor) {
     return false
   }
-  if (row.owner === ownerKey("user", actor.userId)) {
-    return true
+  if (row.orgId === "") {
+    return row.owner === ownerKey("user", actor.userId)
   }
-  // An organization's managers manage every link made in it, so its links outlive the members who made them.
-  return row.orgId !== "" && managesOrg(config, actor, row.orgId)
+  // A link made in an organization is managed from inside it, so someone who leaves can't change it any more, and the
+  // organization's managers can turn off what they left behind.
+  if (actor.orgId !== row.orgId) {
+    return false
+  }
+  return (
+    row.owner === ownerKey("user", actor.userId) ||
+    row.createdBy === actor.userId ||
+    managesOrg(config, actor, row.orgId)
+  )
 }
 
 const byCode = (code: string): Where[] => [{ field: "code", value: normalizeCode(code) }]
@@ -310,12 +321,17 @@ async function create(config: Config, context: Context): Promise<ShortLink> {
   if (!actor) {
     throw new ShortLinksError("UNAUTHENTICATED", "Sign in to make links.")
   }
-  const ownerType: OwnerType = input.owner ?? (actor.orgId === null ? "user" : "org")
+  const manager = actor.orgId !== null && (await managesOrg(config, actor, actor.orgId))
+  // Inside an organization, a manager's links and links that grant access are the organization's by default, and
+  // other links their maker's.
+  const ownerType: OwnerType =
+    input.owner ?? (actor.orgId !== null && (manager || input.grantsView === true) ? "org" : "user")
   if (ownerType === "org") {
     if (actor.orgId === null) {
       throw new ShortLinksError("INVALID_INPUT", "You're not in an organization, so the link can only be yours.")
     }
-    if (!(await managesOrg(config, actor, actor.orgId))) {
+    // A member who may share a record can make the organization's link to it. Other links need a manager.
+    if (!manager && "url" in input.target) {
       throw new ShortLinksError("FORBIDDEN", "You can't make links for your organization.")
     }
   }
@@ -439,20 +455,22 @@ async function list(config: Config, context: Context): Promise<LinkPage> {
     if (!actor) {
       throw new ShortLinksError("UNAUTHENTICATED", "Sign in to see your links.")
     }
-    const managed = actor.orgId !== null && (await managesOrg(config, actor, actor.orgId)) ? actor.orgId : null
+    // Lists hold the links made where the caller is now: in their organization, or outside any.
+    const scope = actor.orgId ?? ""
+    const manager = actor.orgId !== null && (await managesOrg(config, actor, actor.orgId))
     const mine: Where = { field: "owner", value: ownerKey("user", actor.userId) }
+    const made: Where = { field: "createdBy", value: actor.userId }
+    where.push({ field: "orgId", value: scope })
     if (input.owner === "user") {
       where.push(mine)
     } else if (input.owner === "org") {
-      if (managed === null) {
+      if (scope === "") {
         return { links: [], cursor: null }
       }
-      where.push({ field: "owner", value: ownerKey("org", managed) })
-    } else if (managed === null) {
-      where.push(mine)
-    } else {
-      // A manager sees every link made in the organization, members' own included.
-      where.push({ ...mine, connector: "OR" }, { field: "orgId", value: managed, connector: "OR" })
+      where.push({ field: "owner", value: ownerKey("org", scope) }, ...(manager ? [] : [made]))
+    } else if (!manager) {
+      // A manager sees every link made in the organization. Others see the ones they own or made.
+      where.push({ ...mine, connector: "OR" }, { ...made, connector: "OR" })
     }
   } else if (where.length === 0) {
     throw new ShortLinksError("INVALID_INPUT", "Server code without an actor lists one record's links at a time.")
@@ -640,18 +658,58 @@ function grantsFor(config: Config): SubjectGrants {
       const links = refs.map((ref) =>
         granting.filter((row) => row.subjectType === ref.subjectType && row.subjectId === ref.subjectId)
       )
-      const found = refs.flatMap((ref, index) => ((links[index] ?? []).length > 0 ? [ref] : []))
+      const found = links.flat()
       if (found.length === 0) {
         return refs.map(() => false)
       }
-      const orgs = await context.subjects.getOrgIds(found)
-      const orgOf = new Map(found.map((ref, index) => [JSON.stringify([ref.subjectType, ref.subjectId]), orgs[index]]))
-      return refs.map((ref, index) => {
-        const org = orgOf.get(JSON.stringify([ref.subjectType, ref.subjectId])) ?? ""
-        return (links[index] ?? []).some((row) => row.orgId === org)
-      })
+      // The record's organization must still be the link's.
+      const orgs = await context.subjects.getOrgIds(found.map(refOf))
+      const placed = found.filter((row, index) => (orgs[index] ?? "") === row.orgId)
+      const valid = new Set(placed.filter((row) => row.orgId !== ""))
+      for (const row of await stillShared(
+        config,
+        context,
+        placed.filter((row) => row.orgId === "")
+      )) {
+        valid.add(row)
+      }
+      return refs.map((_, index) => (links[index] ?? []).some((row) => valid.has(row)))
     }
   }
+}
+
+const refOf = (row: LinkRow): SubjectRef => ({ subjectType: row.subjectType ?? "", subjectId: row.subjectId ?? "" })
+
+/**
+ * The links outside any organization whose maker could still make them: they can see the record, and `canShare` and
+ * `grantView` allow them. Such a link stands for its maker alone, so it grants nothing once they lose access. An
+ * organization's links stand for the organization instead, and outlive the members who made them.
+ */
+async function stillShared(config: Config, context: SubjectContext, rows: readonly LinkRow[]): Promise<LinkRow[]> {
+  if (rows.length === 0) {
+    return []
+  }
+  const makers = await context.identity.getActorsFor([...new Set(rows.map((row) => row.createdBy))], null)
+  const makerOf = new Map(makers.map((maker) => [maker.userId, maker]))
+  const checks = rows.flatMap((row) => {
+    const maker = makerOf.get(row.createdBy)
+    return maker ? [{ row, maker }] : []
+  })
+  // Without the request, so the check is the maker's own access, not what the visitor's links grant.
+  const viewable = await context.subjects.canViewMany(checks.map(({ row, maker }) => ({ actor: maker, ...refOf(row) })))
+  const allowed = await Promise.all(
+    checks.map(async ({ row, maker }, index) => {
+      if (!viewable[index]) {
+        return false
+      }
+      const rules = config.subjects[row.subjectType ?? ""] as LinkRules
+      const args = { actor: maker, ...refOf(row) }
+      const sharable = !rules.canShare || (await rules.canShare(args)) === true
+      const grantable = typeof rules.grantView !== "function" || (await rules.grantView(args)) === true
+      return sharable && grantable
+    })
+  )
+  return checks.flatMap(({ row }, index) => (allowed[index] ? [row] : []))
 }
 
 const unchecked = <Input>(): StandardSchemaV1<Input, Input> => ({

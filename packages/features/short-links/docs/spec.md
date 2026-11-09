@@ -68,8 +68,8 @@ shortLinks({
 - `validateUrl({ url, actor, orgId })` checks URL targets, with `actor` `null` for trusted server code. It returns
   `true` to allow one, or `false` or a message to refuse it. Without it, any URL is allowed, as described in
   [URL targets](#url-targets).
-- `canManage({ actor, orgId })` says who manages an organization's links: the ones it owns, and the ones its members
-  made in it. Every member, by default.
+- `canManage({ actor, orgId })` says who manages an organization's links, the ones it owns and the ones its members made
+  in it, and who makes its URL links. Every member, by default. Who shares records is up to `canShare`.
 - `path` is where links open, `/s` by default. It can't be directly under the app's `basePath`, where a link's URL would
   look like an action's.
 - `baseUrl` is the origin of the short URLs the actions return, such as a shorter domain that serves the same app. The
@@ -84,8 +84,9 @@ shortLinks({
 
 ## Ownership
 
-- A link is owned by a user or an organization. `create` takes `owner: "user" | "org"`. Without one, a link made inside
-  an organization belongs to it, and one made outside any belongs to its creator.
+- A link is owned by a user or an organization. `create` takes `owner: "user" | "org"`. Without one, inside an
+  organization, a link belongs to the organization when its maker manages the organization's links or the link grants
+  access, and to its maker otherwise. Outside any organization, it belongs to its creator.
 - An organization's link stays when the person who made it leaves. A link a member made for themselves inside an
   organization is theirs, and the organization's managers manage it too, so they can turn it off after the member
   leaves.
@@ -96,11 +97,14 @@ shortLinks({
 
 - **Making a link** needs someone signed in. Server code passes an `actor`, since a link is always someone's.
   - A record link needs a person who can see the record, by the app's subject rules, and whom `canShare` allows.
-  - An organization's link needs a member of it whom `canManage` allows.
+  - An organization's link to a record needs a member of it who may share the record, as above. An organization's URL
+    link needs a member whom `canManage` allows. So `canShare` decides who shares records, and `canManage` who looks
+    after the organization's links.
   - A URL link needs a URL that passes `validateUrl`.
-- **Reading and managing a link**, through `get`, `list`, `update` and `remove`, is for whoever manages it: its owner,
-  or, for a link made in an organization, the members `canManage` allows. A link someone can't manage answers
-  `NOT_FOUND`, as if it didn't exist.
+- **Reading and managing a link**, through `get`, `list`, `update` and `remove`, is for whoever manages it. For a link
+  made outside any organization, that's its owner. For a link made in one, it's the member who owns or made it, while
+  they're still a member, and the members `canManage` allows. Someone who leaves can't change or remove what they left
+  behind; the organization's managers can. A link someone can't manage answers `NOT_FOUND`, as if it didn't exist.
 - **Server code** that passes neither an actor nor a request is trusted: it can read, change and remove any link, and
   list a record's links. It can't make links.
 - **Opening a link** needs nothing. Anyone with the short URL is redirected. Whether they can then see the record is up
@@ -151,6 +155,17 @@ reads the link again. A record that moves to another organization stops being gr
 Turning a link that grants access back on, or giving it a later expiry, checks again, as `create` does, that the caller
 can see and share the record, so someone who has since lost access can't reopen it.
 
+Whose access a link stands for depends on where it was made:
+
+- A link made outside any organization stands for its maker. Each time the grant is asked, the maker is rebuilt with
+  `identity.getActorsFor`, and the link grants access only while they can still see the record, by a check that doesn't
+  pass the request, and `canShare` and `grantView` still allow them. Someone who loses access to a record, or loses the
+  right to share it, takes their links' access with them.
+- An organization's link stands for the organization and outlives the member who made it. A `canShare` or `grantView`
+  check per record, such as an invoice's own "shareable" setting, runs when the link is made or turned back on, not on
+  each request, so unsetting it doesn't end the access existing links give. The app ends it with
+  `update({ code, grantsView: false })` on those links, or `removeSubject`.
+
 The cookie only reaches the link's host, or every host under `cookie.domain`. Making a link that grants access fails
 when the record's page is on a host the cookie wouldn't reach, rather than letting the grant fail without a word. Read
 checks only count the grant where they pass the request. The app's own pages do; comments and reactions don't yet, since
@@ -191,8 +206,8 @@ each feature decides what a visitor with only a link sees, such as people's name
   `{ subjectType, subjectId }`, returns the new link.
 - `get({ code })` returns one link.
 - `list({ subjectType?, subjectId?, owner?, cursor?, limit? })` pages through links newest first, 20 by default, up to
-  50: a record's links, or every link, that the caller manages. `owner` narrows it to the caller's own, `user`, or their
-  organization's, `org`.
+  50: a record's links, or every link, that the caller manages where they are now, in their organization or outside any.
+  `owner` narrows it to the caller's own, `user`, or their organization's, `org`.
 - `update({ code, url?, grantsView?, enabled?, expiresAt? })` changes a link and returns it. `grantsView` only takes
   `false`.
 - `remove({ code })` removes a link and returns `{ removed }`.

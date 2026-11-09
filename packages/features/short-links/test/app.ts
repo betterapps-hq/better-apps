@@ -1,5 +1,6 @@
-// A test app whose links point to invoices, each in an organization, and to pages anyone signed in can see. Links to
-// invoices may let anyone who has them see the invoice. A `feed` feature records every short links event it's
+// A test app whose links point to invoices, each in an organization, to documents outside any, which only the people
+// listed see, and to pages anyone signed in can see. Links to invoices and shareable documents may let anyone who has
+// them see the record. A `feed` feature records every short links event it's
 // delivered.
 import { createTestApp, type TestUser } from "@better-apps/testing"
 import { defineFeature, type BetterAppsEvent, type EventHandler, type SubjectDefinition } from "better-apps"
@@ -22,12 +23,20 @@ export const invoices = new Map<string, { orgId: string; locked?: boolean }>([
   ["inv-globex", { orgId: "globex" }]
 ])
 
+export const documents = new Map<string, { viewers: readonly string[]; shareable?: boolean }>([
+  ["doc-1", { viewers: ["solo"] }]
+])
+
 const orgOfInvoice = (subjectId: string) => invoices.get(subjectId)?.orgId ?? null
 
 export const subjects = {
   invoice: {
     getOrgId: ({ subjectId }) => orgOfInvoice(subjectId),
     canView: ({ actor, subjectId }) => actor.orgId !== null && actor.orgId === orgOfInvoice(subjectId)
+  },
+  document: {
+    canView: ({ actor, subjectId }) => documents.get(subjectId)?.viewers.includes(actor.userId) === true,
+    getOrgId: () => null
   },
   page: { canView: () => true, getOrgId: () => null }
 } satisfies Record<string, SubjectDefinition>
@@ -38,6 +47,10 @@ export const options = {
       url: ({ subjectId }) => `/invoices/${subjectId}`,
       canShare: ({ subjectId }) => invoices.get(subjectId)?.locked !== true,
       grantView: ({ actor }) => actor.roles.includes("admin") || actor.userId === "bob"
+    },
+    document: {
+      url: ({ subjectId }) => `/documents/${subjectId}`,
+      grantView: ({ subjectId }) => documents.get(subjectId)?.shareable !== false
     },
     page: { url: ({ subjectId }) => `https://docs.test/pages/${subjectId}` }
   },
