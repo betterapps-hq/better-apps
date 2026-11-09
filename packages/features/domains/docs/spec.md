@@ -74,7 +74,7 @@ only one domain holds it, through the unique `claimedHostname`.
 | `ownershipToken`  | string or null         | The value of a custom domain's ownership record, random for each domain. `null` for subdomains                        |
 | `kind`            | string                 | `subdomain` or `custom`                                                                                               |
 | `status`          | string                 | `pending`, `active` or `failed`                                                                                       |
-| `certificate`     | string                 | `pending`, `active` or `failed`                                                                                       |
+| `certificate`     | string                 | `pending`, `active`, `stalled` or `failed`                                                                            |
 | `records`         | json                   | The DNS records the customer must add, each with what the last check found                                            |
 | `providerId`      | string or null         | The provider's id for the hostname, once it's registered                                                              |
 | `primaryOf`       | string or null, unique | The `orgId` when this is the organization's primary domain, so each has at most one                                   |
@@ -92,10 +92,11 @@ An index on `orgId` and `createdAt` lists an organization's domains in the order
 `orgId` and `hostname` keeps an organization from adding a hostname twice.
 
 A domain is `active` when it's ready for traffic. A subdomain is `active` from the start. A custom domain is `active`
-when it holds its hostname and the provider reports the hostname and its certificate active, and stays `active` while
-the provider serves the hostname and its certificate is being renewed, but not once the certificate failed, such as when
-it expired. It's `failed` when the provider blocks the hostname, when it wasn't ready after 7 days of checks, or when
-another organization proved it owns the hostname. Anything else is `pending`.
+when it holds its hostname and the provider reports the hostname and its certificate active. It stays `active` while the
+provider serves the hostname with a certificate that still works, as when a renewal is under way or stalled, but not
+once the certificate failed, such as when it expired. It's `failed` when the provider blocks the hostname, when it
+wasn't ready after 7 days of checks, or when another organization proved it owns the hostname. Anything else is
+`pending`.
 
 ## Hostname rules
 
@@ -237,7 +238,7 @@ A check of a custom domain:
    the provider no longer has it. Registering a hostname the provider already has returns it, so a check that stopped
    before saving the provider's id gets it the next time.
 3. Asks the provider to restart validation when it reports the hostname `moved`, that is no longer pointing at the app,
-   or its certificate `failed`, so a fixed record gets a fresh try.
+   or its certificate `stalled` or `failed`, so a fixed record gets a fresh try.
 4. Looks up every record with `dns`. A TXT record is found when any of the name's TXT values equals the token. An A or
    AAAA record is found when the name has the address. A CNAME is found when the hostname's CNAME is the target,
    ignoring case and a trailing dot, or, where the customer's DNS flattens CNAMEs, when the hostname's addresses include
@@ -254,9 +255,14 @@ whether or not the routing records are found: a customer whose own Cloudflare zo
 with its own addresses, and a prevalidated hostname is verified before traffic moves. The routing records' `found` still
 shows what DNS answers.
 
-A certificate that failed, such as one that expired after a CAA record stopped its renewal, no longer serves. The check
-asks for the certificate again, and the domain becomes `pending`, with the provider's reason or one saying it asked
-again, until the certificate is issued.
+A renewal can stall, such as when a CAA record blocks the provider's certificate authority, while the current
+certificate still serves until it expires. The provider reports the certificate `stalled`. The check asks for it again,
+and the domain stays `active` with an error, the provider's reason or one saying it asked again, so the organization can
+fix the record in time. The error stays until the certificate is issued.
+
+A certificate that failed, such as one that expired, no longer serves. The check asks for it again, and the domain
+becomes `pending`, with the provider's reason or one saying it asked again, until the certificate is issued. A domain
+that was never `active` becomes `pending` the same way when its first certificate stalls.
 
 A provider that refuses the hostname when it's registered fails the domain with its reason. One that can't be reached
 leaves the domain as it was: `check` returns `PROVIDER_ERROR`, and a scheduled check stays in the outbox for the core's
@@ -413,7 +419,7 @@ interface ProviderHostname {
   id: string
   hostname: string
   status: "pending" | "active" | "moved" | "blocked"
-  certificate: "pending" | "active" | "failed"
+  certificate: "pending" | "active" | "stalled" | "failed"
   records: DnsRecord[]
   errors: string[]
 }
@@ -424,6 +430,8 @@ interface ProviderHostname {
   an apex domain. Domains shows them before the provider hears of the hostname.
 - `records` on a `ProviderHostname` are the provider's other records, such as prevalidation and certificate TXTs.
 - `active` means the provider serves the hostname: traffic reaches it, or the customer prevalidated it.
+- A `certificate` is `stalled` when a new one wasn't issued in time but one issued before still serves until it expires,
+  and `failed` when none serves, such as once it expired. Report a renewal under way as `pending`.
 - `create` returns the provider's hostname when it already has one with that name, so it's safe to repeat.
 - `get` returns `null` for a hostname the provider doesn't have. `remove` succeeds for one.
 - `refresh` restarts the provider's validation of the hostname and its certificate.
@@ -436,7 +444,8 @@ holds only the records `local.dns.publish` adds. Its `zone` is the target withou
 real provider, a hostname it registers is `active` once its DNS points the hostname at the target, or holds the
 hostname's prevalidation record, and `moved` once an active hostname stops pointing at it, until `refresh`. Like
 Cloudflare, `refresh` keeps a hostname it still serves `active` while it issues the certificate again. `block`,
-`holdCertificate` and `failNext` set up what tests need. It's for tests and local development, never production.
+`holdCertificate` and `failNext` set up what tests need: `holdCertificate` sets a served hostname's certificate, which
+`refresh` issues again when it's `stalled` or `failed`. It's for tests and local development, never production.
 
 ## One-time Cloudflare setup
 

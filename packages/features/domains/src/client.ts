@@ -6,8 +6,8 @@ import type { Domain, DomainList } from "./feature.js"
 
 export type { Domain, DomainList } from "./feature.js"
 export type { AddDomainInput } from "./options.js"
-export type { DnsRecord, RecordPurpose } from "./provider.js"
-export type { CertificateStatus, CheckedRecord, DomainKind, DomainStatus } from "./schema.js"
+export type { CertificateStatus, DnsRecord, RecordPurpose } from "./provider.js"
+export type { CheckedRecord, DomainKind, DomainStatus } from "./schema.js"
 
 /** Where the list's load stands. */
 export type LoadState = "idle" | "loading" | "ready" | "error"

@@ -16,6 +16,7 @@ export type {
 } from "./options.js"
 export {
   HostnameProviderError,
+  type CertificateStatus,
   type DnsRecord,
   type HostnameProvider,
   type HostnameProviderErrorCode,
@@ -25,7 +26,6 @@ export {
 export {
   domainModel,
   domainsSchema,
-  type CertificateStatus,
   type CheckedRecord,
   type DomainKind,
   type DomainRow,

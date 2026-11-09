@@ -1,6 +1,6 @@
 // A provider and DNS kept in memory, for tests and local development.
 import { isRecordFound, type DnsRecordType, type DnsResolver } from "./dns.js"
-import type { DnsRecord, HostnameProvider, ProviderHostname } from "./provider.js"
+import type { CertificateStatus, DnsRecord, HostnameProvider, ProviderHostname } from "./provider.js"
 
 /** What `localHostnames` takes. */
 export interface LocalHostnamesOptions {
@@ -27,8 +27,11 @@ export interface LocalHostnames extends HostnameProvider {
   readonly hostnames: ReadonlyMap<string, ProviderHostname>
   /** Makes a hostname blocked, as a provider does with one flagged for abuse. */
   block(hostname: string): void
-  /** Keeps a hostname's certificate `pending` or `failed` while it's served, until `refresh` clears a failed one. */
-  holdCertificate(hostname: string, status: "pending" | "failed"): void
+  /**
+   * Sets a served hostname's certificate. `pending` holds until it's set again, and `stalled` or `failed` until
+   * `refresh` asks for the certificate again. `active` issues it.
+   */
+  holdCertificate(hostname: string, status: CertificateStatus): void
   /** Makes the next call of a method throw this error, once. */
   failNext(method: "create" | "get" | "refresh" | "remove", error: Error): void
 }
@@ -42,7 +45,7 @@ export function localHostnames(options: LocalHostnamesOptions = {}): LocalHostna
   const target = options.target ?? "customers.localhost"
   const zone = options.zone ?? (target.split(".").slice(1).join(".") || target)
   const hostnames = new Map<string, ProviderHostname>()
-  const certificates = new Map<string, "pending" | "failed">()
+  const certificates = new Map<string, CertificateStatus>()
   const records = new Map<string, string[]>()
   const failures = new Map<string, Error>()
 
@@ -137,7 +140,7 @@ export function localHostnames(options: LocalHostnamesOptions = {}): LocalHostna
       if (!entry) {
         throw new Error(`The local provider has no hostname ${id}.`)
       }
-      if (certificates.get(id) === "failed") {
+      if (certificates.get(id) === "stalled" || certificates.get(id) === "failed") {
         certificates.delete(id)
       }
       if (entry.status === "blocked") {
@@ -161,7 +164,11 @@ export function localHostnames(options: LocalHostnamesOptions = {}): LocalHostna
     },
     holdCertificate(hostname, status) {
       const entry = byName(hostname)
-      certificates.set(entry.id, status)
+      if (status === "active") {
+        certificates.delete(entry.id)
+      } else {
+        certificates.set(entry.id, status)
+      }
       if (entry.status === "active") {
         save({ ...entry, certificate: status })
       }

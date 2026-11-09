@@ -18,6 +18,13 @@ export interface DnsRecord {
 }
 
 /**
+ * Where a hostname's certificate stands. `active` once issued. `stalled` when a new one wasn't issued in time, such as a
+ * renewal a CAA record blocks: one issued before still serves until it expires. `failed` when none serves, such as once
+ * it expired.
+ */
+export type CertificateStatus = "pending" | "active" | "stalled" | "failed"
+
+/**
  * A hostname as the provider sees it. `active` means the provider serves it: traffic reaches it, or the customer let it
  * verify the hostname before traffic moves. `moved` means it was active once but no longer points at the app, or wasn't
  * validated in time; `blocked` means the provider won't serve it.
@@ -27,7 +34,7 @@ export interface ProviderHostname {
   id: string
   hostname: string
   status: "pending" | "active" | "moved" | "blocked"
-  certificate: "pending" | "active" | "failed"
+  certificate: CertificateStatus
   /** Records the provider asks for besides the routing ones, such as TXT records for its certificate. */
   records: DnsRecord[]
   /** Why it isn't ready yet, in the provider's words. */

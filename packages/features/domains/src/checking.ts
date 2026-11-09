@@ -22,9 +22,9 @@ import {
 import type { Config } from "./config.js"
 import { isRecordFound } from "./dns.js"
 import { DomainsError } from "./errors.js"
-import type { HostnameProvider } from "./provider.js"
+import type { CertificateStatus, HostnameProvider } from "./provider.js"
 import { publicOrg, summary } from "./rows.js"
-import { domainModel, type CertificateStatus, type CheckedRecord, type DomainRow, type DomainStatus } from "./schema.js"
+import { domainModel, type CheckedRecord, type DomainRow, type DomainStatus } from "./schema.js"
 
 /** What writes domains and emits their events: an action's context, or a subscriber's. */
 export type Writer = Pick<ActionContext<unknown>, "db" | "emit">
@@ -289,14 +289,18 @@ async function serve(config: Config, row: DomainRow): Promise<Finding> {
   }
   const { state } = inspection
   const records = await lookUp(config.dns, [...provider.routing(row.hostname), ...state.records])
-  const status = statusOf(inspection, row.status === "active")
+  const active = row.status === "active"
+  const status = statusOf(inspection, active)
+  // A ready domain keeps the error of a renewal that stalled until its certificate is issued, since the provider
+  // reports the renewal asked for again as pending.
+  const kept = active && status === "active" && state.certificate !== "active" ? row.error : null
   return {
     claimed: true,
     providerId: state.id,
     status,
     certificate: state.certificate,
     records,
-    error: describe(inspection, records, status),
+    error: describe(inspection, records, status) ?? kept,
     registered: inspection.registered ? state.id : null
   }
 }

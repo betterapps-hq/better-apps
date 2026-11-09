@@ -1,5 +1,5 @@
 import type { FeatureSchema } from "better-apps"
-import type { DnsRecord } from "./provider.js"
+import type { CertificateStatus, DnsRecord } from "./provider.js"
 
 /** The model of the domains table. */
 export const domainModel = "domain"
@@ -12,9 +12,6 @@ export type DomainKind = "subdomain" | "custom"
  * another organization proved it owns the hostname.
  */
 export type DomainStatus = "pending" | "active" | "failed"
-
-/** Where the domain's certificate stands. */
-export type CertificateStatus = "pending" | "active" | "failed"
 
 /** A record the customer adds, with what the last check found: `null` before one, or when the lookup failed. */
 export interface CheckedRecord extends DnsRecord {

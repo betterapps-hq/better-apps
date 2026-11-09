@@ -20,7 +20,7 @@ export type AddDomainInput = {
 };
 
 // @public
-export type CertificateStatus = "pending" | "active" | "failed";
+export type CertificateStatus = "pending" | "active" | "stalled" | "failed";
 
 // @public
 export interface CheckedRecord extends DnsRecord {

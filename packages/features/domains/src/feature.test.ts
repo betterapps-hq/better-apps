@@ -24,6 +24,8 @@ const proveError = (hostname: string) => `Add the TXT record for _verify.${hostn
 const cnameError = (hostname: string) => `Add a CNAME record for ${hostname} that points to customers.yourapp.com.`
 const waiting = "The records are in place. Waiting for the provider to verify the domain."
 const certificateFailed = "The certificate couldn't be issued. We asked for it again."
+const renewalStalled =
+  "The certificate couldn't be renewed. We asked for it again, and the current one works until it expires."
 
 /** Adds a custom domain, adds its records, and checks it until it's ready. */
 async function addReady(t: App, userId: UserId, hostname: string): Promise<Domain> {
@@ -512,6 +514,12 @@ describe("check", () => {
       status: "pending",
       error: certificateFailed
     })
+    t.provider.holdCertificate("links.acme.com", "stalled")
+    advance()
+    await expect(t.api.check({ domainId: added.id }, t.as("ada"))).resolves.toMatchObject({
+      status: "pending",
+      error: certificateFailed
+    })
   })
 
   it("keeps a ready domain ready while its certificate is renewed", async () => {
@@ -526,6 +534,29 @@ describe("check", () => {
       error: null
     })
     await expect(t.api.lookup({ hostname: "links.acme.com" })).resolves.toMatchObject({ verified: true })
+    expect(t.events("domain.status.changed")).toHaveLength(1)
+  })
+
+  it("keeps a ready domain ready when its certificate's renewal stalls, saying so until it's issued", async () => {
+    const t = setup()
+    const added = await addReady(t, "ada", "links.acme.com")
+    const check = () => t.api.check({ domainId: added.id }, t.as("ada"))
+    t.provider.holdCertificate("links.acme.com", "stalled")
+    advance()
+    await expect(check()).resolves.toMatchObject({
+      status: "active",
+      certificate: "pending",
+      primary: true,
+      error: renewalStalled
+    })
+    await expect(t.api.lookup({ hostname: "links.acme.com" })).resolves.toMatchObject({ verified: true })
+    // The renewal asked for again is pending.
+    t.provider.holdCertificate("links.acme.com", "pending")
+    advance()
+    await expect(check()).resolves.toMatchObject({ status: "active", certificate: "pending", error: renewalStalled })
+    t.provider.holdCertificate("links.acme.com", "active")
+    advance()
+    await expect(check()).resolves.toMatchObject({ status: "active", certificate: "active", error: null })
     expect(t.events("domain.status.changed")).toHaveLength(1)
   })
 

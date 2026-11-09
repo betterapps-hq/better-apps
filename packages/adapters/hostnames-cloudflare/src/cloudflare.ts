@@ -36,17 +36,15 @@ const activeStatuses = new Set(["active", "active_redeploying", "test_active", "
 const blockedStatuses = new Set(["blocked", "pending_blocked", "test_blocked", "test_failed"])
 const movedStatuses = new Set(["moved", "deleted", "pending_deletion"])
 const activeCertificates = new Set(["active", "pending_expiration"])
-const failedCertificates = new Set([
-  "expired",
-  "deleted",
-  "inactive",
-  "deactivating",
+/** A new certificate that timed out, such as a renewal a CAA record blocks, while one issued before still serves. */
+const stalledCertificates = new Set([
   "initializing_timed_out",
   "validation_timed_out",
   "issuance_timed_out",
   "deployment_timed_out",
   "deletion_timed_out"
 ])
+const failedCertificates = new Set(["expired", "deleted", "inactive", "deactivating"])
 
 /** Cloudflare's error codes for custom hostnames that domains acts on. */
 const errorCodes = { quotaExceeded: 1405, duplicate: 1406, notFound: 1436 } as const
@@ -66,6 +64,9 @@ function certificate(hostname: CustomHostname): ProviderHostname["certificate"] 
   const value = hostname.ssl?.status ?? "initializing"
   if (activeCertificates.has(value)) {
     return "active"
+  }
+  if (stalledCertificates.has(value)) {
+    return "stalled"
   }
   return failedCertificates.has(value) ? "failed" : "pending"
 }

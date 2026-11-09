@@ -76,7 +76,8 @@ active. A domain whose holder's ownership record is gone passes to another organ
 record shows whether the last check `found` it. Pending domains are checked again after 1, 2, 5, 10, 15 and 30 minutes,
 1 and 2 hours, then every 4 hours, and active ones every 24 hours, through domains' own `check.scheduled` event, which
 the outbox holds until it's due. One still pending after 7 days becomes `failed`; "check now" starts another 7 days. A
-certificate being renewed doesn't make an active domain pending, but one that failed, such as one that expired, does.
+certificate being renewed, or one whose renewal stalled, doesn't make an active domain pending, but one that failed,
+such as one that expired, does. A stalled renewal shows an error until the certificate is issued.
 
 ## Events
 

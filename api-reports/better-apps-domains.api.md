@@ -25,7 +25,7 @@ export type AddDomainInput = {
 };
 
 // @public
-export type CertificateStatus = "pending" | "active" | "failed";
+export type CertificateStatus = "pending" | "active" | "stalled" | "failed";
 
 // @public
 export const checkCooldownMs = 10000;
@@ -375,7 +375,7 @@ export interface LocalHostnames extends HostnameProvider {
         unpublish(name: string, type: DnsRecordType): void;
     };
     failNext(method: "create" | "get" | "refresh" | "remove", error: Error): void;
-    holdCertificate(hostname: string, status: "pending" | "failed"): void;
+    holdCertificate(hostname: string, status: CertificateStatus): void;
     readonly hostnames: ReadonlyMap<string, ProviderHostname>;
     readonly target: string;
     readonly zone: string;
@@ -405,7 +405,7 @@ export function normalizeHostname(input: string, input2?: {
 // @public
 export interface ProviderHostname {
     // (undocumented)
-    certificate: "pending" | "active" | "failed";
+    certificate: CertificateStatus;
     errors: string[];
     // (undocumented)
     hostname: string;

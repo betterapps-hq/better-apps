@@ -187,7 +187,9 @@ describe("cloudflareHostnames", () => {
       const hostname = await provider.get(id)
       return [hostname?.status, hostname?.certificate]
     }
-    expect(await read("moved", "validation_timed_out")).toEqual(["moved", "failed"])
+    expect(await read("moved", "validation_timed_out")).toEqual(["moved", "stalled"])
+    expect(await read("active", "issuance_timed_out")).toEqual(["active", "stalled"])
+    expect(await read("active", "expired")).toEqual(["active", "failed"])
     expect(await read("pending_blocked", "pending_expiration")).toEqual(["blocked", "active"])
     expect(await read("pending_migration", "pending_issuance")).toEqual(["pending", "pending"])
   })

@@ -1,6 +1,7 @@
 // Domain rows as actions return them and events carry them.
 import type { DomainSummary } from "./events.js"
-import type { CertificateStatus, CheckedRecord, DomainKind, DomainRow, DomainStatus } from "./schema.js"
+import type { CertificateStatus } from "./provider.js"
+import type { CheckedRecord, DomainKind, DomainRow, DomainStatus } from "./schema.js"
 
 /** A domain as actions return it. */
 export interface Domain {

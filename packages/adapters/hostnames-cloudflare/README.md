@@ -40,9 +40,9 @@ Certificates: Edit** on the zone. The Worker and the zone must be in the same Cl
   is active.
 - Cloudflare's hostname statuses map to `active` (`active`, `active_redeploying` and the test ones), `blocked`
   (`blocked`, `pending_blocked`, `test_blocked`, `test_failed`), `moved` (`moved`, `deleted`, `pending_deletion`) and
-  `pending` for the rest. Certificates are `active` when `active` or `pending_expiration`, `failed` when timed out,
-  expired, deleted or inactive, and `pending` otherwise. `errors` joins `verification_errors` and the certificate's
-  `validation_errors`.
+  `pending` for the rest. Certificates are `active` when `active` or `pending_expiration`, `stalled` when timed out,
+  since a renewal that timed out leaves the current certificate serving, `failed` when expired, deleted, inactive or
+  deactivating, and `pending` otherwise. `errors` joins `verification_errors` and the certificate's `validation_errors`.
 - `refresh` edits the hostname with the same `ssl`, which restarts Cloudflare's validation.
 - `get` returns `null` and `remove` succeeds for a hostname Cloudflare doesn't have.
 - Connection failures, rate limits and 5xx answers throw `UNAVAILABLE`; Cloudflare's quota error, 1405, throws
