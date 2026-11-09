@@ -1,7 +1,8 @@
 import type { ActionDefinition } from "./action.js"
 import type { EventDefinition, EventHandler } from "./events.js"
+import type { RouteDefinition } from "./route.js"
 import type { FeatureSchema } from "./schema.js"
-import type { SubjectDefinition } from "./subjects.js"
+import type { SubjectDefinition, SubjectGrants } from "./subjects.js"
 
 /** An app feature, such as comments or audit history: its tables, actions and events. */
 export interface BetterAppsFeature {
@@ -22,6 +23,16 @@ export interface BetterAppsFeature {
   subjects?: Readonly<Record<string, SubjectDefinition>> | undefined
   /** Subject types the feature works with. Creating the app fails when neither the app nor a feature declares one. */
   usesSubjects?: readonly string[] | undefined
+  /**
+   * Public pages and endpoints `app.handler` serves outside the action URLs, keyed by name, such as a short link's
+   * redirect at `/s/:code`. Declare each with `defineRoute`.
+   */
+  routes?: Readonly<Record<string, RouteDefinition>> | undefined
+  /**
+   * Access a request carries besides the app's rules, such as a share link a visitor opened. Subject checks that pass
+   * the request ask it about subjects the app's rules refuse.
+   */
+  grants?: SubjectGrants | undefined
   /** The feature's configuration, kept for inference and for other features to read. */
   options?: unknown
 }

@@ -27,6 +27,14 @@ import { handlers } from "../../../better-apps.server"
 export const Route = createFileRoute("/api/apps/$")({ server: { handlers } })
 ```
 
+Features' public [routes](../../core/better-apps/README.md#routes), such as short links' `/s/{code}`, use the same
+handlers from a catch-all route at their path:
+
+```ts
+// src/routes/s/$.ts
+export const Route = createFileRoute("/s/$")({ server: { handlers } })
+```
+
 Call actions from server functions, which loaders call on the server and in the browser:
 
 ```ts
