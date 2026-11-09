@@ -27,3 +27,6 @@ peerDependencyRules:
   allowedVersions:
     vite: "*"
     vitest: "*"
+minimumReleaseAgeExclude:
+  - rulesync@43.5.0
+  - skills@1.7.6

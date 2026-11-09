@@ -1,0 +1,4 @@
+interface:
+  display_name: "Impeccable"
+  short_description: "Design, review, and refine websites and product interfaces"
+  default_prompt: "Use $impeccable to redesign, critique, audit, or polish this frontend."

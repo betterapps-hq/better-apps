@@ -1,6 +1,6 @@
 {
   "ignoreExportsUsedInFile": true,
-  "ignore": ["**/src/vendor/**"],
+  "ignore": ["**/src/vendor/**", ".agents/skills/**", ".claude/skills/**"],
   "workspaces": {
     ".": {
       "entry": ["beachball.config.js"]

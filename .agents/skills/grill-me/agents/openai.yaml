@@ -1,0 +1,5 @@
+interface:
+  display_name: "Grill me"
+  short_description: "Alias for the Grilling interview workflow"
+policy:
+  allow_implicit_invocation: false

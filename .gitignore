@@ -13,3 +13,6 @@ storybook-static/
 .generated/
 .vitepress/.temp/
 .vitepress/cache/
+
+# Local skills CLI links; restore with pnpm skills:sync.
+/.claude/skills/

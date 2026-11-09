@@ -1,0 +1,6 @@
+interface:
+  display_name: "Internal Documentation"
+  short_description: "Document current systems, boundaries, and reasons"
+  default_prompt: "Use $internal-documentation to write or review internal engineering docs that explain how the system works."
+policy:
+  allow_implicit_invocation: true

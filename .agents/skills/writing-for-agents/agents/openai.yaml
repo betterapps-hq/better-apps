@@ -1,0 +1,3 @@
+interface:
+  display_name: "Writing for agents"
+  short_description: "Structure instructions and references for agents"

@@ -1,0 +1,14 @@
+{
+  "best-practices/README.md": "3dc1f15ce698fc11ee3f49e2fd33cd8dcfccaa2a92a170b692e8e85a1aee2f5a",
+  "best-practices/api-layer.md": "6f85bc19365e07ba2328500197710c335b1833f29e958ac1da3e8d7f6048c808",
+  "best-practices/cloud-infrastructure.md": "6f85bc19365e07ba2328500197710c335b1833f29e958ac1da3e8d7f6048c808",
+  "best-practices/conventions.md": "bee8988807d157f3f8efc84a592a26af30bf4cc3511e4c683885c221eed1547b",
+  "best-practices/documentation.md": "6f85bc19365e07ba2328500197710c335b1833f29e958ac1da3e8d7f6048c808",
+  "best-practices/folder-structure.md": "6f85bc19365e07ba2328500197710c335b1833f29e958ac1da3e8d7f6048c808",
+  "best-practices/hooks.md": "9c70aa4d37990cca67fd862f8467ef6adb234fcfd86a8345f0756abf465d6460",
+  "best-practices/principles.md": "760181ebca78362566269eec2f2585a9be1c97f2592b641aa9f7f4e22e1e6e13",
+  "best-practices/pull-requests.md": "6f85bc19365e07ba2328500197710c335b1833f29e958ac1da3e8d7f6048c808",
+  "best-practices/react.md": "0c78d0caf048349e3c6ed41b2966f6a2d9f9157da68c60071b3fcd6a27acdb7e",
+  "best-practices/tech-stack.md": "fb695854243541d6f0fd5b78f6f7d7ab33342a1a8d7851a185bf387e248debfe",
+  "best-practices/typescript.md": "760123b6fb57274a4404db19d149ff73d170ba7f3e2532865a9fa93da4e882b5"
+}
