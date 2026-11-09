@@ -394,6 +394,24 @@ describe.each(databases)("drizzleAdapter on $name", ({ connect, dispose, unavail
       })
     })
 
+    it("creates many rows across several statements, atomically with the rest", async () => {
+      const data = Array.from({ length: 25 }, (_, index) => ({ id: `c${index}`, subjectId: "post", body: `${index}` }))
+      const results = await adapter.batch([
+        { type: "createMany", model: "comment", data },
+        { type: "createMany", model: "comment", data: [] },
+        { type: "deleteMany", model: "comment", where: [{ field: "id", value: "c0" }] }
+      ])
+      expect(results).toEqual([25, 0, 1])
+      expect(await adapter.count({ model: "comment" })).toBe(24)
+      await expect(
+        adapter.batch([
+          { type: "createMany", model: "comment", data: [{ id: "new", subjectId: "post", body: "Hi" }] },
+          { type: "createMany", model: "comment", data: [{ id: "c1", subjectId: "post", body: "Duplicate" }] }
+        ])
+      ).rejects.toThrow(duplicateId)
+      expect(await adapter.count({ model: "comment" })).toBe(24)
+    })
+
     it("runs a single write and no writes", async () => {
       expect(await adapter.batch([])).toEqual([])
       expect(

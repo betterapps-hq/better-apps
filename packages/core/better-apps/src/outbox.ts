@@ -89,9 +89,12 @@ export function createOutbox(options: {
   function track(feature: BetterAppsFeature, scope: EventScope) {
     const pending: WriteOperation[] = []
     const written: string[] = []
+    // Many events are written with one createMany, so a bulk job's page of them takes a few statements.
     const take = () => {
-      const events = pending.splice(0)
-      return { events, ids: events.map((event) => String((event as { data: Row }).data.id)) }
+      const taken = pending.splice(0)
+      const rows = taken.map((event) => (event as { data: Row }).data)
+      const events: WriteOperation[] = rows.length > 1 ? [{ type: "createMany", model: eventModel, data: rows }] : taken
+      return { events, ids: rows.map((row) => String(row.id)) }
     }
     const emit = (type: string, data: unknown) => {
       if (!feature.events || !Object.hasOwn(feature.events, type)) {

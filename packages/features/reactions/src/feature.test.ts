@@ -334,12 +334,12 @@ describe("react and unreact", () => {
       "UNAUTHENTICATED"
     )
     await expectCode(api.removeReactions({ ...target, subjectType: "page", subjectId: "home" }, as("ada")), "FORBIDDEN")
-    expect(await api.removeReactions(target, as("ada"))).toEqual({ removed: 1 })
+    expect(await api.removeReactions(target, as("ada"))).toEqual({ removed: 1, done: true })
     expect(events("reaction.removed")[0]?.data).toMatchObject({ userId: "bob", reason: "moderated" })
-    expect(await api.removeReactions(target)).toEqual({ removed: 0 })
-    expect(await api.removeReactions({ ...inv1, emoji: "🎉" }, as("ada"))).toEqual({ removed: 2 })
+    expect(await api.removeReactions(target)).toEqual({ removed: 0, done: true })
+    expect(await api.removeReactions({ ...inv1, emoji: "🎉" }, as("ada"))).toEqual({ removed: 2, done: true })
     await api.react({ ...inv1, emoji: "🚀" }, as("cy"))
-    expect(await api.removeReactions(inv1)).toEqual({ removed: 1 })
+    expect(await api.removeReactions(inv1)).toEqual({ removed: 1, done: true })
   })
 
   it("remove many reactions a page at a time, reporting each", async () => {
@@ -352,8 +352,14 @@ describe("react and unreact", () => {
       for (const id of ids) {
         await api.react({ subjectType: "invoice", subjectId: id, emoji: "👍" }, as("ada"))
       }
-      expect(await api.removeUser({ userId: "ada" })).toEqual({ removed: 130 })
+      // Each call removes one page, and says whether to call again.
+      expect(await api.removeUser({ userId: "ada" })).toEqual({ removed: 100, done: false })
+      expect(events("reaction.removed")).toHaveLength(100)
+      expect(events("subject.changed")).toHaveLength(100)
+      expect(events("user.removed")).toHaveLength(0)
+      expect(await api.removeUser({ userId: "ada" })).toEqual({ removed: 30, done: true })
       expect(events("reaction.removed")).toHaveLength(130)
+      expect(events("user.removed")).toHaveLength(1)
       expect(database.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${reactionModel}`).get()).toEqual({ count: 0 })
     } finally {
       for (const id of ids) {
@@ -403,8 +409,8 @@ describe("react and unreact", () => {
     const { api, as } = setup()
     await api.react({ ...inv1, emoji: "👍" }, as("ada"))
     await api.react({ subjectType: "page", subjectId: "home", emoji: "👍" }, as("ada"))
-    expect(await api.removeUser({ userId: "ada", orgId: "acme" })).toEqual({ removed: 1 })
-    expect(await api.removeUser({ userId: "ada", orgId: null })).toEqual({ removed: 1 })
+    expect(await api.removeUser({ userId: "ada", orgId: "acme" })).toEqual({ removed: 1, done: true })
+    expect(await api.removeUser({ userId: "ada", orgId: null })).toEqual({ removed: 1, done: true })
   })
 
   it("check who can react", async () => {
@@ -416,10 +422,12 @@ describe("react and unreact", () => {
       api.react({ subjectType: "invoice", subjectId: "inv-locked", emoji: "👍" }, as("ada")),
       "FORBIDDEN"
     )
-    await expectCode(
-      api.unreact({ subjectType: "invoice", subjectId: "inv-locked", emoji: "👍" }, as("ada")),
-      "FORBIDDEN"
-    )
+    // Taking back one's own reaction needs only to see the record.
+    expect(await api.unreact({ subjectType: "invoice", subjectId: "inv-locked", emoji: "👍" }, as("ada"))).toEqual({
+      reaction: null,
+      removed: false
+    })
+    await expectCode(api.unreact({ ...inv1, emoji: "👍" }, as("gus")), "NOT_FOUND")
     await expectCode(
       api.react({ subjectType: "ticket" as "page", subjectId: "t", emoji: "👍" }, as("ada")),
       "INVALID_INPUT"
@@ -515,12 +523,12 @@ describe("upkeep", () => {
     const list = { subjectType: "invoice", subjectIds: ["inv-moving"] } as const
     expect(await api.listReactions(list, as("gus"))).toEqual({ "inv-moving": [] })
     expect((await post("moveSubject", { ...moving, toOrgId: "globex" }, "ada")).status).toBe(404)
-    expect(await api.moveSubject({ ...moving, toOrgId: "globex" })).toEqual({ moved: 1 })
+    expect(await api.moveSubject({ ...moving, toOrgId: "globex" })).toEqual({ moved: 1, done: true })
     expect(events("subject.moved")[0]?.data).toEqual({ ...moving, toOrgId: "globex" })
     expect(await api.listReactions(list, as("gus"))).toEqual({
       "inv-moving": [{ emoji: "👍", count: 1, reacted: false }]
     })
-    expect(await api.moveSubject({ ...moving, toOrgId: null })).toEqual({ moved: 1 })
+    expect(await api.moveSubject({ ...moving, toOrgId: null })).toEqual({ moved: 1, done: true })
     invoices.delete("inv-moving")
   })
 
@@ -535,7 +543,7 @@ describe("upkeep", () => {
       invoices.set("inv-moving", { orgId: "globex" })
       // The reactions left under Acme neither count nor stand in the way.
       expect(await api.react({ ...moving, emoji: "🚀" }, as("gus"))).toMatchObject({ added: true, replaced: [] })
-      expect(await api.moveSubject({ ...moving, toOrgId: "globex" })).toEqual({ moved: 1 })
+      expect(await api.moveSubject({ ...moving, toOrgId: "globex" })).toEqual({ moved: 1, done: true })
       // Gus's first reaction merges into the one he made since, and is reported gone.
       expect(events("reaction.removed").map((event) => event.data)).toEqual([
         expect.objectContaining({ userId: "gus", emoji: "🚀", orgId: "acme", reason: "merged" })
@@ -555,8 +563,8 @@ describe("upkeep", () => {
     await api.react({ ...inv1, emoji: "👍" }, as("ada"))
     await api.react({ ...inv1, emoji: "🎉" }, as("bob"))
     await api.react({ subjectType: "invoice", subjectId: "inv-2", emoji: "👍" }, as("bob"))
-    expect(await api.removeUser({ userId: "bob" })).toEqual({ removed: 2 })
-    expect(await api.removeSubject(inv1)).toEqual({ removed: 1 })
+    expect(await api.removeUser({ userId: "bob" })).toEqual({ removed: 2, done: true })
+    expect(await api.removeSubject(inv1)).toEqual({ removed: 1, done: true })
     expect(events("user.removed")[0]?.data).toEqual({ userId: "bob", orgId: null })
     expect(events("subject.removed")[0]?.data).toEqual(inv1)
     expect(events("reaction.removed").map((event) => event.data)).toEqual([

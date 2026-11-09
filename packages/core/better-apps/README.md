@@ -164,7 +164,7 @@ await client.notes.add({ text: "Hi" })
 
 - `emit` adds an event to the action's next `db.batch`, so it's written to the core's outbox in the same transaction as
   the change, or in the same `batch()` on D1. Events emitted outside a batch are written after the handler returns. If
-  the batch fails, its events are never written.
+  the batch fails, its events are never written. Several events go in one `createMany`.
 - Once written, events are delivered to every subscriber, starting as soon as the action finishes. With a `waitUntil`,
   such as a Worker's execution context, the response doesn't wait for delivery, and `waitUntil` keeps it running after
   the response is sent. Without one, or if `waitUntil` throws, the call waits for delivery.
@@ -183,4 +183,4 @@ await client.notes.add({ text: "Hi" })
   or any name that becomes the same snake_case table, such as `User` or `rate_limit`. That lets Better Auth share the
   same database. `betterAppsEvent` is reserved for the outbox.
 - Besides reads and writes, `DatabaseAdapter` sorts on several fields with an `after` cursor, counts rows per group,
-  creates many rows at once and runs several writes as one atomic `batch`.
+  creates many rows at once and runs several writes as one atomic `batch`, which can include a `createMany`.

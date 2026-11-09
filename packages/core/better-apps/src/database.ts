@@ -49,6 +49,8 @@ export interface CountGroup {
 /** A write that runs inside a batch. */
 export type WriteOperation =
   | { type: "create"; model: string; data: Row }
+  /** Creates rows with as few statements as the database allows, such as many rows a page of a bulk job writes. */
+  | { type: "createMany"; model: string; data: readonly Row[] }
   | { type: "update"; model: string; where: readonly Where[]; update: Row }
   | { type: "updateMany"; model: string; where: readonly Where[]; update: Row }
   | {
@@ -62,7 +64,7 @@ export type WriteOperation =
 
 /**
  * What each write in a batch returns, in order: the created row, the updated row or `null` when nothing matched, or the
- * number of rows `updateMany` and `deleteMany` changed.
+ * number of rows `createMany` made and `updateMany` and `deleteMany` changed.
  */
 export type WriteResult = Row | null | number
 

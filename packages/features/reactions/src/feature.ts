@@ -18,6 +18,7 @@ import {
   requireModerator,
   requireReactor,
   requireView,
+  requireViewer,
   viewable,
   type Context
 } from "./access.js"
@@ -120,13 +121,16 @@ export const limits = {
 
 /** How long a removal is remembered, which only needs to outlast requests under way. */
 const removalMemoryMs = 60 * 60_000
-/** How many reactions one batch removes, so removing a busy record or person stays within a database's batch limits. */
+/**
+ * How many reactions one call of a bulk job removes. Its batch takes a few statements, plus one `reaction.removed` event
+ * each for an app that subscribes to them, so a call stays well within a database's limits per request.
+ */
 const removalPage = 100
 /**
  * How many reactions one batch moves. Each page also looks up what the same people have in the new organization, which
  * keeps the query's ids under D1's 100 bound parameters.
  */
-const movePage = 40
+const movePageSize = 40
 /** How long an organization's own list of emoji is reused before it's asked for again. */
 const emojiListMs = 60_000
 
@@ -240,8 +244,7 @@ function resolve(options: ReactionsOptions): Config {
       maxPerUser: resolveCount("maxPerUser", rules.maxPerUser ?? options.maxPerUser ?? limits.maxPerUser, 100),
       maxEmojis: resolveCount("maxEmojis", rules.maxEmojis ?? options.maxEmojis ?? limits.maxEmojis, 500),
       reactorVisibility: rules.reactorVisibility ?? options.reactorVisibility ?? "viewers",
-      checkAfterReact:
-        rules.checkAfterReact ?? (subjectType === commentTypes.comment || subjectType === commentTypes.thread)
+      checkAfterReact: rules.checkAfterReact ?? true
     }
   }
   return config
@@ -347,20 +350,18 @@ const removal = (row: Reaction, reason: RemovalReason, bulk = false): ReactionRe
 
 /**
  * The writes that remove reactions: each is deleted and remembered by its id, so a batch that removes one another
- * removal already took fails, with its events, rather than reporting it twice. Old memories go at the same time.
+ * removal already took fails, with its events, rather than reporting it twice. Old memories go at the same time. They
+ * use the server's clock, not the action's `now`, which an import can set to another time.
  */
-function removals(rows: readonly Reaction[], now: Date): WriteOperation[] {
+function removals(rows: readonly Reaction[]): WriteOperation[] {
+  const now = new Date()
   return [
     ...chunks(rows.map((row) => row.id)).map((ids): WriteOperation => ({
       type: "deleteMany",
       model: reactionModel,
       where: [{ field: "id", operator: "in", value: ids }]
     })),
-    ...rows.map((row): WriteOperation => ({
-      type: "create",
-      model: removalModel,
-      data: { id: row.id, createdAt: now }
-    })),
+    { type: "createMany", model: removalModel, data: rows.map((row) => ({ id: row.id, createdAt: now })) },
     {
       type: "deleteMany",
       model: removalModel,
@@ -370,20 +371,14 @@ function removals(rows: readonly Reaction[], now: Date): WriteOperation[] {
 }
 
 /**
- * Runs a paged job until a page comes back empty. A page whose batch fails, such as one that lost a race with another
- * removal, is read again; three failures in a row end the job with the error. Each committed page stays done, so a
- * subscriber retried after a failure picks up where it stopped.
+ * Runs one page of a job, reading it again when its batch fails, such as one that lost a race with another removal. The
+ * third failure in a row is thrown. Each committed page stays done, so calling again picks up where it stopped.
  */
-async function paged(page: () => Promise<boolean>): Promise<void> {
-  let failures = 0
-  for (;;) {
+async function retried<Output>(page: () => Promise<Output>): Promise<Output> {
+  for (let failures = 1; ; failures += 1) {
     try {
-      if (!(await page())) {
-        return
-      }
-      failures = 0
+      return await page()
     } catch (error) {
-      failures += 1
       if (failures >= 3) {
         throw error
       }
@@ -391,31 +386,43 @@ async function paged(page: () => Promise<boolean>): Promise<void> {
   }
 }
 
+/** One call of a bulk job: how many reactions it changed, and whether it's done, or should be called again. */
+export interface BulkStep {
+  done: boolean
+}
+
+/** The records some reactions are on, once each. */
+function recordsOf(rows: readonly Reaction[]): ReactionSubject[] {
+  const records = new Map(rows.map((row) => [JSON.stringify([row.subjectType, row.subjectId]), row]))
+  return [...records.values()].map((row) => ({ subjectType: row.subjectType, subjectId: row.subjectId }))
+}
+
 /**
- * Removes the reactions `find` returns, a page at a time, emitting `reaction.removed` for each, until none are left, so
- * reactions added meanwhile go too. Removals marked `bulk` stay with server subscribers; browsers hear of them once per
- * record instead. Returns how many went.
+ * Removes a page of the reactions `find` returns, emitting `reaction.removed` for each. Removals marked `bulk` stay with
+ * server subscribers, and browsers hear of them with one `subject.changed` per record, written with the page, so a job
+ * that stops partway still reaches them. Returns how many went, and whether that was the last page.
  */
-async function removeAll(
+async function removePage(
   writer: Writer,
   find: (limit: number) => Promise<Reaction[]>,
   reason: RemovalReason,
   bulk = true
-): Promise<number> {
-  let removed = 0
-  await paged(async () => {
+): Promise<{ removed: number } & BulkStep> {
+  return retried(async () => {
     const rows = await find(removalPage)
-    if (rows.length === 0) {
-      return false
+    if (rows.length > 0) {
+      for (const row of rows) {
+        writer.emit("reaction.removed", removal(row, reason, bulk))
+      }
+      if (bulk) {
+        for (const record of recordsOf(rows)) {
+          writer.emit("subject.changed", record)
+        }
+      }
+      await writer.db.batch(removals(rows))
     }
-    for (const row of rows) {
-      writer.emit("reaction.removed", removal(row, reason, bulk))
-    }
-    await writer.db.batch(removals(rows, new Date()))
-    removed += rows.length
-    return true
+    return { removed: rows.length, done: rows.length < removalPage }
   })
-  return removed
 }
 
 /** Up to `limit` reactions on some records of one subject type, from every organization or all but one. */
@@ -446,30 +453,34 @@ async function rowsOf(
   return rows
 }
 
-/** Removes every reaction on some records, emitting `reaction.removed` for each. */
+/**
+ * Removes every reaction on some records, a page at a time, for a subscriber that cleans up after one thread or comment
+ * in one go.
+ */
 async function removeRecords(writer: Writer, type: string, ids: readonly string[], reason: RemovalReason) {
-  return ids.length === 0 ? 0 : removeAll(writer, async (limit) => rowsOf(writer.db, type, ids, limit), reason)
+  let done = ids.length === 0
+  while (!done) {
+    ;({ done } = await removePage(writer, async (limit) => rowsOf(writer.db, type, ids, limit), reason))
+  }
 }
 
 /**
- * Moves the reactions on some records to another organization, a page at a time. A person's reaction that they already
- * made in that organization, or that has no free place there, is removed with `reaction.removed` and the reason
- * `merged`. Returns how many moved, and which records had reactions to move.
+ * Moves a page of the reactions on some records to another organization. A person's reaction that they already made in
+ * that organization, or that has no free place there, is removed with `reaction.removed` and the reason `merged`.
+ * Returns how many moved, which records had reactions to move, and whether that was the last page.
  */
-async function moveRecords(
+async function movePage(
   writer: Writer,
   settings: Settings,
   type: string,
   ids: readonly string[],
   toOrgId: string
-): Promise<{ moved: number; records: Set<string> }> {
+): Promise<{ moved: number; records: Set<string> } & BulkStep> {
   const { db } = writer
-  let moved = 0
-  const records = new Set<string>()
-  await paged(async () => {
-    const rows = await rowsOf(db, type, ids, movePage, toOrgId)
+  return retried(async () => {
+    const rows = await rowsOf(db, type, ids, movePageSize, toOrgId)
     if (rows.length === 0) {
-      return false
+      return { moved: 0, records: new Set<string>(), done: true }
     }
     // What the same people already have on the same records in the new organization.
     const there = await db.findMany<Reaction>({
@@ -514,15 +525,14 @@ async function moveRecords(
       writer.emit("reaction.removed", removal(row, "merged", true))
     }
     // A reaction that lands in the new organization meanwhile can take a place this page meant to use, which fails the
-    // batch, and the page is read again.
-    await db.batch([...updates, ...(dropped.length > 0 ? removals(dropped, new Date()) : [])])
-    moved += updates.length
-    for (const row of rows) {
-      records.add(row.subjectId)
+    // batch, and the page is read again. One removed meanwhile updates nothing, so it isn't counted as moved.
+    const results = await db.batch([...updates, ...(dropped.length > 0 ? removals(dropped) : [])])
+    return {
+      moved: results.slice(0, updates.length).filter((result) => result !== null).length,
+      records: new Set(rows.map((row) => row.subjectId)),
+      done: rows.length < movePageSize
     }
-    return true
   })
-  return { moved, records }
 }
 
 /** Orders a record's reactions: in the subject type's list order, or by when each emoji was first used. */
@@ -698,7 +708,7 @@ async function react(config: Config, context: Context): Promise<ReactResult> {
     let saved = false
     try {
       const results = await db.batch([
-        ...(replacing.length > 0 ? removals(replacing, context.now) : []),
+        ...(replacing.length > 0 ? removals(replacing) : []),
         { type: "create", model: reactionModel, data: { ...data, slot, createdAt: context.now } }
       ])
       saved = true
@@ -738,7 +748,7 @@ async function stillThere(settings: Settings, context: Context, ref: ReactionSub
   if (visible && !moved) {
     return
   }
-  await removeAll(
+  await removePage(
     context,
     async () => context.db.findMany<Reaction>({ model: reactionModel, where: [{ field: "id", value: reaction.id }] }),
     "withdrawn",
@@ -752,8 +762,9 @@ async function stillThere(settings: Settings, context: Context, ref: ReactionSub
 
 async function unreact(config: Config, context: Context): Promise<UnreactResult> {
   const input = context.input as ReactionTarget
-  const settings = settingsOf(config, input.subjectType)
-  const actor = await requireReactor(settings.rules, context, input)
+  settingsOf(config, input.subjectType)
+  // Taking back one's own reaction needs no `canReact`, so someone who may no longer react can still undo theirs.
+  const actor = await requireViewer(context, input)
   const where = [
     ...onRecord(input, await orgOf(context.subjects, input, actor)),
     { field: "userId", value: actor.userId },
@@ -769,7 +780,7 @@ async function unreact(config: Config, context: Context): Promise<UnreactResult>
   })
   context.emit("reaction.removed", { ...removal(existing, "unreacted"), count: Math.max(left - 1, 0) })
   try {
-    await context.db.batch(removals([existing], context.now))
+    await context.db.batch(removals([existing]))
   } catch (error) {
     // Another removal, such as from another tab, took it first and reported it.
     if (await context.db.findOne<Reaction>({ model: reactionModel, where: [{ field: "id", value: existing.id }] })) {
@@ -780,7 +791,7 @@ async function unreact(config: Config, context: Context): Promise<UnreactResult>
   return { reaction: existing, removed: true }
 }
 
-async function removeReactions(config: Config, context: Context): Promise<{ removed: number }> {
+async function removeReactions(config: Config, context: Context): Promise<{ removed: number } & BulkStep> {
   const input = context.input as ReactionFilter
   const settings = settingsOf(config, input.subjectType)
   await requireModerator(settings.rules, context, input)
@@ -789,47 +800,53 @@ async function removeReactions(config: Config, context: Context): Promise<{ remo
     ...(input.emoji === undefined ? [] : [{ field: "emoji", value: normalizeEmoji(input.emoji) }]),
     ...(input.userId === undefined ? [] : [{ field: "userId", value: input.userId }])
   ]
-  const removed = await removeAll(
+  return removePage(
     context,
     async (limit) => context.db.findMany<Reaction>({ model: reactionModel, where, limit }),
     "moderated"
   )
-  if (removed > 0) {
-    context.emit("subject.changed", { subjectType: input.subjectType, subjectId: input.subjectId })
-  }
-  return { removed }
 }
 
-async function removeSubject(config: Config, context: Context): Promise<{ removed: number }> {
+async function removeSubject(config: Config, context: Context): Promise<{ removed: number } & BulkStep> {
   const input = context.input as ReactionSubject
   settingsOf(config, input.subjectType)
-  const removed = await removeRecords(context, input.subjectType, [input.subjectId], "subjectRemoved")
-  context.emit("subject.removed", { subjectType: input.subjectType, subjectId: input.subjectId })
-  return { removed }
+  const step = await removePage(
+    context,
+    async (limit) => rowsOf(context.db, input.subjectType, [input.subjectId], limit),
+    "subjectRemoved"
+  )
+  if (step.done) {
+    context.emit("subject.removed", { subjectType: input.subjectType, subjectId: input.subjectId })
+  }
+  return step
 }
 
-async function moveSubject(config: Config, context: Context): Promise<{ moved: number }> {
+async function moveSubject(config: Config, context: Context): Promise<{ moved: number } & BulkStep> {
   const input = context.input as ReactionSubject & { toOrgId: string | null }
   const settings = settingsOf(config, input.subjectType)
   const toOrgId = input.toOrgId ?? ""
-  const { moved } = await moveRecords(context, settings, input.subjectType, [input.subjectId], toOrgId)
-  context.emit("subject.moved", { subjectType: input.subjectType, subjectId: input.subjectId, toOrgId })
-  return { moved }
+  const { moved, done } = await movePage(context, settings, input.subjectType, [input.subjectId], toOrgId)
+  if (done) {
+    context.emit("subject.moved", { subjectType: input.subjectType, subjectId: input.subjectId, toOrgId })
+  }
+  return { moved, done }
 }
 
-async function removeUser(_config: Config, context: Context): Promise<{ removed: number }> {
+async function removeUser(_config: Config, context: Context): Promise<{ removed: number } & BulkStep> {
   const input = context.input as { userId: string; orgId?: string | null }
   const where: Where[] = [
     { field: "userId", value: input.userId },
     ...(input.orgId === undefined ? [] : [{ field: "orgId", value: input.orgId ?? "" }])
   ]
-  const removed = await removeAll(
+  const step = await removePage(
     context,
     async (limit) => context.db.findMany<Reaction>({ model: reactionModel, where, limit }),
     "userRemoved"
   )
-  context.emit("user.removed", { userId: input.userId, orgId: input.orgId ?? null })
-  return { removed }
+  if (step.done) {
+    context.emit("user.removed", { userId: input.userId, orgId: input.orgId ?? null })
+  }
+  return step
 }
 
 /**
@@ -957,11 +974,15 @@ function commentHandlers(config: Config): Record<string, EventHandler> | null {
         [comment, commentTypes.comment, data.commentIds ?? []]
       ]
       for (const [settings, type, ids] of moves) {
-        if (settings && ids.length > 0) {
-          const { records } = await moveRecords(context, settings, type, ids, toOrgId)
-          for (const subjectId of records) {
-            context.emit("subject.moved", { subjectType: type, subjectId, toOrgId })
-          }
+        const records = new Set<string>()
+        let done = !settings || ids.length === 0
+        while (settings && !done) {
+          const step = await movePage(context, settings, type, ids, toOrgId)
+          step.records.forEach((subjectId) => records.add(subjectId))
+          done = step.done
+        }
+        for (const subjectId of records) {
+          context.emit("subject.moved", { subjectType: type, subjectId, toOrgId })
         }
       }
     }
@@ -1009,16 +1030,16 @@ export function reactions<const Options extends ReactionsOptions>(options: Optio
       getSettings: action<ReactionSubject<Types["subjectType"]>, ReactionSettings>(inputs.subject, getSettings),
       react: action<ReactionTarget<Types>, ReactResult>(inputs.target, react),
       unreact: action<ReactionTarget<Types>, UnreactResult>(inputs.target, unreact),
-      removeReactions: action<ReactionFilter<Types>, { removed: number }>(inputs.filter, removeReactions),
-      removeSubject: serverAction<ReactionSubject<Types["subjectType"]>, { removed: number }>(
+      removeReactions: action<ReactionFilter<Types>, { removed: number } & BulkStep>(inputs.filter, removeReactions),
+      removeSubject: serverAction<ReactionSubject<Types["subjectType"]>, { removed: number } & BulkStep>(
         inputs.subject,
         removeSubject
       ),
-      moveSubject: serverAction<ReactionSubject<Types["subjectType"]> & { toOrgId: string | null }, { moved: number }>(
-        inputs.moveSubject,
-        moveSubject
-      ),
-      removeUser: serverAction<{ userId: string; orgId?: string | null | undefined }, { removed: number }>(
+      moveSubject: serverAction<
+        ReactionSubject<Types["subjectType"]> & { toOrgId: string | null },
+        { moved: number } & BulkStep
+      >(inputs.moveSubject, moveSubject),
+      removeUser: serverAction<{ userId: string; orgId?: string | null | undefined }, { removed: number } & BulkStep>(
         inputs.removeUser,
         removeUser
       ),

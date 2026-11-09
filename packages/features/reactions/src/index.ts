@@ -10,6 +10,7 @@ export {
 export {
   limits,
   reactions,
+  type BulkStep,
   type ClientReactionChange,
   type ClientReactionEvent,
   type ClientRecordChange,

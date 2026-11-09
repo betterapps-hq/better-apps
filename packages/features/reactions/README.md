@@ -37,8 +37,8 @@ export const app = createBetterApps({
 ```
 
 - `subjects` lists the subject types that can have reactions. The app or a feature must declare each one. `canReact`
-  says who can add and remove their reactions; everyone who can see the record, by default. `canModerate` says who can
-  remove anyone's; nobody, by default.
+  says who can add reactions; everyone who can see the record, by default. Anyone who can see it can take back their
+  own. `canModerate` says who can remove anyone's; nobody, by default.
 - `emojis` lists the only reactions allowed, in the order to show them. Entries that aren't emoji, such as `:shipit:`,
   are for apps that draw their own. It can be a function of the record's organization, `({ subjectType, orgId })`, for
   each workspace's own emoji. Its list is reused for a minute per organization, until server code calls
@@ -55,7 +55,7 @@ export const app = createBetterApps({
   code. Everyone who can see the record sees the counts.
 - `checkAfterReact`, per subject type, checks a saved reaction against its record again and takes it back when the
   record went away or out of the person's reach meanwhile, as `NOT_FOUND`, or moved to another organization, as
-  `CONFLICT`. It costs an access check per reaction, and is on for comments' threads and comments.
+  `CONFLICT`. It costs an access check per reaction, and is on unless set to `false`.
 - A subject type can set its own `emojis`, `maxPerUser`, `maxEmojis` and `reactorVisibility`, which replace the app's.
 - Emoji are stored in one spelling, from `normalizeEmoji`, so `‚ù§` and `‚ù§Ô∏è` are one reaction. Names that aren't emoji are
   kept as they are.
@@ -76,8 +76,8 @@ export const app = createBetterApps({
   `added: false` when the person had already reacted, and `unreact` returns `removed: false` when they hadn't, or when
   another removal, such as from another tab, got there first.
 - `removeReactions({ subjectType, subjectId, emoji?, userId? })` removes reactions on a record, for callers
-  `canModerate` allows and for server code: all of them, or one emoji's, one person's, or both. It works a page at a
-  time, so if it fails, the pages before stay removed; calling it again finishes the job.
+  `canModerate` allows and for server code: all of them, or one emoji's, one person's, or both. Each call removes up to
+  100 and returns `{ removed, done }`; call it again until `done` is `true`. The browser client does that for you.
 - Server code calls them for a user by passing `actor`. Server code that passes neither an actor nor a request reads
   without access checks, but can't react, since a reaction is always someone's.
 - Errors are `ReactionsError`s: `UNAUTHENTICATED`, `NOT_FOUND` for records the caller can't see, `FORBIDDEN` when
@@ -91,14 +91,16 @@ reactions stay hidden, and don't count toward anyone's limit there, until server
 `app.api.reactions.moveSubject({ subjectType, subjectId, toOrgId })`. A person who reacted with the same emoji in both
 organizations keeps one, and the other is removed with the reason `merged`. Call
 `removeSubject({ subjectType, subjectId })` when a record is deleted, and `removeUser({ userId, orgId? })` when a person
-leaves the app, or one organization. These actions are server only. Removals and moves go a page at a time, 100 and 40
-reactions per batch, so a busy record or person stays within a database's batch limits, and a page that fails is read
-again.
+leaves the app, or one organization. These actions are server only. Each call does one page, removing up to 100
+reactions or moving up to 40, and returns `done`, so no request outgrows a database's limits however busy the record or
+person; call again, such as from a queue or a scheduled job, until `done` is `true`. A page whose batch fails, such as
+one that lost a race with another removal, is read again. Each page's removal rows go in one `createMany`, a few
+statements per page.
 
 With reactions on comments' threads or comments, reactions follow comments' events instead: a deleted comment or thread
 loses its reactions, a deleted comment can't get new ones, even one saved while it was being deleted, and a thread that
-moves takes its and its comments' reactions along. Subscribing to events needs the core's outbox table, which
-`better-apps generate` adds.
+moves takes its and its comments' reactions along. These run every page in one delivery, since a subscriber can't be
+called again. Subscribing to events needs the core's outbox table, which `better-apps generate` adds.
 
 ## Events
 
@@ -107,9 +109,10 @@ changes also carry `count`, how many reactions with that emoji the record had ju
 `reaction.removed` also says why, as `reason`: `unreacted`, `replaced` by another emoji, `moderated`, `subjectRemoved`,
 `userRemoved`, `merged` when its record moved, or `withdrawn` when its record went away while it was saved. Each removal
 is reported once, even when two removals of one reaction race, and removing a record or a person emits it for each of
-their reactions, marked `bulk`. Every removal writes a row to `reactionRemoval` for that. `subject.moved`,
-`subject.removed` and `user.removed` follow the actions above, and `subject.changed` follows a moderator's
-`removeReactions`; a thread that moves emits `subject.moved` for it and each of its comments that had reactions.
+their reactions, marked `bulk`. Every removal writes a row to `reactionRemoval` for that. Each page of a bulk removal
+also emits `subject.changed` for every record it touched, written with the page, so browsers hear of the pages done even
+when a job stops partway. `subject.moved`, `subject.removed` and `user.removed` follow the actions above once they're
+done; a thread that moves emits `subject.moved` for it and each of its comments that had reactions.
 
 `toClientEvent({ event, viewer })`, a server-only action, turns a reaction event into one a viewer's browser may see, or
 `null` when they can't see the record. Its `mine` says whether the viewer made the change, and its `userId` is `""` when
@@ -137,8 +140,10 @@ await reactions.toggle({ subjectType: "invoice", subjectId: "inv-1", emoji: "üë
   refused write simply stops showing. Writes to one record go to the server in order, so quick toggles end where the
   last one left them. Emoji are stored in the server's spelling.
 - `subjects[key].pending` lists the emoji still waiting for the server.
-- Each loaded record has a version, raised by every answer and live event. A load whose answer comes back after the
-  record's version moved is dropped, and the record loads again, so an older answer never undoes a newer change.
+- Each record has a version, raised by every answer, write and live event, even before it first loads. Changes made
+  while a load was under way are made again on its answer, so an older answer never undoes a newer change and a busy
+  record doesn't keep loading: the viewer's own are set, and someone else's are set by their event's `count`. When one
+  can't be made again, such as a `subject.changed` event, the answer is dropped and the record loads again.
 - `applyEvent` applies an event from `toClientEvent` once. A `subject.changed` event loads the record again and drops
   its lists of reactors. The viewer's own changes are set, not counted, so one that arrives both as an answer and as a
   live event counts once. Someone else's shows at once. When its `count` doesn't match what the store then shows, such
@@ -146,7 +151,7 @@ await reactions.toggle({ subjectType: "invoice", subjectId: "inv-1", emoji: "üë
 - When the record's settings list its emoji, a new chip shows where a load will put it. Lists that depend on the
   organization are used per record, once `loadSettings` has loaded that record's. `loadReactors` and `isPending` take
   any spelling of an emoji.
-- `removeReactions` removes reactions for moderators, then loads the record again.
+- `removeReactions` removes reactions for moderators, calling the server until it's done, then loads the record again.
 - `loadReactors` and `loadMoreReactors` fill `reactors` and `users` for tooltips. `loadSettings` fills `settings`.
 - `dehydrate` and `hydrate` carry a server render's loads to the browser. `reset` empties the store and cancels calls
   under way when the signed-in person changes without a page load.

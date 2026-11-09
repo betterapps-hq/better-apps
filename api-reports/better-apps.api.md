@@ -568,6 +568,12 @@ export type WriteOperation = {
     type: "create";
     model: string;
     data: Row;
+}
+/** Creates rows with as few statements as the database allows, such as many rows a page of a bulk job writes. */
+| {
+    type: "createMany";
+    model: string;
+    data: readonly Row[];
 } | {
     type: "update";
     model: string;

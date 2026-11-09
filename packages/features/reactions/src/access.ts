@@ -49,8 +49,8 @@ export async function requireView(context: Context, ref: SubjectRef): Promise<vo
   throw new ReactionsError("NOT_FOUND", "That record doesn't exist, or you can't see it.")
 }
 
-/** The signed-in user who may react to a subject, or the error that says why they can't. */
-export async function requireReactor(rules: ReactionRules, context: Context, ref: SubjectRef): Promise<Actor> {
+/** The signed-in user who can see a subject, such as to take back their own reaction, or the error that says why not. */
+export async function requireViewer(context: Context, ref: SubjectRef): Promise<Actor> {
   const { actor, subjects } = context
   if (!actor) {
     throw new ReactionsError("UNAUTHENTICATED", "Sign in to react.")
@@ -58,6 +58,12 @@ export async function requireReactor(rules: ReactionRules, context: Context, ref
   if (!(await subjects.canView(actor, ref))) {
     throw new ReactionsError("NOT_FOUND", "That record doesn't exist, or you can't see it.")
   }
+  return actor
+}
+
+/** The signed-in user who may react to a subject, or the error that says why they can't. */
+export async function requireReactor(rules: ReactionRules, context: Context, ref: SubjectRef): Promise<Actor> {
+  const actor = await requireViewer(context, ref)
   if (rules.canReact && !(await rules.canReact({ actor, ...ref }))) {
     throw new ReactionsError("FORBIDDEN", "You can't react to this.")
   }

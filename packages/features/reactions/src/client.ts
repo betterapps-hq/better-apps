@@ -123,6 +123,24 @@ function setMine(reactions: readonly ReactionSummary[], emoji: string, reacted: 
   return (current?.reacted ?? false) === reacted ? reactions : change(reactions, emoji, reacted ? 1 : -1, true)
 }
 
+/**
+ * Sets how many reactions with an emoji a record has, from a live event's count, keeping whether the viewer reacted.
+ */
+function setCount(reactions: readonly ReactionSummary[], emoji: string, count: number): readonly ReactionSummary[] {
+  const current = reactions.find((reaction) => reaction.emoji === emoji)
+  if (count <= 0) {
+    return reactions.filter((reaction) => reaction.emoji !== emoji)
+  }
+  return current
+    ? reactions.map((reaction) => (reaction === current ? { ...reaction, count } : reaction))
+    : [...reactions, { emoji, count, reacted: false }]
+}
+
+type Fix = (reactions: readonly ReactionSummary[]) => readonly ReactionSummary[]
+
+/** How many of a record's latest changes are kept, to make again on a load's answer that went out before them. */
+const keptChanges = 50
+
 /** One of this tab's writes the server hasn't answered yet. */
 interface Write {
   emoji: string
@@ -245,18 +263,48 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
     return listed.get(subjectType)
   }
 
-  // Each loaded record's version, raised whenever what the server said about it changes here, so a load that went out
-  // before such a change doesn't overwrite it.
+  // Each record's version, raised whenever what the server said about it changes here, with the latest changes and how
+  // to make each again, or `null` when it can't be, so a load that went out before them doesn't undo them.
   const versions = new Map<string, number>()
-  const bump = (key: string) => versions.set(key, (versions.get(key) ?? 0) + 1)
+  const history = new Map<string, { version: number; fix: Fix | null }[]>()
+  const bump = (key: string, fix: Fix | null) => {
+    const version = (versions.get(key) ?? 0) + 1
+    versions.set(key, version)
+    history.set(key, [...(history.get(key) ?? []), { version, fix }].slice(-keptChanges))
+  }
 
-  /** Changes what the server last said about a loaded record. */
-  const confirm = (key: string, next: (reactions: readonly ReactionSummary[]) => readonly ReactionSummary[]) => {
+  /**
+   * A load's answer with the changes made here since it was asked made again on top, in order, or `null` when one of
+   * them can't be, such as another load's answer, and the record should load again instead. The viewer's own changes
+   * are set rather than counted and others' carry their counts, so making one the answer already has again changes
+   * nothing.
+   */
+  const caughtUp = (key: string, asked: number, answer: readonly ReactionSummary[]) => {
+    const now = versions.get(key) ?? 0
+    const since = (history.get(key) ?? []).filter((entry) => entry.version > asked)
+    if (since.length !== now - asked) {
+      return null
+    }
+    let reactions = answer
+    for (const { fix } of since) {
+      if (!fix) {
+        return null
+      }
+      reactions = fix(reactions)
+    }
+    return reactions
+  }
+
+  /**
+   * Changes what the server last said about a record, once loaded, and remembers the change for a load under way.
+   * `again` is how to make it again on a newer answer, or `null` when it can't be.
+   */
+  const confirm = (key: string, next: Fix, again: Fix | null = next) => {
     const base = confirmed.get(key)
     if (base) {
       confirmed.set(key, next(base))
-      bump(key)
     }
+    bump(key, again)
   }
 
   const setReactors = (state: ReactionsState, key: string, value: Partial<Reactors>): ReactionsState => {
@@ -360,7 +408,9 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
     try {
       await Promise.all(
         pages.map(async (page) => {
-          const asked = new Map(page.map((subjectId) => [subjectId, versions.get(subjectKey(subjectType, subjectId))]))
+          const asked = new Map(
+            page.map((subjectId) => [subjectId, versions.get(subjectKey(subjectType, subjectId)) ?? 0])
+          )
           const found = (await run("listReactions", { subjectType, subjectIds: page })) as Record<
             string,
             ReactionSummary[]
@@ -369,14 +419,15 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
           apply((state) =>
             page.reduce((next, subjectId) => {
               const key = subjectKey(subjectType, subjectId)
-              // A write answered, or a live event applied, since this load went out is newer than its answer, so the
-              // record keeps it and loads again instead.
-              if (versions.get(key) !== asked.get(subjectId)) {
+              // A write answered, or a live event applied, since this load went out may be newer than its answer, so
+              // it's made again on top; when one can't be, the record keeps what it has and loads again instead.
+              const reactions = caughtUp(key, asked.get(subjectId) ?? 0, found[subjectId] ?? [])
+              if (!reactions) {
                 stale.push(subjectId)
                 return next
               }
-              confirmed.set(key, found[subjectId] ?? [])
-              bump(key)
+              confirmed.set(key, reactions)
+              bump(key, null)
               return show(setSubject(next, key, { state: "ready", error: null }), key)
             }, state)
           )
@@ -552,11 +603,16 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
 
     /**
      * Removes reactions on a record, for people the app lets moderate: all of them, or one emoji's, one person's, or
-     * both. The record and its lists of reactors load again once the server agrees, since live events may arrive before
-     * or after the answer.
+     * both, calling the server a page at a time until it's done. The record and its lists of reactors load again once
+     * the server agrees, since live events may arrive before or after the answer.
      */
     async removeReactions(filter: ReactionFilter<Types>): Promise<{ removed: number }> {
-      const output = (await run("removeReactions", filter)) as { removed: number }
+      const output = { removed: 0 }
+      for (let done = false; !done;) {
+        const step = (await run("removeReactions", filter)) as { removed: number; done: boolean }
+        output.removed += step.removed
+        done = step.done
+      }
       if (output.removed > 0) {
         const prefix = subjectKey(filter.subjectType, filter.subjectId).slice(0, -1)
         update((state) => ({
@@ -580,7 +636,9 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
       applied.splice(0, Math.max(0, applied.length - remembered))
       const key = subjectKey(event.subjectType, event.subjectId)
       if (event.type === "subject.changed") {
-        // Many reactions changed at once, so a loaded record loads again, and its lists of reactors start over.
+        // Many reactions changed at once, so a loaded record loads again, and its lists of reactors start over. A load
+        // under way may have gone out before the change, so its answer can't be kept.
+        bump(key, null)
         if (confirmed.has(key)) {
           const prefix = `${key.slice(0, -1)},`
           update((state) => ({
@@ -594,9 +652,17 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
       const added = event.type === "reaction.added"
       // The viewer's own changes are set rather than counted, so one this tab already applied counts once. Someone
       // else's shows at once, and the record loads again to match the server.
-      confirm(key, (reactions) =>
-        event.mine ? setMine(reactions, event.emoji, added) : change(reactions, event.emoji, added ? 1 : -1, false)
-      )
+      const { count } = event
+      if (event.mine) {
+        confirm(key, (reactions) => setMine(reactions, event.emoji, added))
+      } else {
+        // Someone else's change is counted now, and made again on a newer answer by its count, when the event has one.
+        confirm(
+          key,
+          (reactions) => change(reactions, event.emoji, added ? 1 : -1, false),
+          count === undefined ? null : (reactions) => setCount(reactions, event.emoji, count)
+        )
+      }
       update((state) =>
         // An event without a user id comes from someone the viewer may not see, so lists of reactors stay as they are.
         event.userId === "" ? show(state, key) : withReactor(show(state, key), event, added ? 1 : -1, event.userId)
@@ -664,6 +730,7 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
       maxPerUser.clear()
       listed.clear()
       versions.clear()
+      history.clear()
       asked.clear()
       refreshing.clear()
       store.setState(() => empty)

@@ -35,7 +35,8 @@ const adapter = createDatabaseAdapter({
   `batch()` that fails, so pass `batch: false` to use transactions there. better-sqlite3 and Bun's SQLite driver only
   have synchronous transactions, so batches of more than one write fail on them.
 - `createMany` inserts rows in chunks, atomically like `batch`. SQLite statements stay under D1's limit of 100 bound
-  parameters. Other databases take up to 1,000 rows per statement.
+  parameters. Other databases take up to 1,000 rows per statement. A `createMany` inside a `batch` is chunked the same
+  way, and returns how many rows it made.
 - `update` and `incrementOne` change the first matching row only. `incrementOne` checks its `where` again as it writes,
   so a guard such as `score < 10` holds when several requests write at once.
 - `contains`, `starts_with` and `ends_with` match the value literally. `%`, `_` and `\` aren't wildcards.

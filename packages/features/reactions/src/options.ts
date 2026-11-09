@@ -25,7 +25,10 @@ export type ReactorVisibility = "viewers" | "public" | "hidden"
  * so its reactions, comes from the subject type; the rest here can differ from one subject type to another.
  */
 export interface ReactionRules {
-  /** Whether the actor can add and remove their reactions. Everyone who can see the record, by default. */
+  /**
+   * Whether the actor can add reactions. Everyone who can see the record, by default. Anyone who can see it can take
+   * back their own.
+   */
   canReact?: ((args: SubjectArgs) => boolean | Promise<boolean>) | undefined
   /** Whether the actor can remove anyone's reactions, such as an admin. Nobody, by default. */
   canModerate?: ((args: SubjectArgs) => boolean | Promise<boolean>) | undefined
@@ -40,7 +43,7 @@ export interface ReactionRules {
   /**
    * Whether a saved reaction is checked against the record again, and taken back when the record went away or out of
    * the person's reach meanwhile, so a record deleted while a reaction is saved keeps none. It costs an access check per
-   * reaction. On for comments' threads and comments, whose cleanup runs on their events, and off otherwise.
+   * reaction, and is on unless set to `false`.
    */
   checkAfterReact?: boolean | undefined
 }

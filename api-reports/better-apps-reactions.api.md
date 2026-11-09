@@ -17,6 +17,12 @@ import { StandardSchemaV1 } from 'better-apps';
 import type { SubjectArgs } from 'better-apps';
 
 // @public
+export interface BulkStep {
+    // (undocumented)
+    done: boolean;
+}
+
+// @public
 export interface ClientReactionChange {
     count?: number | undefined;
     // (undocumented)
@@ -215,12 +221,12 @@ export function reactions<const Options extends ReactionsOptions>(options: Optio
         };
         removeReactions: ActionDefinition<StandardSchemaV1<ReactionFilter<TypesOf<Options>>, ReactionFilter<TypesOf<Options>>>, {
         removed: number;
-        }> & {
+        } & BulkStep> & {
             serverOnly?: false | undefined;
         };
         removeSubject: ActionDefinition<StandardSchemaV1<ReactionSubject<keyof Options["subjects"] & string>, ReactionSubject<keyof Options["subjects"] & string>>, {
         removed: number;
-        }> & {
+        } & BulkStep> & {
             serverOnly?: true | undefined;
         };
         moveSubject: ActionDefinition<StandardSchemaV1<ReactionSubject<keyof Options["subjects"] & string> & {
@@ -229,7 +235,7 @@ export function reactions<const Options extends ReactionsOptions>(options: Optio
         toOrgId: string | null;
         }>, {
         moved: number;
-        }> & {
+        } & BulkStep> & {
             serverOnly?: true | undefined;
         };
         removeUser: ActionDefinition<StandardSchemaV1<{
@@ -240,7 +246,7 @@ export function reactions<const Options extends ReactionsOptions>(options: Optio
         orgId?: string | null | undefined;
         }>, {
         removed: number;
-        }> & {
+        } & BulkStep> & {
             serverOnly?: true | undefined;
         };
         toClientEvent: ActionDefinition<StandardSchemaV1<{

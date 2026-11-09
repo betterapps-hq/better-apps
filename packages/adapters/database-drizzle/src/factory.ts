@@ -35,6 +35,7 @@ export interface ColumnSort {
 /** A batch write with names mapped to the ORM schema's table and column keys. */
 export type ColumnWrite =
   | { type: "create"; table: string; data: Row }
+  | { type: "createMany"; table: string; data: Row[] }
   | { type: "update" | "updateMany"; table: string; where: ColumnWhere[]; update: Row }
   | { type: "incrementOne"; table: string; where: ColumnWhere[]; increment: Record<string, number>; set: Row }
   | { type: "deleteMany"; table: string; where: ColumnWhere[] }
@@ -341,6 +342,12 @@ export function createAdapterFactory(config: AdapterFactoryConfig, driver: Adapt
       switch (operation.type) {
         case "create":
           return { type: "create", table, data: await toRow(modelKey, operation.data, "create") }
+        case "createMany":
+          return {
+            type: "createMany",
+            table,
+            data: await Promise.all(operation.data.map((item) => toRow(modelKey, item, "create")))
+          }
         case "update":
         case "updateMany":
           if (operation.type === "update") {

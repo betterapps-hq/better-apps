@@ -151,6 +151,9 @@ export function memoryDatabase(): MemoryDatabase {
             case "create":
               results.push(await adapter.create(operation))
               break
+            case "createMany":
+              results.push((await adapter.createMany(operation)).length)
+              break
             case "update":
               results.push(await adapter.update(operation))
               break

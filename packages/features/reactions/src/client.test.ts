@@ -164,18 +164,42 @@ describe("reactions client", () => {
     expect(reactions.store.getSnapshot().settings[key1]).toMatchObject({ maxPerUser: 1, emojis: null })
   })
 
-  it("drops a load's answer that's older than a write answered meanwhile, and loads again", async () => {
-    const { holdAnswer, reactions } = browser()
+  it("keeps a load's answer that's older than changes made meanwhile, making them again on top", async () => {
+    const { api, as, events, holdAnswer, identity, reactions, requests } = browser()
     await reactions.load("invoice", ["inv-1"])
     const release = holdAnswer("listReactions")
     const loading = reactions.load("invoice", ["inv-1"])
-    // The load reaches the server before the reaction, and its answer arrives after.
+    // The load reaches the server before the changes, and its answer arrives after.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await reactions.react({ ...inv1, emoji: "👍" })
+    await api.react({ ...inv1, emoji: "🎉" }, as("ada"))
+    const event = await api.toClientEvent({
+      event: events("reaction.added").at(-1) as BetterAppsEvent,
+      viewer: identity.actor("bob")
+    })
+    if (!event) {
+      throw new Error("No event was shown.")
+    }
+    reactions.applyEvent(event)
+    const loads = requests.filter((name) => name === "listReactions").length
+    release()
+    await loading
+    expect(reactions.store.getSnapshot().subjects[key1]?.reactions).toEqual([
+      { emoji: "👍", count: 1, reacted: true },
+      { emoji: "🎉", count: 1, reacted: false }
+    ])
+    // A busy record doesn't keep loading again.
+    expect(requests.filter((name) => name === "listReactions")).toHaveLength(loads)
+  })
+
+  it("keeps a toggle made before a record's first load answered", async () => {
+    const { holdAnswer, reactions } = browser()
+    const release = holdAnswer("listReactions")
+    const loading = reactions.load("invoice", ["inv-1"])
     await new Promise((resolve) => setTimeout(resolve, 20))
     await reactions.react({ ...inv1, emoji: "👍" })
     release()
     await loading
-    expect(reactions.store.getSnapshot().subjects[key1]?.reactions).toEqual([{ emoji: "👍", count: 1, reacted: true }])
-    await reactions.load("invoice", ["inv-1"])
     expect(reactions.store.getSnapshot().subjects[key1]?.reactions).toEqual([{ emoji: "👍", count: 1, reacted: true }])
   })
 
