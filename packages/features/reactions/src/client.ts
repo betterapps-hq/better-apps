@@ -731,23 +731,28 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
         base !== undefined &&
         (base.find((reaction) => reaction.emoji === event.emoji)?.reacted ?? false) !== added &&
         !(writes.get(key) ?? []).some((write) => write.emoji === event.emoji && write.reacted === added)
+      // Someone else's change loads the record again unless it moves the count from what the store had to just what the
+      // event says, which saves a load in the usual case. Events that arrive out of order, such as a removal before its
+      // add, don't.
+      const stale = event.mine ? surprising : base !== undefined && event.count !== before + (added ? 1 : -1)
       if (event.mine) {
         confirm(key, (reactions) => setMine(reactions, event.emoji, added))
-        if (surprising) {
-          refresh(event.subjectType, event.subjectId)
-        }
       } else {
         // Someone else's change is counted now. A load under way may or may not have it, so its answer can't be kept,
         // and the record loads again once it lands.
         confirm(key, (reactions) => change(reactions, event.emoji, added ? 1 : -1, false), null)
       }
-      update((state) =>
+      const list = reactionKey(event.subjectType, event.subjectId, event.emoji)
+      update((state) => {
+        const shown = show(state, key)
+        if (stale) {
+          // An event that may be out of date can't say who reacted either, so the emoji's list loads again too.
+          return withoutReactors(shown, (name) => name === list)
+        }
         // An event without a user id comes from someone the viewer may not see, so lists of reactors stay as they are.
-        event.userId === "" ? show(state, key) : withReactor(show(state, key), event, added ? 1 : -1, event.userId)
-      )
-      // Unless the event moves the count from what the store had to just what the event says, which saves a load in the
-      // usual case. Events that arrive out of order, such as a removal before its add, don't, so the record loads again.
-      if (!event.mine && base !== undefined && event.count !== before + (added ? 1 : -1)) {
+        return event.userId === "" ? shown : withReactor(shown, event, added ? 1 : -1, event.userId)
+      })
+      if (stale) {
         refresh(event.subjectType, event.subjectId)
       }
     },

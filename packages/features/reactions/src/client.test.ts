@@ -112,6 +112,32 @@ describe("reactions client", () => {
     expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada"])
   })
 
+  it("loads who reacted again when a late event for the viewer's own reaction disagrees", async () => {
+    const { api, as, events, identity, reactions } = browser()
+    const target = { ...inv1, emoji: "👍" }
+    await api.react(target, as("ada"))
+    await reactions.load("invoice", ["inv-1"])
+    await reactions.react(target)
+    await reactions.loadReactors(target)
+    const key = reactionKey("invoice", "inv-1", "👍")
+    await reactions.unreact(target)
+    expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada"])
+    // The event for Bob's reaction, since taken back, arrives last.
+    const event = await api.toClientEvent({
+      event: events("reaction.added").at(-1) as BetterAppsEvent,
+      viewer: identity.actor("bob")
+    })
+    if (!event) {
+      throw new Error("No event was shown.")
+    }
+    reactions.applyEvent(event)
+    expect(reactions.store.getSnapshot().reactors[key]).toBeUndefined()
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    await reactions.loadReactors(target)
+    expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada"])
+    expect(reactions.store.getSnapshot().subjects[key1]?.reactions).toEqual([{ emoji: "👍", count: 1, reacted: false }])
+  })
+
   it("rolls back a refused reaction", async () => {
     const { reactions } = browser()
     const locked = { subjectType: "invoice", subjectId: "inv-locked" } as const
