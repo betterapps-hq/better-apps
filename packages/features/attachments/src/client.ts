@@ -218,6 +218,13 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
   const versions = new Map<string, number>()
   const queued = new Map<string, Map<string, { resolve: () => void; reject: (error: unknown) => void }[]>>()
   let flushing: Promise<void> | null = null
+  // Answers to calls made before a reset() belong to the previous person, so they change the store only in their
+  // generation.
+  let generation = 0
+  const scoped = () => {
+    const started = generation
+    return () => started === generation
+  }
 
   const run = <Output>(action: string, input: unknown) =>
     call("attachments", action, input, { signal: controller.signal }) as Promise<Output>
@@ -235,12 +242,16 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
     })
 
   async function loadList(subjectType: string, subjectIds: string[]) {
+    const current = scoped()
     const started = new Map(subjectIds.map((id) => [id, versions.get(subjectKey(subjectType, id)) ?? 0]))
     for (const id of subjectIds) {
       setSubject(subjectKey(subjectType, id), (current) => ({ ...current, state: "loading", error: null }))
     }
     try {
       const answer = await run<Record<string, Serialized<AttachedFile>[]>>("listFiles", { subjectType, subjectIds })
+      if (!current()) {
+        return
+      }
       const stale: string[] = []
       for (const id of subjectIds) {
         const key = subjectKey(subjectType, id)
@@ -260,8 +271,10 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
         await load(subjectType, stale)
       }
     } catch (error) {
-      for (const id of subjectIds) {
-        setSubject(subjectKey(subjectType, id), (current) => ({ ...current, state: "error", error: error as Error }))
+      if (current()) {
+        for (const id of subjectIds) {
+          setSubject(subjectKey(subjectType, id), (subject) => ({ ...subject, state: "error", error: error as Error }))
+        }
       }
       throw error
     }
@@ -316,8 +329,11 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
 
   /** Loads the limits for a subject type, or for files on their own without one. */
   async function loadSettings(subjectType?: Types["subjectType"]): Promise<AttachmentSettings> {
+    const current = scoped()
     const settings = await run<AttachmentSettings>("getSettings", subjectType === undefined ? {} : { subjectType })
-    store.setState((state) => ({ ...state, settings: { ...state.settings, [subjectType ?? ""]: settings } }))
+    if (current()) {
+      store.setState((state) => ({ ...state, settings: { ...state.settings, [subjectType ?? ""]: settings } }))
+    }
     return settings
   }
 
@@ -365,11 +381,12 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
    * file to the record's list.
    */
   async function finishUpload(prepared: PreparedUpload, { signal }: { signal?: AbortSignal } = {}): Promise<FileInfo> {
+    const current = scoped()
     const completed = await (call("attachments", "completeUpload", { fileId: prepared.file.id }, { signal }) as Promise<
       Serialized<CompleteUploadResult>
     >)
     const { subjectType, subjectId } = prepared.target
-    if (completed.attachment && subjectType !== undefined && subjectId !== undefined) {
+    if (current() && completed.attachment && subjectType !== undefined && subjectId !== undefined) {
       const key = subjectKey(subjectType, subjectId)
       const attached = reviveFile<AttachedFile>(completed.attachment)
       bump(key)
@@ -416,6 +433,7 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
     name: string
   ): Promise<FileInfo> {
     const contentType = cleanContentType(file.type) ?? "application/octet-stream"
+    const current = scoped()
     const entry: Upload = {
       id,
       name,
@@ -456,7 +474,7 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
       setUpload(id, { state: cancelled ? "cancelled" : "error", error: cancelled ? null : (error as Error) })
       // A cancelled upload the server knows of is deleted, so its row and any bytes don't wait for the sweep.
       const fileId = store.getSnapshot().uploads[id]?.file?.id
-      if (cancelled && fileId && !controller.signal.aborted) {
+      if (cancelled && fileId && current()) {
         run("deleteFile", { fileId }).catch(() => undefined)
       }
       throw cancelled ? aborted() : error
@@ -486,12 +504,15 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
   /** Puts drafts or files on their own on a record, then loads the record again. */
   async function attach(subject: Subject<Types["subjectType"]>, fileIds: readonly string[]) {
     const key = subjectKey(subject.subjectType, subject.subjectId)
+    const current = scoped()
     bump(key)
     try {
       const { files } = await run<{ files: Serialized<AttachedFile>[] }>("attach", { ...subject, fileIds })
       return files.map((file) => reviveFile<AttachedFile>(file))
     } finally {
-      await load(subject.subjectType, [subject.subjectId]).catch(() => undefined)
+      if (current()) {
+        await load(subject.subjectType, [subject.subjectId]).catch(() => undefined)
+      }
     }
   }
 
@@ -499,6 +520,7 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
   async function detach(subject: Subject<Types["subjectType"]>, fileId: string) {
     const key = subjectKey(subject.subjectType, subject.subjectId)
     const removed = store.getSnapshot().subjects[key]?.files.find((file) => file.id === fileId)
+    const current = scoped()
     bump(key)
     setSubject(key, (current) => ({
       ...current,
@@ -507,14 +529,18 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
     }))
     try {
       await run("detach", { ...subject, fileId })
-      setSubject(key, (current) => ({ ...current, pending: current.pending.filter((id) => id !== fileId) }))
+      if (current()) {
+        setSubject(key, (files) => ({ ...files, pending: files.pending.filter((id) => id !== fileId) }))
+      }
     } catch (error) {
-      bump(key)
-      setSubject(key, (current) => ({
-        ...current,
-        pending: current.pending.filter((id) => id !== fileId),
-        files: removed ? [...current.files, removed].sort((a, b) => a.position - b.position) : current.files
-      }))
+      if (current()) {
+        bump(key)
+        setSubject(key, (files) => ({
+          ...files,
+          pending: files.pending.filter((id) => id !== fileId),
+          files: removed ? [...files.files, removed].sort((a, b) => a.position - b.position) : files.files
+        }))
+      }
       throw error
     }
   }
@@ -524,6 +550,7 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
     const key = subjectKey(subject.subjectType, subject.subjectId)
     const before = store.getSnapshot().subjects[key]?.files ?? []
     const byId = new Map(before.map((file) => [file.id, file]))
+    const current = scoped()
     bump(key)
     setSubject(key, (current) => ({
       ...current,
@@ -535,9 +562,11 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
     try {
       await run("reorder", { ...subject, fileIds })
     } catch (error) {
-      bump(key)
-      setSubject(key, (current) => ({ ...current, files: before }))
-      await load(subject.subjectType, [subject.subjectId]).catch(() => undefined)
+      if (current()) {
+        bump(key)
+        setSubject(key, (files) => ({ ...files, files: before }))
+        await load(subject.subjectType, [subject.subjectId]).catch(() => undefined)
+      }
       throw error
     }
   }
@@ -587,10 +616,23 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
     }))
   }
 
-  /** Empties the store and cancels calls and uploads under way, such as when someone else signs in. */
+  /**
+   * Empties the store and cancels calls and uploads under way, such as when someone else signs in. They reject with an
+   * `ABORTED` error. A call it can't cancel, such as `finishUpload` with a signal of its own, changes nothing when it
+   * settles.
+   */
   function reset() {
+    generation += 1
     controller.abort()
     controller = new AbortController()
+    // Loads asked for this tick haven't gone out yet, so they never do.
+    const cancelled = new BetterAppsClientError("ABORTED", "The call was cancelled.", { status: 0 })
+    for (const waiting of queued.values()) {
+      for (const waiter of [...waiting.values()].flat()) {
+        waiter.reject(cancelled)
+      }
+    }
+    queued.clear()
     versions.clear()
     store.setState(empty)
     for (const listener of resetListeners) {

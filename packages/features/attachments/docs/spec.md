@@ -180,7 +180,8 @@ All of them go through subject types, so a file follows its record's access.
   - a record it's on that the person can see, by `subjects.canViewMany`, in one call per subject type;
   - for a file kept on its own, being its owner, or a member of its owning organization;
   - for an unfinished upload or a draft, having uploaded it. Signed-out visitors see files on public records.
-- **Uploading onto a record** needs someone who can see it and whom `canUpload` allows.
+- **Uploading onto a record** needs someone who can see it and whom `canUpload` allows, when the upload starts and again
+  when it finishes.
 - **Uploading a draft** needs someone signed in. The draft is checked against its subject type's limits, but its record
   doesn't exist yet, so `canUpload` waits for the attach. `maxDrafts` bounds the bytes a person can store that way.
 - **Attaching** a draft needs its uploader. Attaching a file kept on its own needs someone who can see it. Either way
@@ -205,8 +206,9 @@ An upload takes three steps, the same for both ways of sending the bytes:
 2. The browser sends the bytes with that request.
 3. `completeUpload({ fileId })` reads the stored object's size, type and etag from storage, checks them against the row
    and the limits, and marks the file `ready` with that etag. A file uploaded onto a record is attached in the same
-   batch. A mismatch deletes the bytes and answers `INVALID_INPUT`. When two calls finish one file at once, one marks it
-   ready, and both return it.
+   batch, after checking again that the person can see the record and `canUpload` allows them; if not, the upload is
+   deleted. A mismatch deletes the bytes and answers `INVALID_INPUT`. When two calls finish one file at once, one marks
+   it ready, and both return it.
 
 Where the upload is aimed:
 
@@ -305,11 +307,11 @@ its attachments stay hidden, and don't count toward its limit there, until serve
 record keeps. Files kept on their own stay with their owner, and stay on the record.
 
 `removeSubject({ subjectType, subjectId })` takes every file off a deleted record and deletes the files it kept.
-`removeUser({ userId })` deletes a person's own files and drafts, and their uploads that haven't finished. Files they
-attached to records stay with the records. These are server only. Each call does one page, removing up to 100
-attachments or moving up to 30, and returns `done`, so no request outgrows D1's limits of 100 bound parameters a
-statement and 50 queries a request; call again until `done` is `true`. A page whose batch fails, such as one that lost a
-race with another removal, is read again.
+`removeUser({ userId })` deletes a person's own files and drafts, and their uploads that haven't finished, including
+ones for their organization. Files they attached to records stay with the records. These are server only. Each call does
+one page, removing up to 100 attachments or moving up to 30, and returns `done`, so no request outgrows D1's limits of
+100 bound parameters a statement and 50 queries a request; call again until `done` is `true`. A page whose batch fails,
+such as one that lost a race with another removal, is read again.
 
 With files on comments' threads or comments, attachments follow comments' events, as reactions do: a deleted comment or
 thread loses its files, and a moved thread takes its and its comments' files along. Each delivery handles one page,
@@ -372,7 +374,9 @@ const file = await attachments.upload(input.files[0], { subjectType: "invoice", 
 - An upload onto a record adds the file to the record's list when it finishes. `detach` and `reorder` show at once and
   roll back when the server refuses. `attach` loads the record again once it's done.
 - `applyEvent` takes events from `toClientEvent` and loads the record again. `dehydrate`, `hydrate` and `reset` work as
-  in the other features.
+  in the other features. `reset` cancels calls under way, which reject with `ABORTED`, and a call it can't cancel, such
+  as `finishUpload` with its own signal, changes nothing when it settles, so the previous person's files never come back
+  into the store.
 
 `@better-apps/attachments/react` has hooks, with no UI:
 

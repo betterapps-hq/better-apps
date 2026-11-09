@@ -125,6 +125,26 @@ describe("the upload route", () => {
     expect(storage.objects.size).toBe(0)
   })
 
+  it("checks again that the person can add files when the upload finishes", async () => {
+    const { api, as, send, storage, count } = setup()
+    invoices.set("inv-closing", { orgId: "acme" })
+    try {
+      const target = { subjectType: "invoice", subjectId: "inv-closing" } as const
+      const created = await api.createUpload(
+        { ...target, name: "a.txt", contentType: "text/plain", size: 3 },
+        as("bob")
+      )
+      expect((await send(created.upload, "abc")).status).toBe(204)
+      invoices.set("inv-closing", { orgId: "acme", locked: true })
+      await expect(api.completeUpload({ fileId: created.file.id }, as("bob"))).rejects.toMatchObject({
+        code: "FORBIDDEN"
+      })
+      expect([count(attachmentModel), count(fileModel), storage.objects.size]).toEqual([0, 0, 0])
+    } finally {
+      invoices.delete("inv-closing")
+    }
+  })
+
   it("finishes a file once, and again returns it as it is", async () => {
     const { api, as, upload } = setup()
     const { file } = await upload("bob", inv1)
@@ -598,6 +618,20 @@ describe("records that change", () => {
     expect(await api.removeUser({ userId: "bob" })).toEqual({ removed: 2, done: true })
     expect([...storage.objects.keys()]).toEqual([`attachments/${onRecord.file.id}`])
     expect(events("user.removed")).toHaveLength(1)
+  })
+
+  it("lose a person's unfinished uploads when the person is removed, an organization's too, a page a call", async () => {
+    const { api, as, upload, count } = setup()
+    const input = { name: "x.txt", contentType: "text/plain", size: 1 }
+    for (let index = 0; index < 20; index += 1) {
+      await api.createUpload({ owner: "org", ...input }, as("bob"))
+    }
+    await api.createUpload({ owner: "user", ...input }, as("bob"))
+    const finished = await upload("bob", { owner: "org" })
+    expect(await api.removeUser({ userId: "bob" })).toEqual({ removed: 20, done: false })
+    expect(await api.removeUser({ userId: "bob" })).toEqual({ removed: 1, done: true })
+    expect(count(fileModel)).toBe(1)
+    expect((await api.getFile({ fileId: finished.file.id }, as("cy"))).id).toBe(finished.file.id)
   })
 
   it("take back an attachment whose record went away while it was saved", async () => {

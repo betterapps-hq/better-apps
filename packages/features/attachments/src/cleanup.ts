@@ -308,7 +308,10 @@ export async function removeUser(config: Config, context: Context): Promise<{ re
             limit: userPageSize - owned.length
           })
         : []
-    const files = [...owned, ...unkept.filter((file) => file.owner === null)]
+    // Unfinished uploads include ones for an organization, which only the person could finish. One of their own is
+    // in both lists.
+    const ownedIds = new Set(owned.map((file) => file.id))
+    const files = [...owned, ...unkept.filter((file) => !ownedIds.has(file.id))]
     await deleteFiles(config, context, files, "userRemoved")
     const done = owned.length + unkept.length < userPageSize
     if (done) {

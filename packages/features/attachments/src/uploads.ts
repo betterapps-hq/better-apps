@@ -237,6 +237,10 @@ export async function completeUpload(config: Config, context: Context): Promise<
   }
   const ref: SubjectRef = { subjectType: file.subjectType as string, subjectId: file.target as string }
   try {
+    // Who can add files may have changed since the upload started, such as on a record that's locked now.
+    if (!isTrusted(context)) {
+      await requireUploader(settingsOf(config, ref.subjectType), context, ref)
+    }
     const [attached] = await addLinks(config, context, ref, [ready], {
       before: [markReady],
       guarded: [file.id],
@@ -245,7 +249,7 @@ export async function completeUpload(config: Config, context: Context): Promise<
     })
     return { file: await present(config, ready), attachment: attached ?? null }
   } catch (error) {
-    // A record that went away or filled up meanwhile leaves the upload with nowhere to go.
+    // A record that went away, filled up or stopped taking the person's files leaves the upload with nowhere to go.
     if (error instanceof AttachmentsError && error.code !== "CONFLICT") {
       await deleteFiles(config, context, [file], "detached")
     }

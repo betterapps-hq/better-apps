@@ -192,6 +192,36 @@ describe("attachments client", () => {
     expect(attachments.store.getSnapshot()).toEqual({ subjects: {}, uploads: {}, settings: {} })
   })
 
+  it("drops answers meant for the person before a reset, and never sends their loads", async () => {
+    const { attachments, upload, requests, hold, send } = browser("cy")
+    const { file } = await upload("bob", inv1)
+    await attachments.load("invoice", ["inv-1"])
+
+    const detachHeld = hold("detach")
+    const detaching = attachments.detach(inv1, file.id)
+    const reorderHeld = hold("reorder")
+    const reordering = attachments.reorder(inv1, [file.id])
+    const prepared = await attachments.prepareUpload(pick("late"), inv1)
+    await send(prepared.upload, "late")
+    const completeHeld = hold("completeUpload")
+    // Called without a signal, as an engine of its own might, so reset() doesn't cancel it.
+    const finishing = attachments.finishUpload(prepared)
+    await tick()
+    const loading = attachments.load("invoice", ["inv-2"])
+
+    attachments.reset()
+    detachHeld()
+    reorderHeld()
+    completeHeld()
+    await expect(detaching).rejects.toMatchObject({ code: "ABORTED" })
+    await expect(reordering).rejects.toMatchObject({ code: "ABORTED" })
+    await expect(loading).rejects.toMatchObject({ code: "ABORTED" })
+    expect(await finishing).toMatchObject({ id: prepared.file.id, status: "ready" })
+    await tick(10)
+    expect(attachments.store.getSnapshot().subjects).toEqual({})
+    expect(requests.filter((name) => name === "listFiles")).toHaveLength(1)
+  })
+
   it("deletes files", async () => {
     const { attachments, count } = browser()
     const file = await attachments.upload(pick("mine"), { owner: "user" })
