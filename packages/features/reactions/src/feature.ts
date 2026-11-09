@@ -480,24 +480,39 @@ const cleanupPages = 5
  * Removes or moves the reactions on records that went away or moved, such as comments' threads, up to a few pages per
  * delivery. What's left continues with a `cleanup.continued` event in the next `app.deliverEvents()` run.
  */
-async function cleanUp(config: Config, writer: Writer, job: Cleanup) {
-  const records = job.records
-    .filter((record) => record.subjectIds.length > 0)
-    .map((record) => ({ ...record, subjectIds: [...record.subjectIds] }))
+async function cleanUp(config: Config, writer: Writer & Pick<Context, "subjects">, job: Cleanup) {
+  const { toOrgId } = job
+  const records: Cleanup["records"] = []
+  for (const record of job.records) {
+    let subjectIds = [...new Set(record.subjectIds)]
+    if (toOrgId !== undefined && subjectIds.length > 0) {
+      // A move runs over several deliveries, so the record may have moved again since. Only records still in the
+      // organization this job moves to are moved, so an older job never undoes a newer move.
+      const orgIds = await orgsOf(
+        writer.subjects,
+        subjectIds.map((subjectId) => ({ subjectType: record.subjectType, subjectId })),
+        null
+      )
+      subjectIds = subjectIds.filter((_, index) => orgIds[index] === toOrgId)
+    }
+    if (subjectIds.length > 0) {
+      records.push({ subjectType: record.subjectType, subjectIds })
+    }
+  }
   // Only pages that found reactions count, since records without any, such as most comments, cost one read each.
   for (let pages = 0; pages < cleanupPages && records.length > 0;) {
     const record = records[0] as Cleanup["records"][number]
     let rest: string[] = []
     let found = 0
     const find = async (limit: number) => {
-      const page = await pageOf(writer.db, record.subjectType, record.subjectIds, limit, job.toOrgId)
+      const page = await pageOf(writer.db, record.subjectType, record.subjectIds, limit, toOrgId)
       rest = page.rest
       found = page.rows.length
       return page.rows
     }
-    await (job.toOrgId === undefined
+    await (toOrgId === undefined
       ? removePage(writer, find, "subjectRemoved")
-      : movePage(writer, settingsOf(config, record.subjectType), record.subjectType, find, job.toOrgId))
+      : movePage(writer, settingsOf(config, record.subjectType), record.subjectType, find, toOrgId))
     pages += found > 0 ? 1 : 0
     record.subjectIds = rest
     if (rest.length === 0) {

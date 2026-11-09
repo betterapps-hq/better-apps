@@ -772,6 +772,22 @@ describe("with comments", () => {
     expect(setup.events("cleanup.continued")).toHaveLength(1)
   })
 
+  it("never let an older move's later pages undo a newer move", async () => {
+    const setup = withComments()
+    const ids = await busyThread(setup, 101)
+    const inOrg = (orgId: string) =>
+      setup.database.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${reactionModel} WHERE orgId = ?`).get(orgId)
+    // The move to globex leaves its last page for later, and the thread moves on before that runs.
+    setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
+    await setup.emit({ type: "thread.moved", data: { thread: { id: "t-big", orgId: "globex" }, commentIds: ids } })
+    expect(inOrg("globex")).toEqual({ count: 200 })
+    setup.threads.set("t-big", { orgId: "initech", comments: new Set(ids) })
+    await setup.deliver()
+    // The older job's last page doesn't move what's left to globex, where the thread no longer is.
+    expect(inOrg("globex")).toEqual({ count: 200 })
+    expect(inOrg("acme")).toEqual({ count: 2 })
+  })
+
   it("move a big thread's reactions a few pages per delivery, telling browsers with each page", async () => {
     const setup = withComments()
     const ids = await busyThread(setup, 105)
