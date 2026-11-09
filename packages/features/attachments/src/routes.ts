@@ -103,34 +103,46 @@ function bareEtag(header: string | null): string | undefined {
 }
 
 /**
- * Whether the request may download the file: a valid signed URL, or someone who can see it, with access the request
- * carries, such as a share link, counted too.
+ * How the request may download the file: by a valid signed URL, until the second it expires, or as someone who can see
+ * it, with access the request carries, such as a share link, counted too. A signed URL that expired or doesn't match
+ * falls back to the request's own access, so a page left open past its URLs' expiry still works for someone signed in.
  */
-async function mayDownload(config: Config, context: RouteContext, file: AttachmentFile): Promise<boolean> {
+async function downloadAccess(
+  config: Config,
+  context: RouteContext,
+  file: AttachmentFile
+): Promise<{ signedUntil: number } | "request" | null> {
   const query = context.url.searchParams
   const token = query.get("token")
-  if (token !== null && config.signer) {
-    return config.signer.verify(file.id, Number(query.get("expires")), token, context.now.getTime())
+  const expires = Number(query.get("expires"))
+  if (token !== null && config.signer && (await config.signer.verify(file.id, expires, token, context.now.getTime()))) {
+    return { signedUntil: expires }
   }
   const [allowed] = await canSeeFiles(context, await context.getActor(), [file], context.request)
-  return allowed === true
+  return allowed === true ? "request" : null
 }
 
 /**
  * The headers every download carries, for caching and so a file can't act on the app's origin. `etag` is the version
  * confirmed at upload, or a preview's.
  */
-function downloadHeaders(config: Config, file: AttachmentFile, etag: string, url: URL): Headers {
+function downloadHeaders(
+  file: AttachmentFile,
+  etag: string,
+  url: URL,
+  access: { signedUntil: number } | "request",
+  now: Date
+): Headers {
   const query = url.searchParams
-  const signed = query.has("token") && config.signer !== null
   const inline = isInline(file.contentType) && query.get("download") !== "1"
+  const signedFor = access === "request" ? 0 : Math.max(0, Math.floor(access.signedUntil - now.getTime() / 1000))
   const headers = new Headers({
     "content-type": file.contentType,
     "content-disposition": contentDisposition(file.name, inline),
     "x-content-type-options": "nosniff",
-    // A signed URL works until it expires, so the browser keeps the file that long. Otherwise it asks again each time,
+    // A signed URL works until it expires, so the browser keeps the file until then. Otherwise it asks again each time,
     // with the etag, so a file the person can no longer see, such as after signing out, isn't served from its cache.
-    "cache-control": signed ? `private, max-age=${Math.floor(config.downloadTtlMs / 1000)}` : "private, no-cache",
+    "cache-control": signedFor > 0 ? `private, max-age=${signedFor}` : "private, no-cache",
     etag: `"${etag}"`,
     "last-modified": (file.uploadedAt ?? file.createdAt).toUTCString(),
     "accept-ranges": "bytes"
@@ -153,7 +165,8 @@ function snapWidth(widths: readonly number[], asked: number): number {
 async function download(config: Config, context: RouteContext): Promise<Response> {
   const { request, url, params, db } = context
   const file = await db.findOne<AttachmentFile>({ model: fileModel, where: [{ field: "id", value: params.fileId }] })
-  if (!file || file.status !== "ready" || !(await mayDownload(config, context, file))) {
+  const access = file && file.status === "ready" ? await downloadAccess(config, context, file) : null
+  if (!file || !access) {
     throw notFound()
   }
   const confirmed = file.etag ?? undefined
@@ -162,7 +175,7 @@ async function download(config: Config, context: RouteContext): Promise<Response
   const width = Number(url.searchParams.get("w"))
   if (config.previews && previewTypes.has(file.contentType) && Number.isInteger(width) && width > 0) {
     const snapped = snapWidth(config.previews.widths, width)
-    const headers = downloadHeaders(config, file, `${file.etag}-w${snapped}`, url)
+    const headers = downloadHeaders(file, `${file.etag}-w${snapped}`, url, access, context.now)
     headers.delete("accept-ranges")
     if (cached === `${file.etag}-w${snapped}`) {
       return new Response(null, { status: 304, headers })
@@ -199,7 +212,7 @@ async function download(config: Config, context: RouteContext): Promise<Response
       headers: { "content-range": `bytes */${file.size}`, "x-content-type-options": "nosniff" }
     })
   }
-  const headers = downloadHeaders(config, file, file.etag ?? "", url)
+  const headers = downloadHeaders(file, file.etag ?? "", url, access, context.now)
   if (cached !== undefined && cached === file.etag) {
     return new Response(null, { status: 304, headers })
   }

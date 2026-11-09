@@ -238,10 +238,14 @@ describe("downloads", () => {
     expect(url).toMatch(/\?expires=\d+&token=/)
     const response = await request(url)
     expect(response.status).toBe(200)
-    expect(response.headers.get("cache-control")).toBe("private, max-age=1")
+    expect(response.headers.get("cache-control")).toMatch(/^private, max-age=[12]$/)
     expect((await request(url.replace(/token=.+$/, "token=forged"))).status).toBe(404)
     await new Promise((resolve) => setTimeout(resolve, 2100))
     expect((await request(url)).status).toBe(404)
+    // Past its expiry, the URL still works for someone signed in who can see the file, without being kept as signed.
+    const late = await request(url, {}, "cy")
+    expect([late.status, late.headers.get("cache-control")]).toEqual([200, "private, no-cache"])
+    expect((await request(url, {}, "gus")).status).toBe(404)
   })
 
   it("download files that could run script, and any file asked for as a download", async () => {

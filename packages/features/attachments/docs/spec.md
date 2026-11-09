@@ -242,11 +242,12 @@ either. A file over those limits can't be uploaded.
 `GET {path}/files/{fileId}/{name}` serves a file, and `HEAD` its headers.
 
 - **Who:** a `token` and `expires` in the query, signed with `secret` over the file's id and expiry, lets anyone with
-  the URL download that one file until it expires. Without a valid token, the request's own sign-in is checked as for
-  seeing a file. A file someone can't see answers 404. A file that isn't `ready` answers 404.
-- **Signed URLs:** `listFiles`, `getFile` and `completeUpload` return each file's `url`, signed when there's a `secret`.
-  Expiry is rounded up to the next `downloadTtl` boundary, so a page that loads twice gets the same URL, and the browser
-  can cache it.
+  the URL download that one file until it expires. Without a valid token, or once it expired, the request's own sign-in
+  is checked as for seeing a file, so a page left open past its URLs' expiry still works for someone signed in. A file
+  someone can't see answers 404. A file that isn't `ready` answers 404.
+- **Signed URLs:** `listFiles`, `getFile` and `completeUpload` return each file's `url`, signed when there's a `secret`,
+  and `urlExpiresAt`, when it stops working without sign-in. Expiry is rounded up to the next `downloadTtl` boundary, so
+  a page that loads twice gets the same URL, and the browser can cache it.
 - **Bytes:** streamed from storage, with `ETag`, `Last-Modified`, `Content-Length` and `Accept-Ranges: bytes`. Storage
   is read on condition that its etag still matches the one recorded when the upload finished; bytes replaced since, such
   as through a signed upload address used again, answer 409 `CONFLICT` and aren't served. An `If-None-Match` with that
@@ -258,8 +259,8 @@ either. A file over those limits can't be uploaded.
   `Content-Security-Policy: sandbox`, so even an inline file has no access to the origin. The file name is sent in
   `Content-Disposition` as `filename*`, encoded per RFC 5987, with an ASCII `filename` fallback.
 - **Caching:** `Cache-Control: private`, so shared caches never keep a file. A signed URL is kept until it expires.
-  Without one, the browser asks again each time with the etag, `no-cache`, so a file taken off a record, or one a person
-  can't see after signing out, never comes from the cache; an unchanged file costs a `304`.
+  Without one, or past its expiry, the browser asks again each time with the etag, `no-cache`, so a file taken off a
+  record, or one a person can't see after signing out, never comes from the cache; an unchanged file costs a `304`.
 
 ### Image previews
 
@@ -383,7 +384,8 @@ const file = await attachments.upload(input.files[0], { subjectType: "invoice", 
 `@better-apps/attachments/react` has hooks, with no UI:
 
 - `useAttachments(subject)`: `{ files, state, error, detach, reorder, isPending }`, loaded on first use. Records that
-  mount together load in one call.
+  mount together load in one call. A record with signed URLs loads again a minute before the first expires, while it's
+  shown.
 - `useUpload(target)`: `{ upload(files), uploads, cancel, dismiss }` for a record that exists, or files on their own.
 - `useDraftAttachments(subjectType)`: for a composer. `add(files)` uploads drafts, `uploads` shows them, `remove(id)`
   cancels or deletes one, `attachTo(subjectId)` attaches the finished ones once the record is saved, and `clear()`

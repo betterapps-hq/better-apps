@@ -35,6 +35,21 @@ function useAttachmentsState<Selected>(select: (state: AttachmentsState) => Sele
 const isAborted = (error: unknown) => error instanceof BetterAppsClientError && error.code === "ABORTED"
 const none: AttachedFile[] = []
 const noUploads: Upload[] = []
+// A record whose files have signed URLs loads again this long before the first expires, and never more often than
+// `renewAtMostEvery`, in case the browser's clock is far ahead of the server's.
+const renewEarly = 60_000
+const renewAtMostEvery = 10_000
+// The longest delay `setTimeout` takes.
+const longestTimeout = 2 ** 31 - 1
+
+/** How long until a record's files should load again for fresh signed URLs, or `null` when none are signed. */
+function renewIn(files: readonly AttachedFile[], now: number): number | null {
+  const expiries = files.flatMap((file) => (file.urlExpiresAt ? [file.urlExpiresAt.getTime()] : []))
+  if (expiries.length === 0) {
+    return null
+  }
+  return Math.min(Math.max(renewAtMostEvery, Math.min(...expiries) - renewEarly - now), longestTimeout)
+}
 
 /** A record's files as `useAttachments` returns them. */
 export interface AttachmentsResult {
@@ -66,6 +81,18 @@ export function useAttachments<Types extends AttachmentsTypes = AttachmentsTypes
       attachments.load(subjectType, [subjectId]).catch(() => undefined)
     }
   }, [attachments, subjectType, subjectId, loadedState])
+  const files = loaded?.files
+  // Signed URLs expire, so a record that's shown loads again before its first one does.
+  useEffect(() => {
+    const delay = renewIn(files ?? none, Date.now())
+    if (delay === null) {
+      return undefined
+    }
+    const timer = setTimeout(() => {
+      attachments.load(subjectType, [subjectId]).catch(() => undefined)
+    }, delay)
+    return () => clearTimeout(timer)
+  }, [attachments, subjectType, subjectId, files])
   useEffect(() => attachments.onReset(() => setWriteError(null)), [attachments])
   const write = useCallback(async (change: () => Promise<unknown>) => {
     setWriteError(null)

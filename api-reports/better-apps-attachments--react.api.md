@@ -139,6 +139,7 @@ export interface FileInfo {
     // (undocumented)
     uploadedAt: Date | null;
     url: string | null;
+    urlExpiresAt: Date | null;
 }
 
 // @public

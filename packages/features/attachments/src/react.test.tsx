@@ -2,13 +2,13 @@
 import { BetterAppsProvider } from "@better-apps/react"
 import { act, renderHook, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react"
-import { describe, expect, it } from "vite-plus/test"
-import { inv1 } from "../test/app.js"
+import { describe, expect, it, vi } from "vite-plus/test"
+import { inv1, secret } from "../test/app.js"
 import { browser, pick } from "../test/browser.js"
 import { useAttachmentSettings, useAttachments, useAttachmentsClient, useDraftAttachments, useUpload } from "./react.js"
 
-function rendered(userId: "bob" | "cy" = "bob") {
-  const view = browser(userId)
+function rendered(userId: "bob" | "cy" = "bob", extra: Parameters<typeof browser>[1] = {}) {
+  const view = browser(userId, extra)
   const wrapper = ({ children }: { children: ReactNode }) => (
     <BetterAppsProvider client={view.client}>{children}</BetterAppsProvider>
   )
@@ -36,6 +36,32 @@ describe("attachments hooks", () => {
     expect(result.current.files).toEqual([])
     expect(result.current.isPending(file.id)).toBe(false)
     expect(result.current.writeError).toBeNull()
+  })
+
+  it("load a record again before its signed URLs expire", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] })
+    try {
+      const { upload, wrapper, requests } = rendered("bob", { secret, downloadTtl: 120 })
+      await upload("bob", inv1)
+      const { result } = renderHook(() => useAttachments(inv1), { wrapper })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10)
+      })
+      const first = result.current.files[0]?.urlExpiresAt as Date
+      expect(first).toBeInstanceOf(Date)
+      expect(requests.filter((name) => name === "listFiles")).toHaveLength(1)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(first.getTime() - Date.now() - 61_000)
+      })
+      expect(requests.filter((name) => name === "listFiles")).toHaveLength(1)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000)
+      })
+      expect(requests.filter((name) => name === "listFiles")).toHaveLength(2)
+      expect(result.current.files[0]?.urlExpiresAt?.getTime()).toBeGreaterThan(first.getTime())
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it("report a refused change until the next one", async () => {

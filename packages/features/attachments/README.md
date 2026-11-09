@@ -80,7 +80,8 @@ export default {
 - `standalone` allows files on their own, owned by a person or an organization. `canManage` says who deletes an
   organization's files.
 - `secret`, at least 32 characters, signs download URLs so they work without the request's sign-in for an hour, such as
-  in `<img src>` with a bearer token.
+  in `<img src>` with a bearer token. Each file's `urlExpiresAt` says until when, `useAttachments` loads a record again
+  before then, and past it the request's own sign-in still counts.
 - `path` is where the upload and download routes are, `/api/apps/attachments` by default. `baseUrl` makes returned URLs
   absolute. `uploadTtl`, `draftTtl` and `downloadTtl` are in seconds. `maxDrafts` caps how many files one person can
   have uploading, waiting as drafts, or deleted while their upload address is open, 50 by default. `previews` makes

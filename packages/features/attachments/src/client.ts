@@ -191,7 +191,8 @@ function reviveFile<File extends FileInfo>(file: Serialized<File> | File): File 
     ...(file as object),
     createdAt: new Date((file as { createdAt: string }).createdAt),
     uploadedAt: date((file as { uploadedAt: unknown }).uploadedAt),
-    expiresAt: date((file as { expiresAt: unknown }).expiresAt)
+    expiresAt: date((file as { expiresAt: unknown }).expiresAt),
+    urlExpiresAt: date((file as { urlExpiresAt: unknown }).urlExpiresAt)
   } as Record<string, unknown>
   if ("attachedAt" in (file as object)) {
     revived.attachedAt = new Date((file as { attachedAt: string }).attachedAt)
