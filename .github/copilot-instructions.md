@@ -26,8 +26,7 @@ changing the rules.
   empty states, and accessible names. Use [copy-editing](.agents/skills/copy-editing/SKILL.md) for marketing copy.
   Apply [brand-voice](.agents/skills/brand-voice/SKILL.md) when shaping the voice or
   [deslopify-writing](.agents/skills/deslopify-writing/SKILL.md) when checking for formulaic phrasing.
-- When available, use Fluent Agent MCP to check customer-facing text against its content and interaction guidance.
-  Report when the service is unavailable. Avoid dot glyphs as visual separators.
+- Avoid dot glyphs as visual separators.
 - Exercise changed user workflows in the running app with the integrated browser. Check desktop and mobile layouts,
   keyboard use, and accessible names.
 
