@@ -370,7 +370,12 @@ export function createBetterApps<const Features extends readonly BetterAppsFeatu
         getActor: async () => (actor ??= identity.getActor(request)),
         waitUntil: keep
       })
-      return request.method === "HEAD" && response.body ? new Response(null, response) : response
+      if (request.method === "HEAD" && response.body) {
+        // Cancelling the body lets the handler's source, such as a file being read from storage, close at once.
+        await response.body.cancel().catch(() => undefined)
+        return new Response(null, response)
+      }
+      return response
     } catch (error) {
       if (error instanceof BetterAppsError) {
         return errorResponse(error)

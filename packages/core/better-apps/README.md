@@ -200,7 +200,8 @@ const links = defineFeature({
 - The handler gets the `request` as it arrived, its body unread, so an upload can stream straight to storage. Actions'
   `maxBodySize` and JSON checks don't apply; a route checks what it accepts itself.
 - The response goes out as the handler returns it: streamed bodies, statuses such as 206 and 304, and headers.
-- `GET` routes also answer `HEAD`, without a body. A path that matches with another method gets 405 with `Allow`.
+- `GET` routes also answer `HEAD`, without a body: the handler's body is cancelled, so a stream it opened closes. A path
+  that matches with another method gets 405 with `Allow`.
 - The handler receives the `request`, its parsed `url`, such as for its host, `params`, `db`, `identity`, `subjects`,
   `now`, `getActor()`, which reads the signed-in user only when called, and `waitUntil(promise)`.
 - `waitUntil` keeps work running after the response, such as recording a click, with the platform's `waitUntil` that

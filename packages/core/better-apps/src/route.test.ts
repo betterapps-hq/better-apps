@@ -243,13 +243,17 @@ describe("routes", () => {
   })
 
   it("send the handler's response as it is: streamed bodies, partial and unchanged statuses, and headers", async () => {
+    const cancelled = vi.fn<() => void>()
     const stream = () =>
       new ReadableStream<Uint8Array>({
         start(controller) {
           controller.enqueue(new TextEncoder().encode("par"))
           controller.enqueue(new TextEncoder().encode("tial"))
+        },
+        pull(controller) {
           controller.close()
-        }
+        },
+        cancel: cancelled
       })
     const range = defineRoute({
       path: "/range",
@@ -270,6 +274,8 @@ describe("routes", () => {
     expect(await partial.text()).toBe("partial")
     const head = await app.handler(get("/range", { method: "HEAD" }))
     expect([head.status, head.headers.get("x-file"), await head.text()]).toEqual([206, "f-1", ""])
+    // A HEAD request closes the handler's stream rather than leaving it open.
+    expect(cancelled).toHaveBeenCalledTimes(1)
     const unchanged = await app.handler(get("/fresh"))
     expect([unchanged.status, unchanged.headers.get("etag")]).toEqual([304, '"v1"'])
   })
