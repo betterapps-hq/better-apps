@@ -254,7 +254,8 @@ await client.notes.add({ text: "Hi" })
   scheduled job's own `waitUntil` to `app.deliverEvents({ waitUntil })` for the same.
 - `emit(type, data, { later: true })` writes an event the same way but leaves it for the next `app.deliverEvents()` run,
   so a bulk job can do a step per run and continue in the next instead of in one long request. A subscriber's later
-  events are written with its event's removal, so a delivery that fails or is retried emits them once.
+  events are written with its event's removal, so a delivery that fails or is retried emits them once, even when a
+  delivery that outlived its lease and the run that took the event over both finish.
 - `emit(type, data, { availableAt })` writes an event that's due at that time, such as a recheck scheduled for tomorrow.
   The first `app.deliverEvents()` run at or after it delivers the event, and runs before then don't read it, so a
   scheduled event costs nothing until it's due. It implies `later`.

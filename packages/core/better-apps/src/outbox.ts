@@ -1,4 +1,4 @@
-import type { DatabaseAdapter, Row, WriteOperation } from "./database.js"
+import type { DatabaseAdapter, Row, WriteOperation, WriteResult } from "./database.js"
 import { eventModel, type BetterAppsEvent, type EmitOptions, type EventHandler } from "./events.js"
 import type { BetterAppsFeature } from "./feature.js"
 import type { Actor, Author, Identity } from "./identity.js"
@@ -189,16 +189,17 @@ export function createOutbox(options: {
         try {
           await handle(event, { db: scope.db, identity, subjects, emit: scope.emit })
           await scope.flush()
-          later.push(...scope.held)
+          for (const [index, held] of scope.held.entries()) {
+            later.push({ ...held, id: await continuationId(id, feature.id, index) })
+          }
         } finally {
           emitted.push(...scope.written)
         }
       }
-      // Events left for later are written with the event's removal, so a retried delivery emits them once.
-      await db.batch([
-        ...eventWrites(later),
-        { type: "deleteMany", model: eventModel, where: [{ field: "id", value: id }] }
-      ])
+      if (!(await finish(id, later))) {
+        // Another run claimed the event after this one's lease ran out, and delivered it first.
+        return emitted
+      }
       report.delivered += 1
     } catch (error) {
       report.failed += 1
@@ -210,6 +211,39 @@ export function createOutbox(options: {
         .catch((updateError: unknown) => onError(updateError, { feature: event.feature, event }, waitUntil))
     }
     return emitted
+  }
+
+  /**
+   * Removes a delivered event and writes the events its subscribers left for later, in one batch, so a retried delivery
+   * writes them once. Returns whether this run removed the event.
+   *
+   * A delivery that outlives its lease can race a second run that claimed the same event. Their held events share ids,
+   * derived from the event, so the second batch to commit fails on them and writes nothing. If the first run's held
+   * events were already delivered and gone by then, the second batch goes through but removes no event, and its copies
+   * are taken back at once.
+   */
+  async function finish(id: string, later: readonly Row[]): Promise<boolean> {
+    const removal: WriteOperation = { type: "deleteMany", model: eventModel, where: [{ field: "id", value: id }] }
+    let results: WriteResult[]
+    try {
+      results = await db.batch([...eventWrites(later), removal])
+    } catch (error) {
+      const gone = !(await db.findOne({ model: eventModel, where: [{ field: "id", value: id }], select: ["id"] }))
+      if (later.length > 0 && gone) {
+        return false
+      }
+      throw error
+    }
+    if (results.at(-1) !== 0) {
+      return true
+    }
+    if (later.length > 0) {
+      await db.deleteMany({
+        model: eventModel,
+        where: [{ field: "id", operator: "in", value: later.map((row) => String(row.id)) }]
+      })
+    }
+    return false
   }
 
   /**
@@ -254,4 +288,14 @@ export function createOutbox(options: {
   }
 
   return { track, deliver, deliverPending }
+}
+
+/**
+ * The id of an event a subscriber left for later while handling another: the same for every delivery of that event, so
+ * two runs delivering it at once can't both write it. It's shaped like a UUID, so it fits wherever event ids go.
+ */
+async function continuationId(eventId: string, feature: string, index: number): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${eventId} ${feature} ${index}`))
+  const hex = [...new Uint8Array(digest).slice(0, 16)].map((byte) => byte.toString(16).padStart(2, "0")).join("")
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`
 }

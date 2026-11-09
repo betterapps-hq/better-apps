@@ -718,6 +718,87 @@ describe("events", () => {
     expect(relayed()).toHaveLength(1)
   })
 
+  describe("a delivery that outlives its lease while another run delivers the same event", () => {
+    /**
+     * A relay whose first delivery fails, so the note's event stays in the outbox, and whose second waits for `release`.
+     * Each delivery that finishes leaves a `relayed` event for later.
+     */
+    const racing = () => {
+      let calls = 0
+      const gate: { open?: () => void } = {}
+      const released = new Promise<void>((resolve) => {
+        gate.open = resolve
+      })
+      const release = () => gate.open?.()
+      const received: string[] = []
+      const relay = defineFeature({
+        id: "relay",
+        events: { relayed: defineEvent<{ from: string }>() },
+        on: {
+          notes: {
+            "note.added": async (event, { emit }) => {
+              calls += 1
+              if (calls === 1) {
+                throw new Error("Not yet")
+              }
+              if (calls === 2) {
+                await released
+              }
+              emit("relayed", { from: event.id }, { later: true })
+            }
+          }
+        }
+      })
+      const sink = defineFeature({ id: "sink", on: { relay: { relayed: (event) => void received.push(event.type) } } })
+      const { app, memory, onError } = setup({ features: [relay, sink] })
+      const events = (type: string) => (memory.tables.get(eventModel) ?? []).filter((row) => row.type === type)
+      /** Lets the next run claim the note's event, as when a backoff or a lease has run out. */
+      const expire = () => {
+        for (const row of events("note.added")) {
+          row.availableAt = new Date(0)
+        }
+      }
+      return { app, onError, events, expire, release, received }
+    }
+
+    it("writes its continuation once, when the other run's is still waiting", async () => {
+      const { app, onError, events, expire, release, received } = racing()
+      await app.api.notes.add({ text: "Hi" })
+      onError.mockClear()
+      expire()
+      const slow = app.deliverEvents()
+      await vi.waitFor(() => expect(events("note.added")[0]?.attempts).toBe(2))
+      expire()
+      expect(await app.deliverEvents({ limit: 1 })).toEqual({ delivered: 1, failed: 0 })
+      release()
+      expect(await slow).toEqual({ delivered: 0, failed: 0 })
+      expect(events("relayed")).toHaveLength(1)
+      expect(onError).not.toHaveBeenCalled()
+      await app.deliverEvents()
+      expect(received).toEqual(["relayed"])
+    })
+
+    it("takes its continuation back when the other run's was already delivered", async () => {
+      const { app, onError, events, expire, release, received } = racing()
+      await app.api.notes.add({ text: "Hi" })
+      onError.mockClear()
+      expire()
+      const slow = app.deliverEvents()
+      await vi.waitFor(() => expect(events("note.added")[0]?.attempts).toBe(2))
+      expire()
+      await app.deliverEvents({ limit: 1 })
+      // The continuation is delivered and gone before the slow run finishes.
+      await app.deliverEvents()
+      expect(received).toEqual(["relayed"])
+      release()
+      expect(await slow).toEqual({ delivered: 0, failed: 0 })
+      expect(events("relayed")).toHaveLength(0)
+      expect(onError).not.toHaveBeenCalled()
+      expect(await app.deliverEvents()).toEqual({ delivered: 0, failed: 0 })
+      expect(received).toEqual(["relayed"])
+    })
+  })
+
   it("delivers nothing when no feature subscribes", async () => {
     const { app } = setup()
     expect(await app.deliverEvents()).toEqual({ delivered: 0, failed: 0 })
