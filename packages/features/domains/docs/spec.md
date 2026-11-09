@@ -93,9 +93,9 @@ An index on `orgId` and `createdAt` lists an organization's domains in the order
 
 A domain is `active` when it's ready for traffic. A subdomain is `active` from the start. A custom domain is `active`
 when it holds its hostname and the provider reports the hostname and its certificate active, and stays `active` while
-the provider serves the hostname and its certificate is being renewed. It's `failed` when the provider blocks the
-hostname, when it wasn't ready after 7 days of checks, or when another organization proved it owns the hostname.
-Anything else is `pending`.
+the provider serves the hostname and its certificate is being renewed, but not once the certificate failed, such as when
+it expired. It's `failed` when the provider blocks the hostname, when it wasn't ready after 7 days of checks, or when
+another organization proved it owns the hostname. Anything else is `pending`.
 
 ## Hostname rules
 
@@ -248,11 +248,15 @@ A check of a custom domain:
    A change of status emits `domain.status.changed`. Events are emitted only once the save has changed the domain.
 
 The provider reporting the hostname and its certificate active makes the domain `active`. A domain that's already
-`active` stays so while the provider serves the hostname, unless its certificate failed: a certificate being renewed
-reports a pending state while the current one still serves, and a renewal mustn't take the domain's links down. This
-holds whether or not the routing records are found: a customer whose own Cloudflare zone proxies the CNAME answers
-lookups with its own addresses, and a prevalidated hostname is verified before traffic moves. The routing records'
-`found` still shows what DNS answers.
+`active` stays so while the provider serves the hostname and renews its certificate: a certificate being renewed reports
+a pending state while the current one still serves, and a renewal mustn't take the domain's links down. This holds
+whether or not the routing records are found: a customer whose own Cloudflare zone proxies the CNAME answers lookups
+with its own addresses, and a prevalidated hostname is verified before traffic moves. The routing records' `found` still
+shows what DNS answers.
+
+A certificate that failed, such as one that expired after a CAA record stopped its renewal, no longer serves. The check
+asks for the certificate again, and the domain becomes `pending`, with the provider's reason or one saying it asked
+again, until the certificate is issued.
 
 A provider that refuses the hostname when it's registered fails the domain with its reason. One that can't be reached
 leaves the domain as it was: `check` returns `PROVIDER_ERROR`, and a scheduled check stays in the outbox for the core's
@@ -285,9 +289,10 @@ reports it unverified. One still `pending` 7 days later becomes `failed`.
 
 The schedule runs on [deferred events](../../../core/better-apps/README.md#events). Each custom domain being checked has
 one `check.scheduled` event in the outbox, carrying the domain id and its `checkToken`, emitted with `availableAt` set
-to the domain's `nextCheckAt`, and written with the save that set it. The outbox doesn't read it before then, so a
-scheduled check costs nothing until it's due. The first `app.deliverEvents()` run after that delivers it to domains' own
-subscriber, which:
+to the domain's `nextCheckAt`. From `add` and `check`, it's written with the save that set it. From a scheduled check,
+the outbox writes it as it removes the event it delivered, so a run that stops after saving the check and before then
+gets that event again. The outbox doesn't read the event before it's due, so a scheduled check costs nothing until then.
+The first `app.deliverEvents()` run after that delivers it to domains' own subscriber, which:
 
 - stops when the domain is gone or its `checkToken` is no longer the event's, since a newer schedule replaced it, or the
   domain failed;
@@ -310,6 +315,10 @@ core's retry. Subscribing to its own event needs the core's outbox table, which 
 the call can be repeated. A hostname the provider no longer has counts as deleted. Then the row goes, with
 `domain.removed`, and `primary.changed` with no domain when it was the primary one. The organization then has no primary
 domain until one is chosen. Removing a domain that's already gone returns `removed: false`, with no events.
+
+A check that registered the hostname with the provider while the domain was being removed finds no domain to save to. It
+then deletes that hostname at the provider, unless another domain holds the hostname, such as one that took it over or a
+newer check of the same domain that saved it.
 
 `removeAll({ orgId })`, server only, removes every domain of an organization the same way and returns how many it
 removed. Call it when an organization is deleted, such as from the identity provider's webhook for deleted
@@ -425,7 +434,8 @@ interface ProviderHostname {
 `localHostnames({ target, zone })` keeps hostnames in memory and has its own DNS, `local.dns`, to pass as `dns`, which
 holds only the records `local.dns.publish` adds. Its `zone` is the target without its first label by default. Like a
 real provider, a hostname it registers is `active` once its DNS points the hostname at the target, or holds the
-hostname's prevalidation record, and `moved` once an active hostname stops pointing at it, until `refresh`. `block`,
+hostname's prevalidation record, and `moved` once an active hostname stops pointing at it, until `refresh`. Like
+Cloudflare, `refresh` keeps a hostname it still serves `active` while it issues the certificate again. `block`,
 `holdCertificate` and `failNext` set up what tests need. It's for tests and local development, never production.
 
 ## One-time Cloudflare setup

@@ -88,13 +88,23 @@ function routingAdvice(record: CheckedRecord): string {
     : `Add an ${record.type} record for ${record.name} with the address ${record.value}.`
 }
 
+/** What the provider said of a custom domain's hostname in a check, and what the check asked of it. */
+export interface Inspection {
+  /** The hostname as the provider reports it, after any restart. */
+  state: ProviderHostname
+  /** The hostname as the provider reported it before the check restarted its validation, or `null` if it didn't. */
+  restartedFrom: ProviderHostname | null
+  /** Whether the check registered the hostname with the provider. */
+  registered: boolean
+}
+
 /**
  * Why a custom domain the organization holds isn't ready yet, in words for the person who added it, or `null` when it
  * is. The provider serving the hostname proves its traffic arrives, even where DNS hides the routing record, such as a
  * CNAME the customer's own Cloudflare zone proxies.
  */
 export function describe(
-  state: ProviderHostname,
+  { state, restartedFrom }: Inspection,
   records: readonly CheckedRecord[],
   status: DomainStatus
 ): string | null {
@@ -104,10 +114,12 @@ export function describe(
   if (status === "failed") {
     return state.errors[0] ?? "The provider won't serve this domain."
   }
+  const failed = [restartedFrom, state].find((entry) => entry?.certificate === "failed")
+  if (failed) {
+    return failed.errors[0] ?? "The certificate couldn't be issued. We asked for it again."
+  }
   if (state.status === "active") {
-    return state.certificate === "failed"
-      ? (state.errors[0] ?? "The certificate couldn't be issued. We asked for it again.")
-      : "The domain is verified. Its certificate is being issued, which can take a few minutes."
+    return "The domain is verified. Its certificate is being issued, which can take a few minutes."
   }
   const routing = records.filter((record) => record.purpose === "routing")
   if (routing.some((record) => record.found === null)) {
@@ -124,30 +136,33 @@ export function describe(
 
 /**
  * A domain the organization holds is ready once the provider serves the hostname with its certificate. One that's
- * already `active` stays so while the provider serves it and the certificate hasn't failed, since a certificate being
- * renewed reports a pending state while the current one still serves.
+ * already `active` stays so while the provider serves it with a certificate being renewed, which reports a pending
+ * state while the current one still serves. It doesn't once the check had to restart validation, as a certificate that
+ * failed, such as one that expired, no longer serves.
  */
-export function statusOf(state: ProviderHostname, active: boolean): DomainStatus {
+export function statusOf({ state, restartedFrom }: Inspection, active: boolean): DomainStatus {
   if (state.status === "blocked") {
     return "failed"
   }
   if (state.status !== "active") {
     return "pending"
   }
-  return state.certificate === "active" || (active && state.certificate !== "failed") ? "active" : "pending"
+  return state.certificate === "active" || (active && restartedFrom === null) ? "active" : "pending"
 }
 
 /**
  * Reads a custom domain from its provider, registering it when the domain has no provider id yet or the provider lost
  * it, and restarts the provider's validation when it moved or its certificate failed.
  */
-export async function inspect(provider: HostnameProvider, row: DomainRow): Promise<ProviderHostname> {
+export async function inspect(provider: HostnameProvider, row: DomainRow): Promise<Inspection> {
   return fromProvider(async () => {
-    let state = row.providerId === null ? null : await provider.get(row.providerId)
-    state ??= await provider.create(row.hostname)
-    if (state.status === "moved" || state.certificate === "failed") {
-      state = await provider.refresh(state.id)
+    const found = row.providerId === null ? null : await provider.get(row.providerId)
+    const state = found ?? (await provider.create(row.hostname))
+    const restart = state.status === "moved" || state.certificate === "failed"
+    return {
+      state: restart ? await provider.refresh(state.id) : state,
+      restartedFrom: restart ? state : null,
+      registered: found === null
     }
-    return state
   })
 }

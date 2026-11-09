@@ -23,6 +23,7 @@ type App = ReturnType<typeof setup>
 const proveError = (hostname: string) => `Add the TXT record for _verify.${hostname} to prove you own the domain.`
 const cnameError = (hostname: string) => `Add a CNAME record for ${hostname} that points to customers.yourapp.com.`
 const waiting = "The records are in place. Waiting for the provider to verify the domain."
+const certificateFailed = "The certificate couldn't be issued. We asked for it again."
 
 /** Adds a custom domain, adds its records, and checks it until it's ready. */
 async function addReady(t: App, userId: UserId, hostname: string): Promise<Domain> {
@@ -509,7 +510,7 @@ describe("check", () => {
     advance()
     await expect(t.api.check({ domainId: added.id }, t.as("ada"))).resolves.toMatchObject({
       status: "pending",
-      error: waiting
+      error: certificateFailed
     })
   })
 
@@ -526,6 +527,34 @@ describe("check", () => {
     })
     await expect(t.api.lookup({ hostname: "links.acme.com" })).resolves.toMatchObject({ verified: true })
     expect(t.events("domain.status.changed")).toHaveLength(1)
+  })
+
+  it("takes a ready domain out of service while its certificate fails", async () => {
+    const t = setup()
+    const added = await addReady(t, "ada", "links.acme.com")
+    // Asking for the certificate again leaves the hostname served with a pending certificate, as Cloudflare does.
+    for (let day = 0; day < 3; day += 1) {
+      t.provider.holdCertificate("links.acme.com", "failed")
+      advance()
+      await expect(t.api.check({ domainId: added.id }, t.as("ada"))).resolves.toMatchObject({
+        status: "pending",
+        certificate: "pending",
+        primary: true,
+        error: certificateFailed
+      })
+      await expect(t.api.lookup({ hostname: "links.acme.com" })).resolves.toMatchObject({ verified: false })
+    }
+    advance()
+    await expect(t.api.check({ domainId: added.id }, t.as("ada"))).resolves.toMatchObject({
+      status: "active",
+      certificate: "active",
+      error: null
+    })
+    expect(t.events("domain.status.changed").map((event) => event.data)).toMatchObject([
+      { from: "pending" },
+      { from: "active" },
+      { from: "pending" }
+    ])
   })
 
   it("restarts validation of a hostname that moved", async () => {
@@ -766,6 +795,40 @@ describe("remove", () => {
       expect.objectContaining({ orgId: "acme" }),
       { orgId: "acme", domain: null }
     ])
+  })
+
+  it("removes a hostname a check registered while the domain was being removed", async () => {
+    const t = setup()
+    const added = await addReady(t, "ada", "links.acme.com")
+    const get = t.provider.get.bind(t.provider)
+    // The domain is removed after the check read it and before it asks the provider, which no longer has the hostname.
+    t.provider.get = async (id) => {
+      t.provider.get = get
+      await t.api.remove({ domainId: added.id }, t.as("ada"))
+      return get(id)
+    }
+    advance()
+    await expect(t.api.check({ domainId: added.id }, t.as("ada"))).rejects.toMatchObject({ code: "NOT_FOUND" })
+    expect(t.provider.hostnames.size).toBe(0)
+  })
+
+  it("keeps a hostname a check registered when a newer check of the domain saved it", async () => {
+    const t = setup()
+    const added = await t.api.add({ kind: "custom", hostname: "links.acme.com" }, t.as("ada"))
+    t.prove(added)
+    t.route("links.acme.com")
+    const create = t.provider.create.bind(t.provider)
+    // "Check now" starts a new schedule while the scheduled check registers the hostname, so the scheduled save misses.
+    t.provider.create = async (hostname) => {
+      t.provider.create = create
+      await t.api.check({ domainId: added.id }, t.as("ada"))
+      return create(hostname)
+    }
+    vi.setSystemTime(minutes(1))
+    await t.app.deliverEvents()
+    expect([...t.provider.hostnames.values()].map((entry) => entry.hostname)).toEqual(["links.acme.com"])
+    advance()
+    await expect(t.api.check({ domainId: added.id }, t.as("ada"))).resolves.toMatchObject({ status: "active" })
   })
 
   it("keeps the domain when the provider fails", async () => {

@@ -143,7 +143,13 @@ export function localHostnames(options: LocalHostnamesOptions = {}): LocalHostna
       if (entry.status === "blocked") {
         return save(entry)
       }
-      return save({ ...entry, status: "pending", certificate: certificates.get(id) ?? "pending" })
+      // Like Cloudflare, a hostname that moved is validated again, while one still served stays active as its
+      // certificate is issued again.
+      return save({
+        ...entry,
+        status: entry.status === "moved" ? "pending" : entry.status,
+        certificate: certificates.get(id) ?? "pending"
+      })
     },
     async remove(id) {
       failIfAsked("remove")

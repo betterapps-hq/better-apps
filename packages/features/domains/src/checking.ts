@@ -9,6 +9,7 @@ import {
   expiredError,
   fromProvider,
   inspect,
+  type Inspection,
   lookUp,
   lookupError,
   nextCheckAt,
@@ -21,7 +22,7 @@ import {
 import type { Config } from "./config.js"
 import { isRecordFound } from "./dns.js"
 import { DomainsError } from "./errors.js"
-import type { HostnameProvider, ProviderHostname } from "./provider.js"
+import type { HostnameProvider } from "./provider.js"
 import { publicOrg, summary } from "./rows.js"
 import { domainModel, type CertificateStatus, type CheckedRecord, type DomainRow, type DomainStatus } from "./schema.js"
 
@@ -128,6 +129,8 @@ interface Finding {
   certificate: CertificateStatus
   records: CheckedRecord[]
   error: string | null
+  /** The provider id of a hostname the check registered, or `null` when it registered none. */
+  registered: string | null
 }
 
 const providerOf = (config: Config) => config.provider as HostnameProvider
@@ -257,16 +260,17 @@ async function prove(config: Config, writer: Writer, row: DomainRow): Promise<Fi
     status: "pending",
     certificate: "pending",
     records,
-    error: error ?? ownershipError(records)
+    error: error ?? ownershipError(records),
+    registered: null
   }
 }
 
 /** Asks the provider where a domain the organization holds stands, registering it when it has to. */
 async function serve(config: Config, row: DomainRow): Promise<Finding> {
   const provider = providerOf(config)
-  let state: ProviderHostname
+  let inspection: Inspection
   try {
-    state = await inspect(provider, row)
+    inspection = await inspect(provider, row)
   } catch (caught) {
     // A provider that can't be reached is tried again. One that refuses the hostname, such as when it has to
     // register it again, won't change its mind, so the domain fails with its reason.
@@ -279,18 +283,37 @@ async function serve(config: Config, row: DomainRow): Promise<Finding> {
       status: "failed",
       certificate: row.certificate,
       records: row.records ?? [],
-      error: caught.message
+      error: caught.message,
+      registered: null
     }
   }
+  const { state } = inspection
   const records = await lookUp(config.dns, [...provider.routing(row.hostname), ...state.records])
-  const status = statusOf(state, row.status === "active")
+  const status = statusOf(inspection, row.status === "active")
   return {
     claimed: true,
     providerId: state.id,
     status,
     certificate: state.certificate,
     records,
-    error: describe(state, records, status)
+    error: describe(inspection, records, status),
+    registered: inspection.registered ? state.id : null
+  }
+}
+
+/**
+ * Removes a hostname a check registered at the provider once no domain holds it, such as when the domain was removed
+ * while it was being checked, so the provider isn't left with a hostname nothing tracks. A domain that holds it, such
+ * as one that took it over, keeps it, since registering it again returns the same one.
+ */
+async function release(config: Config, writer: Writer, hostname: string, providerId: string): Promise<void> {
+  const holder = await writer.db.findOne<DomainRow>({
+    model: domainModel,
+    where: [{ field: "claimedHostname", value: hostname }]
+  })
+  if (!holder) {
+    const provider = providerOf(config)
+    await fromProvider(() => provider.remove(providerId))
   }
 }
 
@@ -336,9 +359,9 @@ export async function runCheck(
   if (finding.status === "pending" && now.getTime() - schedule.checkingSince.getTime() >= checkWindowMs) {
     // A domain nobody finished setting up stops holding a hostname at the provider; checking it again registers it.
     await removeAtProvider(config, { ...row, providerId: finding.providerId })
-    finding = { ...finding, status: "failed", providerId: null, error: expiredError }
+    finding = { ...finding, status: "failed", providerId: null, error: expiredError, registered: null }
   }
-  const { claimed, ...found } = finding
+  const { claimed, registered, ...found } = finding
   const update: Partial<DomainRow> = {
     ...found,
     ...scheduleFields(finding.status, schedule, now),
@@ -346,7 +369,9 @@ export async function runCheck(
     verifiedAt: finding.status === "active" && row.status !== "active" ? now : row.verifiedAt
   }
   if (update.checkToken && update.nextCheckAt) {
-    // Written with the save, so the schedule never stops between them, and not read before it's due.
+    // Not read before it's due. From an action, it's written with the save. In a scheduled check, the outbox writes it
+    // as it removes the event being handled, and a run that stops before then gets that event again. Either way, the
+    // schedule never stops.
     writer.emit("check.scheduled", { domainId: row.id, token: update.checkToken }, { availableAt: update.nextCheckAt })
   }
   const [updated] = await writer.db.batch([
@@ -362,6 +387,9 @@ export async function runCheck(
     }
   ])
   if (!updated) {
+    if (registered !== null) {
+      await release(config, writer, row.hostname, registered)
+    }
     return null
   }
   const saved = updated as DomainRow
