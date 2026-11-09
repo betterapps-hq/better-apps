@@ -511,6 +511,43 @@ describe("taking files off and reordering", () => {
     ])
   })
 
+  it("end in one of the orders asked for when two reorders race", async () => {
+    // Holds both reorders at `canUpload` until both have started, so each reads the order before the other saves.
+    let release: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let waiting = 0
+    let racing = false
+    const canUpload = async () => {
+      if (racing) {
+        waiting += 1
+        if (waiting === 2) {
+          release?.()
+        }
+        await gate
+      }
+      return true
+    }
+    const { api, as, upload } = setup({ subjects: { invoice: { canUpload } } })
+    const [a, b, c] = [
+      (await upload("bob", inv1)).file.id,
+      (await upload("bob", inv1)).file.id,
+      (await upload("bob", inv1)).file.id
+    ]
+    racing = true
+    await Promise.all([
+      api.reorder({ ...inv1, fileIds: [b, a, c] }, as("bob")),
+      api.reorder({ ...inv1, fileIds: [a, c, b] }, as("bob"))
+    ])
+    const listed = (await api.listFiles({ subjectType: "invoice", subjectIds: ["inv-1"] }, as("bob")))["inv-1"]
+    expect([
+      [b, a, c],
+      [a, c, b]
+    ]).toContainEqual(listed?.map((entry) => entry.id))
+    expect(listed?.map((entry) => entry.position)).toEqual([0, 1, 2])
+  })
+
   it("reorders a record's files", async () => {
     const { api, as, upload, events } = setup()
     const ids = []

@@ -258,15 +258,17 @@ export async function reorder(config: Config, context: Context): Promise<void> {
   if (fileIds.length !== links.length || fileIds.some((id) => !byFile.has(id))) {
     throw new AttachmentsError("CONFLICT", "The files on this record changed. Load them again.")
   }
-  const updates = fileIds.flatMap((fileId, position): WriteOperation[] => {
-    const link = byFile.get(fileId) as Attachment
-    return link.position === position
-      ? []
-      : [{ type: "update", model: attachmentModel, where: [{ field: "id", value: link.id }], update: { position } }]
-  })
-  if (updates.length === 0) {
+  if (fileIds.every((fileId, position) => byFile.get(fileId)?.position === position)) {
     return
   }
+  // Every position is written, not just the ones that changed since this read, so when reorders from two tabs race,
+  // the record ends in the order of whichever saves last rather than a mix of both.
+  const updates = fileIds.map((fileId, position): WriteOperation => ({
+    type: "update",
+    model: attachmentModel,
+    where: [{ field: "id", value: (byFile.get(fileId) as Attachment).id }],
+    update: { position }
+  }))
   context.emit("attachments.reordered", { ...ref, orgId, fileIds })
   await context.db.batch(updates)
 }
