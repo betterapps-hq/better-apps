@@ -201,10 +201,12 @@ connectLinkDomains(app.api.domains)
 - Links open at the same `path` on every host, so the catch-all route that serves `/s` serves them on every domain.
 - A link that grants access sets its cookie on the host that opens it, for that host alone outside `cookie.domain`. When
   that cookie can't reach the record, such as a record on `app.yourapp.com` from a link on `links.acme.com`, the link's
-  short URL stays on the app's host, and opening it on the domain sends the visitor to the same link on the record's
-  host, which sets the cookie there. A subdomain such as `acme.yourapp.com` reaches the app's host with
-  `cookie: { domain: "yourapp.com" }`. Writing such a link's short URL asks the record's `url`, once per record in a
-  call.
+  short URL stays on the app's host. Opening it on the domain sends the visitor to the same link on `baseUrl` when the
+  cookie reaches the record from there, or else on the record's host, which sets the cookie. A subdomain such as
+  `acme.yourapp.com` reaches the app's host with `cookie: { domain: "yourapp.com" }`. A record on the organization's own
+  domain, such as a white-label app's `https://billing.acme.com/invoices/1`, is shared there when `origin` returns that
+  domain. `create` refuses a link that grants access with `INVALID_INPUT` when neither the organization's domain nor
+  `baseUrl` reaches the record. Writing such a link's short URL asks the record's `url`, once per record in a call.
 - Codes stay unique across the app, so a code means the same link on every host that opens it. So two organizations
   can't both have a code such as `pricing`, and the second to ask is told it's taken.
 

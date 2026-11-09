@@ -172,11 +172,11 @@ Whose access a link stands for depends on where it was made:
   `update({ code, grantsView: false })` on those links, or `removeSubject`.
 
 The cookie only reaches the link's host, or every host under `cookie.domain`. Making a link that grants access fails
-when the record's page is on a host the cookie wouldn't reach, rather than letting the grant fail without a word. With
-`hosts`, an organization's domain shares only the links whose cookie reaches the record from it, as
-[Links that grant access](#links-that-grant-access) describes. Read checks only count the grant where they pass the
-request. The app's own pages do; comments and reactions don't yet, since each feature decides what a visitor with only a
-link sees, such as people's names.
+with `INVALID_INPUT` when the record's page is on a host the cookie wouldn't reach from the host the link is shared on,
+rather than letting the grant fail without a word. With `hosts`, that's the organization's domain when the cookie
+reaches the record from there, and the app's own host otherwise, as [Links that grant access](#links-that-grant-access)
+describes. Read checks only count the grant where they pass the request. The app's own pages do; comments and reactions
+don't yet, since each feature decides what a visitor with only a link sees, such as people's names.
 
 ## Clicks
 
@@ -199,8 +199,9 @@ link sees, such as people's names.
    URL.
 5. Answers `302 Found` with the target as `Location` and `Cache-Control: private, no-store`, so turning a link off or
    changing it takes effect at once. A link that grants access also sets the cookie. With `hosts`, when that cookie
-   couldn't reach the record from this host, it answers `302 Found` to the same link on the record's host instead,
-   without the cookie or a click.
+   couldn't reach the record from this host, it answers `302 Found` to the same link where the cookie does reach it
+   instead, without the cookie or a click: on `baseUrl` when the cookie reaches the record from there, and on the
+   record's host otherwise.
 6. Records the click after the response.
 
 ## Expiry and turning a link off
@@ -331,10 +332,14 @@ since browsers drop a cookie for a domain that doesn't cover the host setting it
   `cookie: { domain: "yourapp.com" }`: the link is shared on the subdomain and grants access on the app's host.
 - A domain of the organization's own, such as `links.acme.com`, can't share a cookie with `app.yourapp.com`. A link that
   grants access to a record there keeps its short URL on the app's host. Opened on the domain anyway, it sends the
-  visitor to the same link on the record's host, which sets the cookie there and counts the click. That host is never
-  the one the link was opened on, so a link sends a visitor on once at most.
-- A record the domain serves itself, when `url` returns a path the app serves on every host, is reached from the domain,
-  so such links are shared there.
+  visitor to the same link on `baseUrl`, which opens every link, when the cookie reaches the record from there, and on
+  the record's host otherwise. That host sets the cookie and counts the click. It's never the one the link was opened
+  on, so a link sends a visitor on once at most. The record's host only opens the link when `resolve` says it does.
+- A record the domain serves itself is reached from the domain, so such links are shared there. That's a record whose
+  `url` returns a path the app serves on every host, or an absolute URL on the domain, such as a white-label app's
+  `https://billing.acme.com/invoices/1` with `origin` returning `https://billing.acme.com`.
+- A record that neither the organization's domain nor `baseUrl` reaches can't have a link that grants access: `create`
+  refuses it with `INVALID_INPUT`.
 
 Writing the short URL of a link that grants access asks the record's `url`, to see which host reaches it. It's asked
 once per record in a call, so `list` asks once per record on the page, however many of its links there are.

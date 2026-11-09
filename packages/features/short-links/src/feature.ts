@@ -54,7 +54,8 @@ interface Config {
   canManage: ShortLinksOptions["canManage"]
   path: string
   baseUrl: string | undefined
-  hosts: LinkHosts | undefined
+  /** `hosts`, with `baseUrl`, which it needs. */
+  hosts: (LinkHosts & { baseUrl: string }) | undefined
   codeLength: number
   cookie: CookieSettings
   notFound: NonNullable<ShortLinksOptions["notFound"]>
@@ -87,6 +88,7 @@ function resolve(options: ShortLinksOptions): Config {
     }
     baseUrl = parsed.href.replace(/\/+$/, "")
   }
+  let hosts: Config["hosts"]
   if (options.hosts !== undefined) {
     if (typeof options.hosts.resolve !== "function") {
       throw new Error("`hosts.resolve` must be a function that says whose links a host opens.")
@@ -95,6 +97,7 @@ function resolve(options: ShortLinksOptions): Config {
     if (baseUrl === undefined) {
       throw new Error("Short links with `hosts` need `baseUrl`, the app's own origin, which opens every link.")
     }
+    hosts = { ...options.hosts, baseUrl }
   }
   const cookieName = options.cookie?.name ?? "better-apps-links"
   if (!/^[\w\-.]+$/.test(cookieName)) {
@@ -119,7 +122,7 @@ function resolve(options: ShortLinksOptions): Config {
     canManage: options.canManage,
     path,
     baseUrl,
-    hosts: options.hosts,
+    hosts,
     codeLength,
     cookie: { name: cookieName, maxAge: cookieMaxAge, domain },
     notFound: options.notFound ?? notFoundPage
@@ -142,8 +145,13 @@ function originOf(value: string): string {
   return url.origin
 }
 
-/** Writes each link's short URL prefix within one call, such as `https://links.acme.com/s`. */
-type Prefixer = (row: LinkRow) => Promise<string>
+/** Where links' short URLs go within one call. */
+interface Prefixer {
+  /** The prefix of a link's short URL, such as `https://links.acme.com/s`. */
+  of: (row: LinkRow) => Promise<string>
+  /** Whether the cookie a link that grants access sets, on the host its short URL uses, reaches the record. */
+  reaches: (row: LinkRow) => Promise<boolean>
+}
 
 /** Loads each key once, sharing the promise with later asks for the same key. */
 function loadOnce<T>(): (key: string, load: () => T | Promise<T>) => Promise<T> {
@@ -159,50 +167,54 @@ function loadOnce<T>(): (key: string, load: () => T | Promise<T>) => Promise<T> 
 }
 
 /**
- * The prefix of each link's short URL in a call: `hosts.origin`'s for the link's organization, or the app's own. A
+ * Where each link's short URL goes in a call: on `hosts.origin`'s host for the link's organization, or the app's own. A
  * person's own link in an organization stays on the app's host, the only one that opens it. A link that grants access
- * also stays there when the cookie it would set on the other host can't reach the record. Each organization's origin,
- * and each record's `url`, is asked once per call.
+ * also stays there when the cookie it would set on the organization's host can't reach the record. Each organization's
+ * origin, and each record's `url`, is asked once per call.
  */
 function prefixer(config: Config, request: Request | null): Prefixer {
   const own = prefixOf(config, request)
   const origin = config.hosts?.origin
-  if (!origin) {
-    return async () => own
-  }
   const origins = loadOnce<string | null>()
   const urls = loadOnce<string>()
-  return async (row) => {
-    if (row.orgId !== "" && row.owner !== ownerKey("org", row.orgId)) {
-      return own
+  /** The prefix on the link's organization's host, or `null` without one, or for a person's own link made in one. */
+  const sharedOf = async (row: LinkRow): Promise<string | null> => {
+    if (!origin || (row.orgId !== "" && row.owner !== ownerKey("org", row.orgId))) {
+      return null
     }
-    const orgId = row.orgId === "" ? null : row.orgId
     const found = await origins(row.orgId, async () => {
-      const value = await origin({ orgId })
+      const value = await origin({ orgId: row.orgId === "" ? null : row.orgId })
       return value === null ? null : originOf(value)
     })
-    if (found === null) {
-      return own
-    }
-    const prefix = `${found}${config.path}`
-    const type = row.subjectType ?? ""
-    const rules = Object.hasOwn(config.subjects, type) ? config.subjects[type] : undefined
-    const subjectId = row.subjectId
-    if (row.grantsView && rules && subjectId !== null) {
-      const link = `${prefix}/${row.code}`
-      const key = JSON.stringify([type, subjectId, row.orgId])
-      const path = await urls(key, () => rules.url({ subjectType: type, subjectId, orgId }))
-      if (!reachesHost(link, new URL(path, link).href, config.cookie.domain)) {
-        return own
-      }
-    }
-    return prefix
+    return found === null ? null : `${found}${config.path}`
   }
+  /**
+   * Whether a link under `prefix` that grants access sets a cookie that reaches its record. Without a whole prefix,
+   * which actions called without a request or `baseUrl` have, there's no host to tell from, so it's taken to reach.
+   */
+  const reachesFrom = async (row: LinkRow, prefix: string): Promise<boolean> => {
+    const rules = rulesFor(config, row.subjectType)
+    const { subjectType, subjectId } = row
+    if (!row.grantsView || !rules || subjectType === null || subjectId === null || !URL.canParse(prefix)) {
+      return true
+    }
+    const link = `${prefix}/${row.code}`
+    const orgId = row.orgId === "" ? null : row.orgId
+    const path = await urls(JSON.stringify([subjectType, subjectId, row.orgId]), () =>
+      rules.url({ subjectType, subjectId, orgId })
+    )
+    return reachesHost(link, new URL(path, link).href, config.cookie.domain)
+  }
+  const of = async (row: LinkRow): Promise<string> => {
+    const shared = await sharedOf(row)
+    return shared !== null && (await reachesFrom(row, shared)) ? shared : own
+  }
+  return { of, reaches: async (row) => reachesFrom(row, await of(row)) }
 }
 
 /** A row as actions return it, with its short URL from `prefix`. */
 async function present(prefix: Prefixer, row: LinkRow): Promise<ShortLink> {
-  return toLink(row, await prefix(row))
+  return toLink(row, await prefix.of(row))
 }
 
 /** Server code that passes neither an actor nor a request is trusted. It can't make links, since a link is someone's. */
@@ -210,8 +222,13 @@ function isTrusted(context: Context): boolean {
   return context.source === "api" && context.actor === null && context.request === null
 }
 
+/** How links work on a subject type, or `undefined` for one the feature doesn't have. */
+function rulesFor(config: Config, subjectType: string | null): LinkRules | undefined {
+  return subjectType !== null && Object.hasOwn(config.subjects, subjectType) ? config.subjects[subjectType] : undefined
+}
+
 function rulesOf(config: Config, subjectType: string): LinkRules {
-  const rules = Object.hasOwn(config.subjects, subjectType) ? config.subjects[subjectType] : undefined
+  const rules = rulesFor(config, subjectType)
   if (!rules) {
     throw new ShortLinksError("INVALID_INPUT", `Links can't point to "${subjectType}" records.`)
   }
@@ -335,24 +352,15 @@ async function checkGrant(
 }
 
 /**
- * Refuses a link that would grant access on a host its cookie can't reach, since the grant would fail without a word.
- * That's a setup mistake, so it's reported as one: set `cookie.domain` to a domain both hosts are under.
+ * Refuses a link that would grant access from a host whose cookie can't reach the record, since the grant would fail
+ * without a word. The link is shared on its organization's host when the cookie reaches the record from there, and on
+ * the app's own host otherwise.
  */
-async function checkReach(
-  config: Config,
-  rules: LinkRules,
-  ref: SubjectRef,
-  orgId: string,
-  prefix: string
-): Promise<void> {
-  if (!URL.canParse(prefix)) {
-    return
-  }
-  const link = `${prefix}/code`
-  const target = new URL(await rules.url({ ...ref, orgId: orgId === "" ? null : orgId }), link).href
-  if (!reachesHost(link, target, config.cookie.domain)) {
-    throw new Error(
-      `Links on ${new URL(link).host} can't let people see records on ${new URL(target).host}, since the cookie that grants access wouldn't reach it. Set short links' cookie.domain to a domain both are under.`
+async function checkReach(prefixes: Prefixer, fields: Omit<LinkRow, "id" | "code">): Promise<void> {
+  if (fields.grantsView && !(await prefixes.reaches({ id: "", code: "", ...fields }))) {
+    throw new ShortLinksError(
+      "INVALID_INPUT",
+      "Links can't let people see this record, since its page is on a domain they can't give access to."
     )
   }
 }
@@ -436,7 +444,6 @@ async function create(config: Config, context: Context): Promise<ShortLink> {
   }
   checkExpiry(input.expiresAt)
   const owner = ownerKey(ownerType, ownerType === "org" ? orgId : actor.userId)
-  const prefix = prefixOf(config, context.request)
   const prefixes = prefixer(config, context.request)
   let target: Pick<LinkRow, "url" | "subjectType" | "subjectId">
   if ("url" in input.target) {
@@ -454,7 +461,6 @@ async function create(config: Config, context: Context): Promise<ShortLink> {
     }
     if (input.grantsView) {
       await checkGrant(context, rules, ref, { owner, orgId })
-      await checkReach(config, rules, ref, orgId, prefix)
     }
     target = { url: null, ...ref }
   }
@@ -480,6 +486,7 @@ async function create(config: Config, context: Context): Promise<ShortLink> {
     createdAt: context.now,
     updatedAt: context.now
   }
+  await checkReach(prefixes, fields)
   // A code with a random part that's taken is replaced, up to three times. A taken code is told apart from other failed
   // writes by reading it back.
   for (let attempt = 1; ; attempt += 1) {
@@ -707,23 +714,23 @@ async function open(config: Config, context: RouteContext): Promise<Response> {
   if (location === null) {
     const { subjectType: type, subjectId: id } = row
     // A record link of a subject type the feature no longer has opens nothing.
-    const rules = type !== null && Object.hasOwn(config.subjects, type) ? config.subjects[type] : undefined
-    if (!rules || id === null) {
+    const rules = rulesFor(config, type)
+    if (!rules || type === null || id === null) {
       return config.notFound({ request, code: wanted })
     }
-    const path = await rules.url({
-      subjectType: type as string,
-      subjectId: id,
-      orgId: row.orgId === "" ? null : row.orgId
-    })
+    const path = await rules.url({ subjectType: type, subjectId: id, orgId: row.orgId === "" ? null : row.orgId })
     location = new URL(path, request.url).href
   }
   const headers = new Headers({ location, "cache-control": "private, no-store" })
   if (row.grantsView) {
     if (config.hosts && !reachesHost(request.url, location, config.cookie.domain)) {
-      // The cookie set on this host wouldn't reach the record, so the link opens on the record's host instead, which
-      // sets it there. The click counts there.
-      const there = new URL(`${config.path}/${encodeURIComponent(row.code)}`, location).href
+      // The cookie set on this host wouldn't reach the record, so the link opens where it does: on the app's own host,
+      // which opens every link, or else on the record's host. Neither is this host. The click counts there.
+      const app = `${config.hosts.baseUrl}${config.path}`
+      const code = encodeURIComponent(row.code)
+      const there = reachesHost(app, location, config.cookie.domain)
+        ? `${app}/${code}`
+        : new URL(`${config.path}/${code}`, location).href
       return new Response(null, { status: 302, headers: { location: there, "cache-control": "private, no-store" } })
     }
     headers.set("set-cookie", grantCookie(request, config.cookie, row.code))
@@ -746,8 +753,7 @@ async function open(config: Config, context: RouteContext): Promise<Response> {
  * record is the organization's. So turning `grantView` off ends the access existing links give at once.
  */
 function mayGrant(config: Config, row: LinkRow): boolean {
-  const type = row.subjectType ?? ""
-  const rules = Object.hasOwn(config.subjects, type) ? config.subjects[type] : undefined
+  const rules = rulesFor(config, row.subjectType)
   return (
     rules !== undefined &&
     rules.grantView !== undefined &&

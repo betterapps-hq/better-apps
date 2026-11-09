@@ -187,6 +187,64 @@ describe("organizations' domains", () => {
     expect(landed.response.headers.get("set-cookie")).toContain("; Domain=app.test;")
   })
 
+  it("share a link that grants access on an organization's domain that serves the record itself", async () => {
+    // A white-label app: each organization's invoices are on its own billing domain, which no cookie domain covers.
+    const billing: LinkRules = {
+      ...options.subjects.invoice,
+      url: ({ subjectId, orgId }) => `https://billing.${orgId ?? "app"}.test/invoices/${subjectId}`
+    }
+    const origins: Record<string, string> = { acme: "https://billing.acme.test", globex: "https://links.globex.test" }
+    const t = setup({
+      baseUrl: "https://app.test",
+      subjects: { ...options.subjects, invoice: billing },
+      hosts: {
+        resolve: ({ hostname }) =>
+          ({ "app.test": "app" as const, "billing.acme.test": { orgId: "acme" } })[hostname] ?? null,
+        origin: ({ orgId }) => origins[orgId ?? ""] ?? null
+      }
+    })
+    const link = await t.api.create({ target: inv1, grantsView: true }, t.as("ada"))
+    expect(link.shortUrl).toBe(`https://billing.acme.test/s/${link.code}`)
+    const opened = await openOn(t, "billing.acme.test", link.code)
+    expect(opened.response.headers.get("location")).toBe("https://billing.acme.test/invoices/inv-1")
+    expect(opened.response.headers.get("set-cookie")).toContain(link.code)
+    // Opened on the app's host, which can't reach the billing domain, it goes to the same link there.
+    const onApp = await openOn(t, "app.test", link.code)
+    expect(onApp.response.headers.get("location")).toBe(`https://billing.acme.test/s/${link.code}`)
+    // Globex's links are shared on a domain that doesn't serve its invoices, and the app's host doesn't either, so a link
+    // that grants access is refused.
+    const refused = t.api.create(
+      { target: { subjectType: "invoice", subjectId: "inv-globex" }, grantsView: true },
+      t.as("gus")
+    )
+    await expect(refused).rejects.toMatchObject({ code: "INVALID_INPUT" })
+  })
+
+  it("send a visitor on to baseUrl when it reaches the record and the record's host doesn't open links", async () => {
+    // Links open on go.example.test, records are on app.example.test, and the cookie domain covers both.
+    const t = setup({
+      baseUrl: "https://go.example.test",
+      cookie: { domain: "example.test" },
+      subjects: {
+        ...options.subjects,
+        invoice: { ...onApp, url: ({ subjectId }) => `https://app.example.test/invoices/${subjectId}` }
+      },
+      hosts: {
+        resolve: ({ hostname }) =>
+          ({ "go.example.test": "app" as const, "links.acme.test": { orgId: "acme" } })[hostname] ?? null,
+        origin: ({ orgId }) => (orgId === "acme" ? "https://links.acme.test" : null)
+      }
+    })
+    const link = await t.api.create({ target: inv1, grantsView: true }, t.as("ada"))
+    expect(link.shortUrl).toBe(`https://go.example.test/s/${link.code}`)
+    const hop = await openOn(t, "links.acme.test", link.code)
+    expect(hop.response.headers.get("location")).toBe(`https://go.example.test/s/${link.code}`)
+    expect((await openOn(t, "app.example.test", link.code)).response.status).toBe(404)
+    const landed = await openOn(t, "go.example.test", link.code)
+    expect(landed.response.headers.get("location")).toBe("https://app.example.test/invoices/inv-1")
+    expect(landed.response.headers.get("set-cookie")).toContain("; Domain=example.test;")
+  })
+
   it("ask each record's url once per call when writing short URLs", async () => {
     const asked: string[] = []
     const invoice: LinkRules = {
