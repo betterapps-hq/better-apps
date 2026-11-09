@@ -323,6 +323,24 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
   // asked for again rather than putting back someone who left.
   const reactorVersions = new Map<string, number>()
 
+  /**
+   * Drops a record's lists of reactors, after many of its reactions changed at once, so they load again. Pages still on
+   * their way are asked for again rather than putting the old lists back.
+   */
+  function dropReactors(record: string) {
+    const prefix = `${record.slice(0, -1)},`
+    update((state) => {
+      const kept = Object.entries(state.reactors).filter(([name]) => {
+        if (!name.startsWith(prefix)) {
+          return true
+        }
+        reactorVersions.set(name, (reactorVersions.get(name) ?? 0) + 1)
+        return false
+      })
+      return { ...state, reactors: Object.fromEntries(kept) }
+    })
+  }
+
   /** Adds or removes someone in a list of reactors, including one whose next page is loading. */
   function withReactor(state: ReactionsState, target: ReactionTarget, delta: 1 | -1, userId: string) {
     const key = reactionKey(target.subjectType, target.subjectId, target.emoji)
@@ -648,11 +666,7 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
         done = step.done
       }
       if (output.removed > 0) {
-        const prefix = subjectKey(filter.subjectType, filter.subjectId).slice(0, -1)
-        update((state) => ({
-          ...state,
-          reactors: Object.fromEntries(Object.entries(state.reactors).filter(([key]) => !key.startsWith(`${prefix},`)))
-        }))
+        dropReactors(subjectKey(filter.subjectType, filter.subjectId))
         await loadNow(filter.subjectType, [filter.subjectId]).catch(() => undefined)
       }
       return output
@@ -673,12 +687,8 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
         // Many reactions changed at once, so a loaded record loads again, and its lists of reactors start over. A load
         // under way may have gone out before the change, so its answer can't be kept.
         bump(key, null)
+        dropReactors(key)
         if (confirmed.has(key)) {
-          const prefix = `${key.slice(0, -1)},`
-          update((state) => ({
-            ...state,
-            reactors: Object.fromEntries(Object.entries(state.reactors).filter(([name]) => !name.startsWith(prefix)))
-          }))
           refresh(event.subjectType, event.subjectId)
         }
         return

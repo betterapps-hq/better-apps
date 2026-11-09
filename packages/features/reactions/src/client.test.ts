@@ -333,6 +333,28 @@ describe("reactions client", () => {
     expect(requests.filter((name) => name === "listReactors")).toHaveLength(2)
   })
 
+  it("doesn't let a page on its way put back reactors a moderator removed", async () => {
+    const { api, as, events, holdAnswer, identity, reactions } = browser("cy")
+    const target = { ...inv1, emoji: "👍" }
+    await api.react(target, as("ada"))
+    await api.react(target, as("bob"))
+    const release = holdAnswer("listReactors")
+    const loading = reactions.loadReactors(target)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await api.removeReactions(inv1)
+    const event = await api.toClientEvent({
+      event: events("subject.changed").at(-1) as BetterAppsEvent,
+      viewer: identity.actor("cy")
+    })
+    if (!event) {
+      throw new Error("No event was shown.")
+    }
+    reactions.applyEvent(event)
+    release()
+    await loading
+    expect(reactions.store.getSnapshot().reactors[reactionKey("invoice", "inv-1", "👍")]?.userIds ?? []).toEqual([])
+  })
+
   it("loads a record again when a late event for the viewer's own reaction disagrees", async () => {
     const { api, events, identity, reactions, requests } = browser()
     const target = { ...inv1, emoji: "👍" }
