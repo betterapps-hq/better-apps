@@ -11,6 +11,9 @@
     "packages/features/anchors": {
       "entry": ["src/index.ts", "src/dom.ts", "src/react.ts"]
     },
+    "packages/features/attachments": {
+      "entry": ["src/index.ts", "src/client.ts", "src/react.tsx"]
+    },
     "packages/features/comments": {
       "entry": ["src/index.ts", "src/client.ts", "src/react.tsx"]
     },
@@ -30,6 +33,9 @@
       "entry": ["src/index.ts"]
     },
     "packages/adapters/identity-workos": {
+      "entry": ["src/index.ts"]
+    },
+    "packages/adapters/storage-r2": {
       "entry": ["src/index.ts"]
     },
     "packages/integrations/react": {

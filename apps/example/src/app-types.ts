@@ -1,3 +1,4 @@
+import type { AppAttachmentsTypes } from "@better-apps/attachments/client"
 import type { AppCommentsTypes, CommentsClient } from "@better-apps/comments/client"
 import type { AppReactionsTypes } from "@better-apps/reactions/client"
 import type { app } from "./better-apps.server"
@@ -13,3 +14,6 @@ export type Comments = CommentsClient<CommentTypes>
 
 /** The app's reaction types: the subject types reactions are on, and the emoji it allows. */
 export type ReactionTypes = AppReactionsTypes<App>
+
+/** The app's attachment types: the subject types files go on. */
+export type AttachmentTypes = AppAttachmentsTypes<App>

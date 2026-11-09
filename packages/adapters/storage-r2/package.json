@@ -1,0 +1,66 @@
+{
+  "name": "@better-apps/storage-r2",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Cloudflare R2 storage for Better Apps attachments, with signed direct uploads.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=24"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "pnpm build",
+    "test": "vp test run",
+    "test:coverage": "vp test run --coverage"
+  },
+  "dependencies": {},
+  "peerDependencies": {
+    "@better-apps/attachments": "workspace:*"
+  },
+  "devDependencies": {
+    "@better-apps/attachments": "workspace:*",
+    "@repo/typescript-config": "workspace:*",
+    "@types/node": "24.19.2",
+    "@vitest/coverage-v8": "catalog:",
+    "better-apps": "workspace:*",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/betterapps-hq/better-apps.git",
+    "directory": "packages/adapters/storage-r2"
+  },
+  "homepage": "https://github.com/betterapps-hq/better-apps/tree/main/packages/adapters/storage-r2#readme",
+  "bugs": {
+    "url": "https://github.com/betterapps-hq/better-apps/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "keywords": [
+    "better-apps",
+    "r2",
+    "cloudflare",
+    "storage",
+    "attachments"
+  ]
+}

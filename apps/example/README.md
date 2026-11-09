@@ -5,7 +5,8 @@ Better Invoices, a small invoicing app built with [TanStack Start](https://tanst
 [`@better-apps/tanstack-start`](../../packages/integrations/tanstack-start/README.md). People sign in with
 [Better Auth](https://www.better-auth.com), and
 [`@better-apps/identity-better-auth`](../../packages/adapters/identity-better-auth/README.md) tells features who they
-are. Teammates discuss invoices in comment threads pinned to their details, mention each other and react to comments.
+are. Teammates discuss invoices in comment threads pinned to their details, mention each other, react to comments and
+attach files to invoices and comments.
 
 Build the packages it uses once, then start it:
 
@@ -40,6 +41,14 @@ Then open <http://127.0.0.1:4190>. `build` and `preview` run the production buil
   focusing a reaction shows who reacted with it. The workspace owner can remove a comment's reactions, all of them or
   one emoji's, from the comment's menu. The UI is in `src/comment-reactions.tsx`; a thread's comments load their
   reactions in one call.
+- **Files** from [`@better-apps/attachments`](../../packages/features/attachments/README.md) go on invoices and on
+  comments. The invoice page has a Files panel: add files, watch each upload's progress, open or download a file, move
+  it up or down, and delete it. Whoever added a file can delete it, and so can Ada. Comment boxes have a paperclip:
+  files upload while the comment is written and attach once it's posted, with `useDraftAttachments`. Images show a
+  thumbnail. Uploads, moves and deletions are announced in a polite live region, and failures in an alert. The UI is in
+  `src/invoice-files.tsx`. The bytes go in a folder through the storage adapter in `src/folder-storage.server.ts`, where
+  a Worker would use [`@better-apps/storage-r2`](../../packages/adapters/storage-r2/README.md). On start, the server
+  sweeps away uploads that never finished and drafts that were never posted.
 - **Notes**, at `/notes`, is a tiny feature in `src/features.ts`. Its loader calls a server function that calls
   `api.notes.list()` as the request's user, and the form posts to `/api/apps/notes/add` from the browser.
 - Pages render on the server with their comments. Loaders call server functions in `src/comments.functions.ts`, which
@@ -82,7 +91,8 @@ colors for invoice statuses and comment pins.
 
 The app stores its data in `.data/example.db`, which it creates on start. Set `DATABASE_FILE` to use another file, or
 `:memory:` for a database that lasts until the server stops. Delete the file to start over, which also brings back the
-sample conversations. Set `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL` anywhere but your own machine.
+sample conversations. Files' bytes go in `.data/files`, or the folder `FILES_FOLDER` names; delete it along with the
+database. Set `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL` anywhere but your own machine.
 
 Tables come from migrations in `drizzle/`, which the app applies on start with Drizzle's migrator. The migrations cover
 the app's tables, Better Auth's in `src/db/auth-schema.ts`, and the features' tables, which `better-apps generate`

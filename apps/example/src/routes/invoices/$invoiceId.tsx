@@ -40,6 +40,7 @@ import { StatusLabel } from "../../components"
 import type { Invoice, InvoiceLine, InvoiceStatus } from "../../db/schema"
 import { formatDate, formatMoney } from "../../format"
 import { AnchorPins, CommentHere, CommentsPanel, InvoiceCommentsProvider, type Detail } from "../../invoice-comments"
+import { FilesPanel } from "../../invoice-files"
 import { getInvoice, setInvoiceStatus } from "../../invoices.functions"
 import { alerts, modals } from "../../ui"
 import { useViewer } from "../../viewer"
@@ -89,9 +90,12 @@ function InvoiceDetail() {
       <InvoiceHeader invoice={invoice} />
       <div className="invoice-layout">
         <InvoiceSheet invoice={invoice} sheetRef={sheet} commenting={viewer !== null} />
-        <aside aria-label="Collaboration">
+        <aside aria-label="Collaboration" className="collaboration">
           {viewer ? (
-            <CommentsPanel />
+            <>
+              <FilesPanel invoiceId={invoice.id} />
+              <CommentsPanel />
+            </>
           ) : (
             <Card>
               <CardHeader>

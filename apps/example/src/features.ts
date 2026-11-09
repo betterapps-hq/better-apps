@@ -1,8 +1,11 @@
 import { elementAnchor } from "@better-apps/anchors"
+import { attachments } from "@better-apps/attachments"
 import { comments, commentSubjectTypes } from "@better-apps/comments"
 import { reactions } from "@better-apps/reactions"
 import { BetterAppsError, defineAction, defineFeature, type SubjectDefinition } from "better-apps"
 import { z } from "zod"
+// With its extension, because generating the schema loads this file in Node without a bundler.
+import { folderStorage } from "./folder-storage.server.ts"
 
 /** A note as the home page shows it. */
 export interface Note {
@@ -105,5 +108,30 @@ const commentReactions = reactions({
   maxPerUser: 1
 })
 
+/** Files up to 10 MB. */
+const maxSize = 10 * 1024 * 1024
+
+/**
+ * Files on invoices and on comments. Whoever can see an invoice or a comment can add files to it, whoever added a file
+ * can take it off, and so can the workspace owner. The bytes go in a folder beside the database.
+ */
+const invoiceFiles = attachments({
+  storage: folderStorage(process.env.FILES_FOLDER ?? ".data/files"),
+  subjects: {
+    invoice: {
+      canModerate: ({ actor }) => isOwner(actor.userId),
+      contentTypes: ["application/pdf", "image/*", "text/plain", "text/csv"],
+      maxSize,
+      maxFiles: 10
+    },
+    [commentSubjectTypes.comment]: {
+      canModerate: ({ actor }) => isOwner(actor.userId),
+      contentTypes: ["application/pdf", "image/*"],
+      maxSize,
+      maxFiles: 4
+    }
+  }
+})
+
 /** The features the app enables. `better-apps.config.ts` reads them to generate their tables. */
-export const features = [notes, invoiceComments, commentReactions] as const
+export const features = [notes, invoiceComments, commentReactions, invoiceFiles] as const
