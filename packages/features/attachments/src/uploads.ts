@@ -81,6 +81,32 @@ async function placeUpload(
   }
 }
 
+/**
+ * How many files a person has that storage can still take bytes for without a record's checks: unfinished uploads,
+ * drafts, and deleted uploads whose address hasn't closed, since a signed address can't be revoked.
+ */
+async function openUploads(context: Context, userId: string, now: Date): Promise<number> {
+  const counts = await Promise.all([
+    context.db.count({
+      model: fileModel,
+      where: [
+        { field: "createdBy", value: userId },
+        { field: "status", operator: "in", value: ["pending", "ready"] },
+        { field: "expiresAt", operator: "gt", value: now }
+      ]
+    }),
+    context.db.count({
+      model: fileModel,
+      where: [
+        { field: "createdBy", value: userId },
+        { field: "status", value: "deleted" },
+        { field: "uploadClosesAt", operator: "gt", value: now }
+      ]
+    })
+  ])
+  return counts[0] + counts[1]
+}
+
 /** Checks an upload, writes its pending row, and returns where to send the bytes. */
 export async function createUpload(config: Config, context: Context): Promise<CreateUploadResult> {
   const input = context.input as CreateUploadInput
@@ -92,21 +118,6 @@ export async function createUpload(config: Config, context: Context): Promise<Cr
   const place = await placeUpload(config, context, actor, input)
   checkLimits(place.limits, contentType, input.size)
   const now = Date.now()
-  // Drafts and unfinished uploads skip a record's checks until they're attached, so each person has only so many.
-  const open = await context.db.count({
-    model: fileModel,
-    where: [
-      { field: "createdBy", value: actor.userId },
-      { field: "status", operator: "in", value: ["pending", "ready"] },
-      { field: "expiresAt", operator: "gt", value: new Date(now) }
-    ]
-  })
-  if (open >= config.maxDrafts) {
-    throw new AttachmentsError(
-      "LIMIT_EXCEEDED",
-      `You can have up to ${config.maxDrafts} files uploading or waiting to be added. Add or remove some first.`
-    )
-  }
   const id = crypto.randomUUID()
   const storageKey = `attachments/${id}`
   const expiresAt = new Date(now + config.uploadTtlMs)
@@ -138,6 +149,15 @@ export async function createUpload(config: Config, context: Context): Promise<Cr
       uploadedAt: null
     }
   })
+  // Drafts and unfinished uploads skip a record's checks until they're attached, so each person has only so many. The
+  // count comes after the row is written, so uploads started at once can't all pass a count that saw none of them.
+  if ((await openUploads(context, actor.userId, new Date(now))) > config.maxDrafts) {
+    await context.db.deleteMany({ model: fileModel, where: [{ field: "id", value: id }] })
+    throw new AttachmentsError(
+      "LIMIT_EXCEEDED",
+      `You can have up to ${config.maxDrafts} files uploading or waiting to be added. Add or remove some first.`
+    )
+  }
   const url = signed?.url ?? `${config.baseUrl}${config.path}/uploads/${encodeURIComponent(id)}?token=${token}`
   return {
     file: await present(config, file, now),

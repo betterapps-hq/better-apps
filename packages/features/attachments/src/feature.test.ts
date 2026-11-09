@@ -286,6 +286,8 @@ describe("downloads", () => {
 })
 
 describe("drafts", () => {
+  const draft = { subjectType: "invoice", name: "a.txt", contentType: "text/plain", size: 3 } as const
+
   it("upload before their record exists and attach to it once it does", async () => {
     const { api, as, upload, events } = setup()
     const { file } = await upload("bob", { subjectType: "invoice" })
@@ -318,18 +320,53 @@ describe("drafts", () => {
     expect(events("file.deleted")).toEqual([])
   })
 
-  it("are capped for each person, with uploads under way", async () => {
+  it("are capped for each person, with uploads under way and deleted ones still open", async () => {
     const { api, as, upload } = setup({ maxDrafts: 2 })
-    const draft = { subjectType: "invoice", name: "a.txt", contentType: "text/plain", size: 3 } as const
-    await upload("bob", { subjectType: "invoice" })
+    const kept = await upload("bob", { subjectType: "invoice" })
     const pending = await api.createUpload(draft, as("bob"))
     await expect(api.createUpload(draft, as("bob"))).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" })
     await api.createUpload(draft, as("cy"))
+    // A deleted upload's address still takes bytes until it closes, so it counts until then.
     await api.deleteFile({ fileId: pending.file.id }, as("bob"))
+    await expect(api.createUpload(draft, as("bob"))).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" })
     // Files a record keeps don't count once they're attached.
+    await api.attach({ ...inv1, fileIds: [kept.file.id] }, as("bob"))
     await upload("bob", inv1)
-    await upload("bob", inv1)
-    await expect(api.createUpload(draft, as("bob"))).resolves.toBeDefined()
+    await api.createUpload(draft, as("bob"))
+    await expect(api.createUpload(draft, as("bob"))).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" })
+    vi.useFakeTimers({ toFake: ["Date"] })
+    try {
+      vi.setSystemTime(Date.now() + 16 * 60_000)
+      await expect(api.createUpload(draft, as("bob"))).resolves.toBeDefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("keep the cap when uploads start at the same time", async () => {
+    // Holds each upload at `canUpload` until all six have started, so they race for the last places.
+    let release: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let waiting = 0
+    const canUpload = async () => {
+      waiting += 1
+      if (waiting === 6) {
+        release?.()
+      }
+      await gate
+      return true
+    }
+    const { api, as, count } = setup({ maxDrafts: 2, subjects: { invoice: { canUpload } } })
+    const input = { ...inv1, name: "a.txt", contentType: "text/plain", size: 3 }
+    const results = await Promise.allSettled(Array.from({ length: 6 }, async () => api.createUpload(input, as("bob"))))
+    const started = results.filter((result) => result.status === "fulfilled").length
+    expect(started).toBeLessThanOrEqual(2)
+    expect(count(fileModel)).toBe(started)
+    for (const result of results.filter((each) => each.status === "rejected")) {
+      expect(result).toMatchObject({ reason: { code: "LIMIT_EXCEEDED" } })
+    }
   })
 
   it("are seen only by their uploader until they're attached", async () => {
@@ -461,15 +498,20 @@ describe("files on their own", () => {
     expect(own.files.map((file) => file.id)).toEqual([mine.file.id])
   })
 
-  it("go with their uploader to another organization, unlike the organization's files", async () => {
-    const { api, identity, upload } = setup()
+  it("go with their owner to another organization, but not with anyone else", async () => {
+    const { api, as, identity, upload } = setup()
     const mine = await upload("bob", { owner: "user" })
     const ours = await upload("bob", {})
+    const globex = { subjectType: "invoice", subjectId: "inv-globex" } as const
+    // Gus sees Bob's file on a public page, but it isn't his to take to his organization.
+    await api.attach({ subjectType: "page", subjectId: "about", fileIds: [mine.file.id] }, as("bob"))
+    await expect(api.attach({ ...globex, fileIds: [mine.file.id] }, as("gus"))).rejects.toMatchObject({
+      code: "INVALID_INPUT"
+    })
     const elsewhere = { actor: { ...identity.actor("bob"), orgId: "globex" } }
-    const target = { subjectType: "invoice", subjectId: "inv-globex" } as const
-    const { files } = await api.attach({ ...target, fileIds: [mine.file.id] }, elsewhere)
+    const { files } = await api.attach({ ...globex, fileIds: [mine.file.id] }, elsewhere)
     expect(files.map((file) => file.id)).toEqual([mine.file.id])
-    await expect(api.attach({ ...target, fileIds: [ours.file.id] }, elsewhere)).rejects.toMatchObject({
+    await expect(api.attach({ ...globex, fileIds: [ours.file.id] }, elsewhere)).rejects.toMatchObject({
       code: "NOT_FOUND"
     })
   })

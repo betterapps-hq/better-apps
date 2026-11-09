@@ -45,7 +45,9 @@ export const app = createBetterApps({
 ```
 
 Call the sweep from a scheduled job, next to event delivery, so uploads that never finish and drafts that are never
-attached are removed, and deleted files' rows go once their upload address has closed:
+attached are removed, and deleted files' rows go once their upload address has closed. Each page takes up to about ten
+queries, so sweep a few pages a run to stay within D1's queries per invocation, 50 on the Free plan. A backlog, such as
+many drafts expiring at once, drains over the next runs:
 
 ```ts
 export default {
@@ -54,9 +56,10 @@ export default {
     ctx.waitUntil(
       (async () => {
         await app.deliverEvents({ waitUntil: (promise) => ctx.waitUntil(promise) })
-        let swept = await app.api.attachments.sweep()
-        while (!swept.done) {
-          swept = await app.api.attachments.sweep()
+        for (let page = 0; page < 3; page += 1) {
+          if ((await app.api.attachments.sweep()).done) {
+            break
+          }
         }
       })()
     )
@@ -73,8 +76,8 @@ export default {
   in `<img src>` with a bearer token.
 - `path` is where the upload and download routes are, `/api/apps/attachments` by default. `baseUrl` makes returned URLs
   absolute. `uploadTtl`, `draftTtl` and `downloadTtl` are in seconds. `maxDrafts` caps how many files one person can
-  have uploading or waiting as drafts, 50 by default. `previews` makes image previews with the app's transform, such as
-  Cloudflare's Images binding.
+  have uploading, waiting as drafts, or deleted while their upload address is open, 50 by default. `previews` makes
+  image previews with the app's transform, such as Cloudflare's Images binding.
 
 The routes, `PUT {path}/uploads/:fileId` and `GET {path}/files/:fileId/:name`, are core routes, so `app.handler` serves
 them besides actions, and an app's catch-all route for its base path reaches them.
@@ -89,8 +92,8 @@ them besides actions, and an app's catch-all route for its base path reaches the
 3. `completeUpload({ fileId })` checks what storage holds and marks the file ready, attaching it to its record.
 
 Attach drafts with `attach({ subjectType, subjectId, fileIds })` once the record exists. Drafts that aren't attached
-expire after `draftTtl`, a day by default. A person's own files can go on records in any organization they're in; drafts
-and an organization's files stay in their organization.
+expire after `draftTtl`, a day by default. Files go only on records in their own organization, except that a person can
+put their own files on records in any organization they're in.
 
 The upload route counts a body that comes without a length, such as a chunked one, so it never stores more than the
 declared size.

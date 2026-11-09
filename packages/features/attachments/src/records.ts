@@ -170,8 +170,8 @@ export async function attach(config: Config, context: Context): Promise<{ files:
       }
       continue
     }
-    // A person's own files go with them to any organization; drafts and organizations' files stay in theirs.
-    if (file.orgId !== orgId && !file.owner?.startsWith("user:")) {
+    // Files stay in their organization, except that a person can take their own to any organization they're in.
+    if (file.orgId !== orgId && file.owner !== `user:${actor.userId}`) {
       throw new AttachmentsError("INVALID_INPUT", "That file belongs to another organization.")
     }
     checkLimits(settings, file.contentType, file.size)
