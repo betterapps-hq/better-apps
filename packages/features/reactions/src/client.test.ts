@@ -159,6 +159,24 @@ describe("reactions client", () => {
     expect(state.reactors[reactionKey("invoice", "inv-1", "👍")]).toBeUndefined()
   })
 
+  it("stops removing reactions at a reset, without loading anything as the next person", async () => {
+    const { api, as, holdAnswer, reactions, requests } = browser("ada", {
+      subjects: { invoice: { canModerate: ({ actor }) => actor.roles.includes("admin") }, page: {} }
+    })
+    await api.react({ ...inv1, emoji: "👍" }, as("bob"))
+    await reactions.load("invoice", ["inv-1"])
+    const release = holdAnswer("removeReactions")
+    const removing = reactions.removeReactions(inv1)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    reactions.reset()
+    const calls = requests.length
+    release()
+    await expect(removing).rejects.toMatchObject({ code: "ABORTED" })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(requests).toHaveLength(calls)
+    expect(reactions.store.getSnapshot().subjects).toEqual({})
+  })
+
   it("shows a swap at once when each person has one, and stores one spelling of each emoji", async () => {
     const { hold, reactions } = browser("bob", { maxPerUser: 1 })
     await reactions.load("invoice", ["inv-1"])

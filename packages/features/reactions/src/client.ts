@@ -659,19 +659,33 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
 
     /**
      * Removes reactions on a record, for people the app lets moderate: all of them, or one emoji's, one person's, or
-     * both, calling the server a page at a time until it's done. The record and its lists of reactors load again once
-     * the server agrees, since live events may arrive before or after the answer.
+     * both, calling the server a page at a time until it's done. The record and its lists of reactors load again
+     * afterward, since live events may arrive before or after the answer, even when a page fails and the pages before it
+     * stay removed. A `reset()` meanwhile stops it, and it rejects with `ABORTED`.
      */
     async removeReactions(filter: ReactionFilter<Types>): Promise<{ removed: number }> {
+      // Taken now, so no page goes out after reset() as the next person.
+      const { signal } = calls
+      const started = generation
       const output = { removed: 0 }
-      for (let done = false; !done;) {
-        const step = (await run("removeReactions", filter)) as { removed: number; done: boolean }
-        output.removed += step.removed
-        done = step.done
-      }
-      if (output.removed > 0) {
-        dropReactors(subjectKey(filter.subjectType, filter.subjectId))
-        await loadNow(filter.subjectType, [filter.subjectId]).catch(() => undefined)
+      try {
+        for (let done = false; !done;) {
+          const step = (await call("reactions", "removeReactions", filter, { signal })) as {
+            removed: number
+            done: boolean
+          }
+          if (started !== generation) {
+            throw new BetterAppsClientError("ABORTED", "The call was cancelled.", { status: 0 })
+          }
+          output.removed += step.removed
+          // A page that removed nothing can't leave more behind, so a server that says otherwise isn't asked forever.
+          done = step.done || step.removed === 0
+        }
+      } finally {
+        if (output.removed > 0 && started === generation) {
+          dropReactors(subjectKey(filter.subjectType, filter.subjectId))
+          await loadNow(filter.subjectType, [filter.subjectId]).catch(() => undefined)
+        }
       }
       return output
     },
