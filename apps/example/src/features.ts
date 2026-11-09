@@ -2,6 +2,7 @@ import { elementAnchor } from "@better-apps/anchors"
 import { attachments } from "@better-apps/attachments"
 import { comments, commentSubjectTypes } from "@better-apps/comments"
 import { reactions } from "@better-apps/reactions"
+import { shortLinks } from "@better-apps/short-links"
 import { BetterAppsError, defineAction, defineFeature, type SubjectDefinition } from "better-apps"
 import { z } from "zod"
 // With its extension, because generating the schema loads this file in Node without a bundler.
@@ -108,6 +109,14 @@ const commentReactions = reactions({
   maxPerUser: 1
 })
 
+/**
+ * Short links to invoices, at `/s/{code}`. Whoever can see an invoice can share it, and a link can let anyone who has it
+ * see the invoice without signing in.
+ */
+const invoiceLinks = shortLinks({
+  subjects: { invoice: { url: ({ subjectId }) => `/invoices/${subjectId}`, grantView: true } }
+})
+
 /** Files up to 10 MB. */
 const maxSize = 10 * 1024 * 1024
 
@@ -134,4 +143,4 @@ const invoiceFiles = attachments({
 })
 
 /** The features the app enables. `better-apps.config.ts` reads them to generate their tables. */
-export const features = [notes, invoiceComments, commentReactions, invoiceFiles] as const
+export const features = [notes, invoiceComments, commentReactions, invoiceLinks, invoiceFiles] as const

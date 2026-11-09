@@ -5,8 +5,8 @@ Better Invoices, a small invoicing app built with [TanStack Start](https://tanst
 [`@better-apps/tanstack-start`](../../packages/integrations/tanstack-start/README.md). People sign in with
 [Better Auth](https://www.better-auth.com), and
 [`@better-apps/identity-better-auth`](../../packages/adapters/identity-better-auth/README.md) tells features who they
-are. Teammates discuss invoices in comment threads pinned to their details, mention each other, react to comments and
-attach files to invoices and comments.
+are. Teammates discuss invoices in comment threads pinned to their details, mention each other, react to comments, share
+invoices through short links and attach files to invoices and comments.
 
 Build the packages it uses once, then start it:
 
@@ -41,6 +41,12 @@ Then open <http://127.0.0.1:4190>. `build` and `preview` run the production buil
   focusing a reaction shows who reacted with it. The workspace owner can remove a comment's reactions, all of them or
   one emoji's, from the comment's menu. The UI is in `src/comment-reactions.tsx`; a thread's comments load their
   reactions in one call.
+- **Short links** from [`@better-apps/short-links`](../../packages/features/short-links/README.md) share invoices. The
+  invoice's **Share** button opens a dialog that creates a link at `/s/{code}`, optionally one that lets anyone with it
+  view the invoice without signing in, and lists the invoice's links with how often each was opened. Each can be copied,
+  turned off and on, or deleted. Invoices are for signed-in people, so the invoice page checks
+  `app.subjects.canView(null, ref, { request })` for signed-out visitors, which a link that grants access allows. The
+  dialog is `src/invoice-share.tsx`, the links are set up in `src/features.ts`, and `src/routes/s/$.ts` serves them.
 - **Files** from [`@better-apps/attachments`](../../packages/features/attachments/README.md) go on invoices and on
   comments. The invoice page has a Files panel: add files, watch each upload's progress, open or download a file, move
   it up or down, and delete it. Whoever added a file can delete it, and so can Ada. Comment boxes have a paperclip:

@@ -27,7 +27,6 @@ import {
   BanknoteIcon,
   ChevronDownIcon,
   FileQuestionIcon,
-  LinkIcon,
   PrinterIcon,
   ReceiptTextIcon,
   SendIcon,
@@ -41,6 +40,7 @@ import type { Invoice, InvoiceLine, InvoiceStatus } from "../../db/schema"
 import { formatDate, formatMoney } from "../../format"
 import { AnchorPins, CommentHere, CommentsPanel, InvoiceCommentsProvider, type Detail } from "../../invoice-comments"
 import { FilesPanel } from "../../invoice-files"
+import { ShareInvoice } from "../../invoice-share"
 import { getInvoice, setInvoiceStatus } from "../../invoices.functions"
 import { alerts, modals } from "../../ui"
 import { useViewer } from "../../viewer"
@@ -52,7 +52,7 @@ export const Route = createFileRoute("/invoices/$invoiceId")({
       // If comments fail to load here, the panel loads them again and reports what went wrong.
       loadInvoiceComments({ data: { invoiceId: params.invoiceId } }).catch(() => null)
     ])
-    if (comments) {
+    if (comments && invoice) {
       context.comments.hydrate(comments)
     }
     return invoice
@@ -72,6 +72,26 @@ const percent = (basisPoints: number) =>
 
 function InvoiceDetail() {
   const invoice = Route.useLoaderData()
+  if (!invoice) {
+    return (
+      <>
+        <div className="page-head">
+          <div>
+            <h1>Invoice</h1>
+          </div>
+        </div>
+        <Card>
+          <CardContent>
+            <SignInPrompt>to see this invoice.</SignInPrompt>
+          </CardContent>
+        </Card>
+      </>
+    )
+  }
+  return <InvoicePage invoice={invoice} />
+}
+
+function InvoicePage({ invoice }: { invoice: LoadedInvoice }) {
   const viewer = useViewer()
   const sheet = useRef<HTMLElement>(null)
   const subject = { subjectType: "invoice", subjectId: invoice.id } as const
@@ -158,15 +178,6 @@ function InvoiceHeader({ invoice }: { invoice: LoadedInvoice }) {
     }
   }
 
-  async function copyLink() {
-    try {
-      await navigator.clipboard.writeText(window.location.href)
-      toast.add({ title: "Link copied", description: "Anyone signed in can open it.", timeout: 3000 })
-    } catch {
-      toast.add({ title: "The link couldn’t be copied", description: window.location.href })
-    }
-  }
-
   return (
     <div className="page-head">
       <div>
@@ -178,10 +189,7 @@ function InvoiceHeader({ invoice }: { invoice: LoadedInvoice }) {
         </p>
       </div>
       <div className="page-actions">
-        <Button variant="outline" onClick={() => void copyLink()}>
-          <LinkIcon />
-          Copy link
-        </Button>
+        {viewer && <ShareInvoice invoiceId={invoice.id} number={invoice.number} />}
         <Button variant="outline" onClick={() => window.print()}>
           <PrinterIcon />
           Print
