@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test"
+import { describe, expect, it, vi } from "vite-plus/test"
 import { cookieOf, documents, expectCode, invoices, options, setup } from "../test/app.js"
 import { generateCode, isValidCode, linkModel, shortLinks, type LinkRules } from "./index.js"
 
@@ -348,7 +348,7 @@ describe("access through a link", () => {
   })
 
   it("grants through a link outside any organization only while its maker could still make it", async () => {
-    const { app, api, as } = setup()
+    const { app, api, as, database } = setup()
     const document = { subjectType: "document", subjectId: "doc-1" } as const
     const link = await api.create({ target: document, grantsView: true }, as("solo"))
     expect(link.owner).toEqual({ type: "user", id: "solo" })
@@ -359,6 +359,9 @@ describe("access through a link", () => {
       // The document's grantView no longer allows it.
       documents.set("doc-1", { viewers: ["solo"], shareable: false })
       expect(await held()).toBe(false)
+      // Its maker can't share it any more.
+      documents.set("doc-1", { viewers: ["solo"], locked: true })
+      expect(await held()).toBe(false)
       // Its maker can't see the document any more.
       documents.set("doc-1", { viewers: [] })
       expect(await held()).toBe(false)
@@ -366,6 +369,27 @@ describe("access through a link", () => {
       documents.set("doc-1", { viewers: ["solo"] })
     }
     expect(await held()).toBe(true)
+    // A maker the identity adapter no longer knows grants nothing.
+    database.sqlite.prepare("UPDATE shortLink SET createdBy = 'gone' WHERE code = ?").run(link.code)
+    expect(await held()).toBe(false)
+  })
+
+  it("checks each maker once per request, and lets other links grant when the identity lookup fails", async () => {
+    const { app, api, as, identity } = setup()
+    const document = { subjectType: "document", subjectId: "doc-1" } as const
+    const loose = await api.create({ target: document, grantsView: true }, as("solo"))
+    const org = await api.create({ target: inv1, grantsView: true }, as("ada"))
+    const cookie = `better-apps-links=${loose.code}.${org.code}`
+    const lookups = vi.spyOn(identity, "getActorsFor")
+    const holder = request(cookie)
+    expect(await app.subjects.canView(null, document, { request: holder })).toBe(true)
+    expect(await app.subjects.canView(null, document, { request: holder })).toBe(true)
+    expect(lookups).toHaveBeenCalledTimes(1)
+
+    lookups.mockRejectedValue(new Error("The identity service is down."))
+    const checks = [document, inv1].map((ref) => ({ actor: null, ...ref, request: request(cookie) }))
+    expect(await app.subjects.canViewMany(checks)).toEqual([false, true])
+    lookups.mockRestore()
   })
 
   it("is off when no subject type lets links grant access", async () => {
@@ -464,6 +488,21 @@ describe("managing links", () => {
     expect((await api.list({ owner: "user" }, as("bob"))).links).toHaveLength(1)
     expect((await api.list({ ...inv1 }, as("bob"))).links).toHaveLength(5)
     expect((await api.list({ ...inv1 }, as("gus"))).links).toEqual([])
+  })
+
+  it("keeps listing someone's own links made outside any organization after they join one", async () => {
+    const { api, as, identity } = setup()
+    const before = await api.create({ target: docs }, { ...as("solo"), createdAt: new Date(Date.UTC(2026, 10, 9, 9)) })
+    const joined = { actor: { ...identity.actor("solo"), orgId: "acme" } }
+    const inside = await api.create({ target: docs }, { ...joined, createdAt: new Date(Date.UTC(2026, 10, 9, 10)) })
+    expect(inside.owner).toEqual({ type: "user", id: "solo" })
+    const codes = (owner?: "user" | "org") =>
+      api.list({ owner }, joined).then((page) => page.links.map((link) => link.code))
+    expect(await codes()).toEqual([inside.code, before.code])
+    expect(await codes("user")).toEqual([inside.code, before.code])
+    expect(await codes("org")).toEqual([])
+    // Ada manages Acme's links, but not Solo's from before they joined.
+    expect((await api.list({}, as("ada"))).links.map((link) => link.code)).toEqual([inside.code])
   })
 
   it("lets trusted server code list a record's links, and refuses incomplete filters and cursors", async () => {

@@ -157,10 +157,12 @@ can see and share the record, so someone who has since lost access can't reopen 
 
 Whose access a link stands for depends on where it was made:
 
-- A link made outside any organization stands for its maker. Each time the grant is asked, the maker is rebuilt with
+- A link made outside any organization stands for its maker. Once per request, the maker is rebuilt with
   `identity.getActorsFor`, and the link grants access only while they can still see the record, by a check that doesn't
   pass the request, and `canShare` and `grantView` still allow them. Someone who loses access to a record, or loses the
-  right to share it, takes their links' access with them.
+  right to share it, takes their links' access with them. A maker the identity adapter no longer finds grants nothing,
+  and when the lookup or a check fails, such as while the identity service is down, these links grant nothing for that
+  request while other links still count.
 - An organization's link stands for the organization and outlives the member who made it. A `canShare` or `grantView`
   check per record, such as an invoice's own "shareable" setting, runs when the link is made or turned back on, not on
   each request, so unsetting it doesn't end the access existing links give. The app ends it with
@@ -206,8 +208,9 @@ each feature decides what a visitor with only a link sees, such as people's name
   `{ subjectType, subjectId }`, returns the new link.
 - `get({ code })` returns one link.
 - `list({ subjectType?, subjectId?, owner?, cursor?, limit? })` pages through links newest first, 20 by default, up to
-  50: a record's links, or every link, that the caller manages where they are now, in their organization or outside any.
-  `owner` narrows it to the caller's own, `user`, or their organization's, `org`.
+  50: a record's links, or every link, that the caller manages. Those are the links made in their current organization
+  that they manage, and their own made outside any, such as before they joined one. `owner` narrows it to the caller's
+  own, `user`, or their organization's, `org`.
 - `update({ code, url?, grantsView?, enabled?, expiresAt? })` changes a link and returns it. `grantsView` only takes
   `false`.
 - `remove({ code })` removes a link and returns `{ removed }`.

@@ -455,22 +455,29 @@ async function list(config: Config, context: Context): Promise<LinkPage> {
     if (!actor) {
       throw new ShortLinksError("UNAUTHENTICATED", "Sign in to see your links.")
     }
-    // Lists hold the links made where the caller is now: in their organization, or outside any.
+    // Lists hold the links the caller manages: those made in their organization, and their own made outside any. A link
+    // made outside any organization is always its maker's, so owning or making it is the same there.
     const scope = actor.orgId ?? ""
     const manager = actor.orgId !== null && (await managesOrg(config, actor, actor.orgId))
     const mine: Where = { field: "owner", value: ownerKey("user", actor.userId) }
     const made: Where = { field: "createdBy", value: actor.userId }
-    where.push({ field: "orgId", value: scope })
-    if (input.owner === "user") {
-      where.push(mine)
-    } else if (input.owner === "org") {
+    if (input.owner === "org") {
       if (scope === "") {
         return { links: [], cursor: null }
       }
       where.push({ field: "owner", value: ownerKey("org", scope) }, ...(manager ? [] : [made]))
-    } else if (!manager) {
-      // A manager sees every link made in the organization. Others see the ones they own or made.
-      where.push({ ...mine, connector: "OR" }, { ...made, connector: "OR" })
+    } else {
+      where.push({ field: "orgId", operator: "in", value: [...new Set([scope, ""])] })
+      if (input.owner === "user") {
+        where.push(mine)
+      } else {
+        // A manager sees every link made in the organization. Others see the ones they own or made.
+        where.push(
+          { ...mine, connector: "OR" },
+          { ...made, connector: "OR" },
+          ...(manager ? [{ field: "orgId", value: scope, connector: "OR" } satisfies Where] : [])
+        )
+      }
     }
   } else if (where.length === 0) {
     throw new ShortLinksError("INVALID_INPUT", "Server code without an actor lists one record's links at a time.")
@@ -639,6 +646,7 @@ function mayGrant(config: Config, row: LinkRow): boolean {
  */
 function grantsFor(config: Config): SubjectGrants {
   const read = new WeakMap<Request, Promise<LinkRow[]>>()
+  const makersChecked = new WeakMap<Request, Map<string, Promise<boolean>>>()
   return {
     async canViewMany(refs: readonly SubjectRef[], { request }: { request: Request }, context: SubjectContext) {
       const codes = grantCodes(request, config.cookie.name)
@@ -666,12 +674,27 @@ function grantsFor(config: Config): SubjectGrants {
       const orgs = await context.subjects.getOrgIds(found.map(refOf))
       const placed = found.filter((row, index) => (orgs[index] ?? "") === row.orgId)
       const valid = new Set(placed.filter((row) => row.orgId !== ""))
-      for (const row of await stillShared(
-        config,
-        context,
-        placed.filter((row) => row.orgId === "")
-      )) {
-        valid.add(row)
+      const loose = placed.filter((row) => row.orgId === "")
+      if (loose.length > 0) {
+        // Each link's maker is checked once per request, however many checks ask about the record.
+        const known = makersChecked.get(request) ?? new Map<string, Promise<boolean>>()
+        makersChecked.set(request, known)
+        const fresh = loose.filter((row) => !known.has(row.id))
+        if (fresh.length > 0) {
+          const answers = stillShared(config, context, fresh)
+          for (const [index, row] of fresh.entries()) {
+            known.set(
+              row.id,
+              answers.then((shared) => shared[index] === true)
+            )
+          }
+        }
+        const shared = await Promise.all(loose.map(async (row) => known.get(row.id)))
+        for (const [index, row] of loose.entries()) {
+          if (shared[index]) {
+            valid.add(row)
+          }
+        }
       }
       return refs.map((_, index) => (links[index] ?? []).some((row) => valid.has(row)))
     }
@@ -683,12 +706,19 @@ const refOf = (row: LinkRow): SubjectRef => ({ subjectType: row.subjectType ?? "
 /**
  * The links outside any organization whose maker could still make them: they can see the record, and `canShare` and
  * `grantView` allow them. Such a link stands for its maker alone, so it grants nothing once they lose access. An
- * organization's links stand for the organization instead, and outlive the members who made them.
+ * organization's links stand for the organization instead, and outlive the members who made them. When a check fails,
+ * such as when the identity service is down, these links grant nothing for the request, and other links still count.
  */
-async function stillShared(config: Config, context: SubjectContext, rows: readonly LinkRow[]): Promise<LinkRow[]> {
-  if (rows.length === 0) {
-    return []
+async function stillShared(config: Config, context: SubjectContext, rows: readonly LinkRow[]): Promise<boolean[]> {
+  try {
+    const shared = new Set(await sharedByMaker(config, context, rows))
+    return rows.map((row) => shared.has(row))
+  } catch {
+    return rows.map(() => false)
   }
+}
+
+async function sharedByMaker(config: Config, context: SubjectContext, rows: readonly LinkRow[]): Promise<LinkRow[]> {
   const makers = await context.identity.getActorsFor([...new Set(rows.map((row) => row.createdBy))], null)
   const makerOf = new Map(makers.map((maker) => [maker.userId, maker]))
   const checks = rows.flatMap((row) => {

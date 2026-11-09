@@ -112,9 +112,10 @@ back on, or giving it a later expiry, checks again that the caller can see and s
 - `create({ target, code?, owner?, grantsView?, expiresAt? })`, where `target` is `{ url }` or
   `{ subjectType, subjectId }`, returns the new link.
 - `get({ code })` returns a link.
-- `list({ subjectType?, subjectId?, owner?, cursor?, limit? })` pages through the links the caller manages where they
-  are now, in their organization or outside any, newest first: 20 by default, up to 50. Pass `subjectType` and
-  `subjectId` for one record's, and `owner` for only the caller's own, `user`, or their organization's, `org`.
+- `list({ subjectType?, subjectId?, owner?, cursor?, limit? })` pages through the links the caller manages, newest
+  first: 20 by default, up to 50. Those are the links made in their current organization that they manage, and their own
+  made outside any, such as before they joined one. Pass `subjectType` and `subjectId` for one record's, and `owner` for
+  only the caller's own, `user`, or their organization's, `org`.
 - `update({ code, url?, grantsView?, enabled?, expiresAt? })` changes a link and returns it. `url` is for URL links,
   `grantsView: false` ends the access a link gives, `enabled: false` turns a link off, and `expiresAt: null` clears its
   expiry. Each change is checked like `create`.

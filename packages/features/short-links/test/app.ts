@@ -1,5 +1,5 @@
 // A test app whose links point to invoices, each in an organization, to documents outside any, which only the people
-// listed see, and to pages anyone signed in can see. Links to invoices and shareable documents may let anyone who has
+// listed see and can share unless locked, and to pages anyone signed in can see. Links to invoices and shareable documents may let anyone who has
 // them see the record. A `feed` feature records every short links event it's
 // delivered.
 import { createTestApp, type TestUser } from "@better-apps/testing"
@@ -23,7 +23,7 @@ export const invoices = new Map<string, { orgId: string; locked?: boolean }>([
   ["inv-globex", { orgId: "globex" }]
 ])
 
-export const documents = new Map<string, { viewers: readonly string[]; shareable?: boolean }>([
+export const documents = new Map<string, { viewers: readonly string[]; shareable?: boolean; locked?: boolean }>([
   ["doc-1", { viewers: ["solo"] }]
 ])
 
@@ -50,6 +50,7 @@ export const options = {
     },
     document: {
       url: ({ subjectId }) => `/documents/${subjectId}`,
+      canShare: ({ subjectId }) => documents.get(subjectId)?.locked !== true,
       grantView: ({ subjectId }) => documents.get(subjectId)?.shareable !== false
     },
     page: { url: ({ subjectId }) => `https://docs.test/pages/${subjectId}` }

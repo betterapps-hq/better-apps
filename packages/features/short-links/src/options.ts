@@ -140,8 +140,8 @@ export interface ListLinksInput<SubjectType extends string = string> {
   subjectType?: SubjectType | undefined
   subjectId?: string | undefined
   /**
-   * Only the caller's own links, `user`, or their organization's, `org`. By default, every link the caller manages where
-   * they are now: in their organization, or outside any.
+   * Only the caller's own links, `user`, or their organization's, `org`. By default, every link the caller manages: the
+   * ones made in their current organization, and their own made outside any.
    */
   owner?: OwnerType | undefined
   cursor?: string | undefined
