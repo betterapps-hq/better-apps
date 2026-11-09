@@ -86,6 +86,16 @@ describe("reactions client", () => {
     })
   })
 
+  it("clears the viewer's other reaction when another tab already swapped it, and each person has one", async () => {
+    const { api, as, reactions } = browser("bob", { maxPerUser: 1 })
+    await api.react({ ...inv1, emoji: "👍" }, as("bob"))
+    await reactions.load("invoice", ["inv-1"])
+    // Another tab swaps it, and this one, still showing 👍, picks 🎉 too.
+    await api.react({ ...inv1, emoji: "🎉" }, as("bob"))
+    await reactions.react({ ...inv1, emoji: "🎉" })
+    expect(reactions.store.getSnapshot().subjects[key1]?.reactions).toEqual([{ emoji: "🎉", count: 1, reacted: true }])
+  })
+
   it("rolls back a refused reaction", async () => {
     const { reactions } = browser()
     const locked = { subjectType: "invoice", subjectId: "inv-locked" } as const

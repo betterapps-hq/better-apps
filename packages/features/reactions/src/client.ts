@@ -411,7 +411,9 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
       reaction?: { userId: string } | null
       replaced?: { emoji: string; userId: string }[]
     }
-    confirm(record, (reactions) => setMine(reactions, target.emoji, reacted))
+    // When each person has one, the viewer's others are gone too, even ones the server didn't replace now because another
+    // tab already had, which this tab may still show.
+    confirm(record, (reactions) => applyWrite(reactions, pending))
     for (const gone of replaced) {
       confirm(record, (reactions) => setMine(reactions, gone.emoji, false))
     }
