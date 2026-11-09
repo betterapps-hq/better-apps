@@ -42,6 +42,15 @@ Then open <http://127.0.0.1:4190>. `build` and `preview` run the production buil
   reactions in one call.
 - **Notes**, at `/notes`, is a tiny feature in `src/features.ts`. Its loader calls a server function that calls
   `api.notes.list()` as the request's user, and the form posts to `/api/apps/notes/add` from the browser.
+- **Domains** from [`@better-apps/domains`](../../packages/features/domains/README.md), at `/settings/domains`, give the
+  workspace a subdomain of `better-invoices.localhost` and domains it owns. Better Auth here has no organizations, so
+  the whole workspace shares one set, and only the owner, Ada, can change them. Custom domains run on
+  `localHostnames()`, a provider kept in memory, so the example never calls Cloudflare: a domain's first check after
+  it's added finds its records in place, and pending domains show the records to add, with copy buttons, and when
+  they're checked next. The provider forgets its hostnames when the server restarts, and the next check adds them again.
+  The UI is in `src/domain-settings.tsx`, on `useDomains` from `@better-apps/domains/react`.
+- Node has no cron trigger, so `src/better-apps.server.ts` calls `app.deliverEvents()` every minute, which runs domains'
+  scheduled checks.
 - Pages render on the server with their comments. Loaders call server functions in `src/comments.functions.ts`, which
   load a comments store through the bound `client()` and return its snapshot, and the router in `src/router.tsx` carries
   the store to the browser, so the first paint has the threads and the browser doesn't fetch them again.

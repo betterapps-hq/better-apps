@@ -6,3 +6,4 @@
 - [Public API reports](../api-reports/README.md)
 - [Releases](releases.md)
 - [Deploying on Void](deploy-plan.md)
+- [Domains spec, with the one-time Cloudflare for SaaS setup](../packages/features/domains/docs/spec.md)

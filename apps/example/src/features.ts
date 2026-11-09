@@ -1,5 +1,6 @@
 import { elementAnchor } from "@better-apps/anchors"
 import { comments, commentSubjectTypes } from "@better-apps/comments"
+import { domains, localHostnames } from "@better-apps/domains"
 import { reactions } from "@better-apps/reactions"
 import { BetterAppsError, defineAction, defineFeature, type SubjectDefinition } from "better-apps"
 import { z } from "zod"
@@ -105,5 +106,22 @@ const commentReactions = reactions({
   maxPerUser: 1
 })
 
+/**
+ * Custom domains on a provider kept in memory, so the example never calls Cloudflare. A domain's first check after it's
+ * added finds its records in place, and the provider forgets its hostnames on restart, which the next check adds again.
+ */
+const hostnames = localHostnames({ target: "customers.better-invoices.localhost" })
+
+/**
+ * The workspace's domains: a subdomain of `better-invoices.localhost` and custom domains. Better Auth here has no
+ * organizations, so the whole workspace shares one set, and the owner manages them.
+ */
+const workspaceDomains = domains({
+  subdomains: { zone: "better-invoices.localhost" },
+  custom: { provider: hostnames },
+  dns: hostnames.dns,
+  canManage: ({ actor }) => isOwner(actor.userId)
+})
+
 /** The features the app enables. `better-apps.config.ts` reads them to generate their tables. */
-export const features = [notes, invoiceComments, commentReactions] as const
+export const features = [notes, invoiceComments, commentReactions, workspaceDomains] as const
