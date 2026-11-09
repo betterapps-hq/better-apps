@@ -286,7 +286,7 @@ export function mentions(options: MentionsOptions) {
     actions: {
       listMentions: defineAction({
         input: listInput,
-        handler: async ({ input, actor, db, subjects, identity }): Promise<MentionPage> => {
+        handler: async ({ input, actor, db, subjects, identity, request }): Promise<MentionPage> => {
           if (!actor) {
             throw new BetterAppsError("UNAUTHENTICATED", "Sign in to see your mentions.")
           }
@@ -310,8 +310,9 @@ export function mentions(options: MentionsOptions) {
           const cursor = rows.length > limit && last ? encodeCursor(last.createdAt, last.id) : null
           // Mentions in subject types nobody declares any more, such as a removed source's, are skipped.
           const known = page.filter((mention) => subjects.has(mention.subjectType))
+          // The request counts, so mentions in records a share link the user opened reaches show too.
           const visible = await subjects.canViewMany(
-            known.map(({ subjectType, subjectId }) => ({ actor, subjectType, subjectId }))
+            known.map(({ subjectType, subjectId }) => ({ actor, subjectType, subjectId, request }))
           )
           const shown = known.filter((_, index) => visible[index])
           const ids = [

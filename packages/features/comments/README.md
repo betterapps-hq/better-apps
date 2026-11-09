@@ -79,6 +79,11 @@ as "Former user".
   nobody can see as records any more.
 - `NOT_FOUND` means the caller can't see it, and `FORBIDDEN` that they can see it but can't do this. Signed-out callers
   get `UNAUTHENTICATED`, except signed-out readers of public subjects, who get text with names and no user ids.
+- Reads count the [access grants](../../core/better-apps/README.md#access-grants) the request carries, such as a share
+  link to the subject: `listThreads`, `getThread` and `countThreads`. Someone the app's rules refuse then reads the
+  subject's default threads as a signed-out reader does, with names and no user ids. Writes never count a grant, so a
+  link never lets anyone comment, reply, resolve or delete. A grant to the subject reaches its default threads and their
+  comments as `comments.thread` and `comments.comment` subjects too, so their reactions show.
 - Server code that passes neither an actor nor a request is trusted, so it skips access checks. It still needs an author
   to write: a user, or an external or system author with a name and an optional id.
 - Before hooks run after the access check, keyed by action. They may change the input, but not the subject or thread. A
@@ -165,7 +170,8 @@ function InvoiceComments({ invoiceId }: { invoiceId: string }) {
 body), `comment.mentioned` (one per mention), `thread.resolved`, `thread.reopened`, `thread.anchorUpdated` (with the
 previous anchor), `thread.deleted`, `thread.moved`, `subject.moved`, `subject.removed` and `user.removed`. They're
 written to the core's outbox in the same batch as the change and delivered at least once. They stay on the server;
-`toClientEvent` turns one into what a viewer's browser may see.
+`toClientEvent({ event, viewer, request? })` turns one into what a viewer's browser may see. With the viewer's request,
+grants it carries count as they do for reads.
 
 `thread.deleted` and `thread.moved` list the thread's `commentIds`, so features attached to its comments, such as
 reactions, can clean up or move along. `removeSubject` emits `thread.deleted` for each thread it deletes, and

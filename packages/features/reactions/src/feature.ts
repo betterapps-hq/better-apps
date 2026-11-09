@@ -636,7 +636,7 @@ async function listReactions(config: Config, context: Context): Promise<Record<s
   const settings = settingsOf(config, input.subjectType)
   const ids = [...new Set(input.subjectIds)]
   const refs = ids.map((id) => ({ subjectType: input.subjectType, subjectId: id }))
-  const visible = await viewable(context, refs)
+  const visible = await viewable(context, refs, { request: context.request })
   const shown = refs.filter((_, index) => visible[index])
   const result: Record<string, ReactionSummary[]> = Object.fromEntries(ids.map((id) => [id, []]))
   if (shown.length === 0) {
@@ -698,13 +698,19 @@ async function listReactions(config: Config, context: Context): Promise<Record<s
 async function listReactors(config: Config, context: Context): Promise<ReactorPage> {
   const input = context.input as ListReactorsInput
   const settings = settingsOf(config, input.subjectType)
-  await requireView(context, input)
-  const signedIn = context.actor !== null || isTrusted(context)
+  await requireView(context, input, { request: context.request })
   if (settings.reactorVisibility === "hidden" && !(await isModerator(settings.rules, context, input))) {
     throw new ReactionsError("FORBIDDEN", "Who reacted is kept private here.")
   }
-  if (settings.reactorVisibility === "viewers" && !signedIn) {
-    throw new ReactionsError("UNAUTHENTICATED", "Sign in to see who reacted.")
+  if (settings.reactorVisibility === "viewers" && !isTrusted(context)) {
+    const { actor } = context
+    if (!actor) {
+      throw new ReactionsError("UNAUTHENTICATED", "Sign in to see who reacted.")
+    }
+    // Someone who sees the record only through a grant, such as a share link, isn't one of its viewers.
+    if (!(await context.subjects.canView(actor, input))) {
+      throw new ReactionsError("FORBIDDEN", "Who reacted is kept private here.")
+    }
   }
   const limit = input.limit ?? limits.reactorsPerPage
   const after = input.cursor === undefined ? undefined : decodeCursor(input.cursor)
@@ -734,7 +740,7 @@ async function listReactors(config: Config, context: Context): Promise<ReactorPa
 async function getSettings(config: Config, context: Context): Promise<ReactionSettings> {
   const input = context.input as ReactionSubject
   const settings = settingsOf(config, input.subjectType)
-  await requireView(context, input)
+  await requireView(context, input, { request: context.request })
   const emojis = await settings.emojisFor(await orgOf(context.subjects, input, context.actor))
   return {
     emojis: emojis && [...emojis.keys()],
@@ -944,7 +950,8 @@ async function clientEvents(
   config: Config,
   context: Context,
   event: BetterAppsEvent,
-  viewers: readonly (Actor | null)[]
+  viewers: readonly (Actor | null)[],
+  request: Request | null = null
 ): Promise<(ClientReactionEvent | null)[]> {
   const none = viewers.map(() => null)
   const record = event.type === "subject.changed" || event.type === "subject.moved"
@@ -973,7 +980,11 @@ async function clientEvents(
   if (event.type !== "subject.changed" && orgId !== expected) {
     return none
   }
-  const visible = await context.subjects.canViewMany(viewers.map((actor) => ({ ...ref, actor })))
+  const members = await context.subjects.canViewMany(viewers.map((actor) => ({ ...ref, actor })))
+  // With the viewer's request, a grant it carries, such as a share link, shows the record too, but not who reacted.
+  const visible = request
+    ? await context.subjects.canViewMany(viewers.map((actor) => ({ ...ref, actor, request })))
+    : members
   if (record) {
     return visible.map((shown) => (shown ? { id: event.id, type: "subject.changed" as const, ...ref } : null))
   }
@@ -987,7 +998,7 @@ async function clientEvents(
       const named =
         mine ||
         settings.reactorVisibility === "public" ||
-        (settings.reactorVisibility === "viewers" && viewer !== null) ||
+        (settings.reactorVisibility === "viewers" && viewer !== null && members[index] === true) ||
         (viewer !== null && canModerate !== undefined && (await canModerate({ actor: viewer, ...ref })))
       return {
         id: event.id,
@@ -1003,8 +1014,12 @@ async function clientEvents(
 }
 
 async function toClientEvent(config: Config, context: Context): Promise<ClientReactionEvent | null> {
-  const { event, viewer } = context.input as { event: BetterAppsEvent; viewer: Actor | null }
-  const [shown] = await clientEvents(config, context, event, [viewer])
+  const { event, viewer, request } = context.input as {
+    event: BetterAppsEvent
+    viewer: Actor | null
+    request?: Request | null | undefined
+  }
+  const [shown] = await clientEvents(config, context, event, [viewer], request ?? null)
   return shown ?? null
 }
 
@@ -1109,10 +1124,10 @@ export function reactions<const Options extends ReactionsOptions>(options: Optio
         inputs.removeUser,
         removeUser
       ),
-      toClientEvent: serverAction<{ event: BetterAppsEvent; viewer: Actor | null }, ClientReactionEvent | null>(
-        null,
-        toClientEvent
-      ),
+      toClientEvent: serverAction<
+        { event: BetterAppsEvent; viewer: Actor | null; request?: Request | null | undefined },
+        ClientReactionEvent | null
+      >(null, toClientEvent),
       forgetEmojis: serverAction<{ orgId?: string | null | undefined }, void>(inputs.forgetEmojis, forgetEmojis),
       toClientEvents: serverAction<
         { event: BetterAppsEvent; viewers: readonly (Actor | null)[] },

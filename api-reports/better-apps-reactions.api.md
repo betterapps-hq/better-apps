@@ -269,9 +269,11 @@ export function reactions<const Options extends ReactionsOptions>(options: Optio
         toClientEvent: ActionDefinition<StandardSchemaV1<{
         event: BetterAppsEvent;
         viewer: Actor | null;
+        request?: Request | null | undefined;
         }, {
         event: BetterAppsEvent;
         viewer: Actor | null;
+        request?: Request | null | undefined;
         }>, ClientReactionEvent | null> & {
             serverOnly?: true | undefined;
         };

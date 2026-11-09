@@ -22,15 +22,29 @@ export async function orgsOf(subjects: Subjects, refs: readonly SubjectRef[], ac
   return (await subjects.getOrgIds(refs, actor)).map((orgId) => orgId ?? "")
 }
 
+/** Options for read checks. */
+export interface ReadOptions {
+  /** The caller's request, so a grant it carries, such as a share link, counts. Reads pass it; writes never do. */
+  request?: Request | null | undefined
+}
+
 /**
  * Which subjects a caller can see the reactions of: trusted server code sees all, a signed-out visitor sees public
- * ones, and anyone else what `canView` allows, each checked in one call per subject type.
+ * ones, and anyone else what `canView` allows, each checked in one call per subject type. With the request, grants it
+ * carries count too.
  */
-export async function viewable(context: Context, refs: readonly SubjectRef[]): Promise<boolean[]> {
+export async function viewable(
+  context: Context,
+  refs: readonly SubjectRef[],
+  { request }: ReadOptions = {}
+): Promise<boolean[]> {
   if (isTrusted(context)) {
     return refs.map(() => true)
   }
   const { actor, subjects } = context
+  if (request) {
+    return subjects.canViewMany(refs.map((ref) => ({ actor, ...ref, request })))
+  }
   if (!actor) {
     return subjects.isPublicMany(refs)
   }
@@ -38,8 +52,8 @@ export async function viewable(context: Context, refs: readonly SubjectRef[]): P
 }
 
 /** Refuses a read of a subject the caller can't see: `UNAUTHENTICATED` when signing in might help, else `NOT_FOUND`. */
-export async function requireView(context: Context, ref: SubjectRef): Promise<void> {
-  const [allowed] = await viewable(context, [ref])
+export async function requireView(context: Context, ref: SubjectRef, options: ReadOptions = {}): Promise<void> {
+  const [allowed] = await viewable(context, [ref], options)
   if (allowed) {
     return
   }

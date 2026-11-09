@@ -46,7 +46,8 @@ createBetterApps({
   optional group, such as the thread, and an excerpt of up to 280 characters with mentions as tokens.
 - `listMentions({ cursor, limit })` lists the signed-in user's mentions in the organization they're acting in, newest
   first, 20 a page by default and at most 50, with the users they name. Access is checked when listing, through the
-  app's subject types, so mentions in records the user can no longer see stay hidden.
+  app's subject types, so mentions in records the user can no longer see stay hidden. Access grants the request carries,
+  such as a share link the user opened, count too.
 - `removeUser({ userId })`, from server code only, removes every mention a user made or received.
 
 Run `better-apps generate` to add the `mention` table to your schema.

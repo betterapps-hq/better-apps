@@ -44,9 +44,10 @@ const usedEmojis = (reactions: readonly ReactionSummary[]) =>
 
 /**
  * A comment's reactions: a chip for each emoji someone used, pressed when the viewer used it, and a picker for the
- * rest. Each person reacts with one emoji, so picking another replaces theirs.
+ * rest. Each person reacts with one emoji, so picking another replaces theirs. Read-only, such as for a visitor with a
+ * share link, it shows the chips alone.
  */
-export function CommentReactions({ commentId }: { commentId: string }) {
+export function CommentReactions({ commentId, readOnly = false }: { commentId: string; readOnly?: boolean }) {
   const { reactions, state, toggle, writeError, isPending } = useSubjectReactions<ReactionTypes>(
     commentSubject(commentId)
   )
@@ -59,6 +60,22 @@ export function CommentReactions({ commentId }: { commentId: string }) {
   }
   const used = usedEmojis(reactions)
   const mine = used.find((reaction) => reaction.reacted)?.emoji
+
+  if (readOnly) {
+    return used.length === 0 ? null : (
+      <ul className="reactions" aria-label="Reactions">
+        {used.map((reaction) => (
+          <li key={reaction.emoji} className="reaction">
+            <span aria-hidden="true">{reaction.emoji}</span>
+            <span aria-hidden="true">{reaction.count}</span>
+            <span className="visually-hidden">
+              {reaction.name}, {plural(reaction.count, "reaction", "reactions")}
+            </span>
+          </li>
+        ))}
+      </ul>
+    )
+  }
 
   return (
     <fieldset className="reactions" aria-label="Reactions">

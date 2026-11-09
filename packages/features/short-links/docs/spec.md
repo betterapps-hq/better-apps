@@ -170,8 +170,9 @@ Whose access a link stands for depends on where it was made:
 
 The cookie only reaches the link's host, or every host under `cookie.domain`. Making a link that grants access fails
 when the record's page is on a host the cookie wouldn't reach, rather than letting the grant fail without a word. Read
-checks only count the grant where they pass the request. The app's own pages do; comments and reactions don't yet, since
-each feature decides what a visitor with only a link sees, such as people's names.
+checks only count the grant where they pass the request. The app's own pages do, and so do the reads in comments,
+reactions and mentions, each deciding what a visitor with only a link sees: comments come as a signed-out reader gets
+them, with names and no user ids, and who reacted shows only where it's public.
 
 ## Clicks
 
