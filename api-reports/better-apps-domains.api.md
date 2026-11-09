@@ -125,7 +125,6 @@ export const domainEvents: {
     "check.scheduled": EventDefinition<    {
     domainId: string;
     token: string;
-    dueAt: string;
     }>;
 };
 
@@ -201,7 +200,6 @@ export function domains<const Options extends DomainsOptions>(options: Options):
         "check.scheduled": EventDefinition<    {
         domainId: string;
         token: string;
-        dueAt: string;
         }>;
     };
     readonly on: {

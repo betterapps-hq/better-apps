@@ -122,12 +122,19 @@ export function describe(
   return "The records are in place. Waiting for the provider to verify the domain."
 }
 
-/** A domain the organization holds is ready once the provider serves the hostname with its certificate. */
-export function statusOf(state: ProviderHostname): DomainStatus {
+/**
+ * A domain the organization holds is ready once the provider serves the hostname with its certificate. One that's
+ * already `active` stays so while the provider serves it and the certificate hasn't failed, since a certificate being
+ * renewed reports a pending state while the current one still serves.
+ */
+export function statusOf(state: ProviderHostname, active: boolean): DomainStatus {
   if (state.status === "blocked") {
     return "failed"
   }
-  return state.status === "active" && state.certificate === "active" ? "active" : "pending"
+  if (state.status !== "active") {
+    return "pending"
+  }
+  return state.certificate === "active" || (active && state.certificate !== "failed") ? "active" : "pending"
 }
 
 /**

@@ -24,10 +24,10 @@ export const domainEvents = {
   /** An organization's primary domain changed, or it has none when `domain` is `null`. */
   "primary.changed": defineEvent<{ orgId: string | null; domain: DomainSummary | null }>(),
   /**
-   * Domains' own: a custom domain's next scheduled check, due at `dueAt`, an ISO date, delivered by a later
+   * Domains' own: a custom domain's next scheduled check, which the outbox holds until it's due, delivered by a later
    * `app.deliverEvents()` run.
    */
-  "check.scheduled": defineEvent<{ domainId: string; token: string; dueAt: string }>()
+  "check.scheduled": defineEvent<{ domainId: string; token: string }>()
 }
 
 /** The data of each domains event, by type. */

@@ -51,15 +51,15 @@ export function setup(extra: Partial<DomainsOptions> = {}, local: LocalHostnames
       })
     )
   const events = (type?: string) => delivered.filter((event) => type === undefined || event.type === type)
-  /** The outbox's scheduled checks. */
+  /** The outbox's scheduled checks, with when each is due. */
   const scheduled = () =>
     database.sqlite
-      .prepare("SELECT data FROM betterAppsEvent WHERE type = 'check.scheduled'")
+      .prepare("SELECT data, availableAt FROM betterAppsEvent WHERE type = 'check.scheduled'")
       .all()
-      .map(
-        (row) =>
-          JSON.parse(String((row as { data: string }).data)) as { domainId: string; token: string; dueAt: string }
-      )
+      .map((row) => {
+        const { data, availableAt } = row as { data: string; availableAt: number }
+        return { ...(JSON.parse(data) as { domainId: string; token: string }), dueAt: new Date(availableAt) }
+      })
   const recordOf = (domain: Domain, purpose: string) => {
     const found = domain.records.find((entry) => entry.purpose === purpose)
     if (!found) {

@@ -283,7 +283,7 @@ async function serve(config: Config, row: DomainRow): Promise<Finding> {
     }
   }
   const records = await lookUp(config.dns, [...provider.routing(row.hostname), ...state.records])
-  const status = statusOf(state)
+  const status = statusOf(state, row.status === "active")
   return {
     claimed: true,
     providerId: state.id,
@@ -346,12 +346,8 @@ export async function runCheck(
     verifiedAt: finding.status === "active" && row.status !== "active" ? now : row.verifiedAt
   }
   if (update.checkToken && update.nextCheckAt) {
-    // Written with the save, so the schedule never stops between them.
-    writer.emit(
-      "check.scheduled",
-      { domainId: row.id, token: update.checkToken, dueAt: update.nextCheckAt.toISOString() },
-      { later: true }
-    )
+    // Written with the save, so the schedule never stops between them, and not read before it's due.
+    writer.emit("check.scheduled", { domainId: row.id, token: update.checkToken }, { availableAt: update.nextCheckAt })
   }
   const [updated] = await writer.db.batch([
     {
@@ -382,21 +378,14 @@ export async function runCheck(
 export interface ScheduledCheck {
   domainId: string
   token: string
-  /** When the check is due, as an ISO date. */
-  dueAt: string
 }
 
 /**
- * A domain's scheduled check, from its `check.scheduled` event: passed on to the next delivery run until it's due,
- * skipped when a newer schedule replaced it, then run, scheduling the next one while the domain is pending or active.
+ * A domain's scheduled check, from its `check.scheduled` event, which the outbox holds until it's due: skipped when a
+ * newer schedule replaced it, then run, scheduling the next one while the domain is pending or active.
  */
 export async function scheduledCheck(config: Config, context: EventContext, data: ScheduledCheck): Promise<void> {
   const now = new Date()
-  // The event says when it's due, so a delivery before then passes it on without reading the domain.
-  if (Date.parse(data.dueAt) > now.getTime()) {
-    context.emit("check.scheduled", data, { later: true })
-    return
-  }
   const row = await context.db.findOne<DomainRow>({
     model: domainModel,
     where: [{ field: "id", value: data.domainId }]
@@ -404,8 +393,10 @@ export async function scheduledCheck(config: Config, context: EventContext, data
   if (!row || row.checkToken !== data.token || row.kind !== "custom" || !config.provider) {
     return
   }
+  // A run that stopped after saving a check but before the outbox heard delivers the event again: wait for the
+  // domain's next check instead.
   if (row.nextCheckAt && row.nextCheckAt.getTime() > now.getTime()) {
-    context.emit("check.scheduled", { ...data, dueAt: row.nextCheckAt.toISOString() }, { later: true })
+    context.emit("check.scheduled", data, { availableAt: row.nextCheckAt })
     return
   }
   // An active domain that stopped being ready starts the schedule of a pending one.

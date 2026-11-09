@@ -92,9 +92,10 @@ An index on `orgId` and `createdAt` lists an organization's domains in the order
 `orgId` and `hostname` keeps an organization from adding a hostname twice.
 
 A domain is `active` when it's ready for traffic. A subdomain is `active` from the start. A custom domain is `active`
-when it holds its hostname and the provider reports the hostname and its certificate active. It's `failed` when the
-provider blocks the hostname, when it wasn't ready after 7 days of checks, or when another organization proved it owns
-the hostname. Anything else is `pending`.
+when it holds its hostname and the provider reports the hostname and its certificate active, and stays `active` while
+the provider serves the hostname and its certificate is being renewed. It's `failed` when the provider blocks the
+hostname, when it wasn't ready after 7 days of checks, or when another organization proved it owns the hostname.
+Anything else is `pending`.
 
 ## Hostname rules
 
@@ -204,8 +205,9 @@ the handler answers 500 and they reach `onError` for the app's operators.
 2. A subdomain is written `active`, holding its hostname, with its certificate `active`, no records and no checks, with
    `domain.added`. When the organization has no primary domain, it becomes the primary one, with `primary.changed`.
 3. A custom domain is written `pending`, with a new ownership token, its records unchecked and `nextCheckAt` a minute
-   away. Its first `check.scheduled` event and `domain.added` are written in the same batch, so a domain is never left
-   without a schedule. Nothing is checked yet, since no DNS holds the new token, and nothing reaches the provider.
+   away. Its first `check.scheduled` event, due then, and `domain.added` are written in the same batch, so a domain is
+   never left without a schedule. Nothing is checked yet, since no DNS holds the new token, and nothing reaches the
+   provider.
 
 ## Showing the DNS records
 
@@ -245,9 +247,12 @@ A check of a custom domain:
    domain that became `active` gets `verifiedAt`, `domain.verified`, and becomes primary when the organization has none.
    A change of status emits `domain.status.changed`. Events are emitted only once the save has changed the domain.
 
-The provider reporting the hostname and its certificate active makes the domain `active`, whether or not the routing
-records are found: a customer whose own Cloudflare zone proxies the CNAME answers lookups with its own addresses, and a
-prevalidated hostname is verified before traffic moves. The routing records' `found` still shows what DNS answers.
+The provider reporting the hostname and its certificate active makes the domain `active`. A domain that's already
+`active` stays so while the provider serves the hostname, unless its certificate failed: a certificate being renewed
+reports a pending state while the current one still serves, and a renewal mustn't take the domain's links down. This
+holds whether or not the routing records are found: a customer whose own Cloudflare zone proxies the CNAME answers
+lookups with its own addresses, and a prevalidated hostname is verified before traffic moves. The routing records'
+`found` still shows what DNS answers.
 
 A provider that refuses the hostname when it's registered fails the domain with its reason. One that can't be reached
 leaves the domain as it was: `check` returns `PROVIDER_ERROR`, and a scheduled check stays in the outbox for the core's
@@ -279,18 +284,16 @@ reports it `moved`, becomes `pending`, with `domain.status.changed`, and starts 
 reports it unverified. One still `pending` 7 days later becomes `failed`.
 
 The schedule runs on [deferred events](../../../core/better-apps/README.md#events). Each custom domain being checked has
-one `check.scheduled` event in the outbox, emitted with `later: true`, carrying the domain id, its `checkToken` and
-`dueAt`, when the check is due. Every `app.deliverEvents()` run delivers it to domains' own subscriber, which:
+one `check.scheduled` event in the outbox, carrying the domain id and its `checkToken`, emitted with `availableAt` set
+to the domain's `nextCheckAt`, and written with the save that set it. The outbox doesn't read it before then, so a
+scheduled check costs nothing until it's due. The first `app.deliverEvents()` run after that delivers it to domains' own
+subscriber, which:
 
-- emits the event again for the next run when `dueAt` hasn't come yet, without reading the domain;
 - stops when the domain is gone or its `checkToken` is no longer the event's, since a newer schedule replaced it, or the
   domain failed;
-- emits the event again with the domain's `nextCheckAt` when that's later than `dueAt`, as when a run stopped after
-  saving a check but before the outbox heard;
-- otherwise checks the domain, and emits the event again with the next `dueAt` while the domain is `pending` or
-  `active`.
-
-So every run delivers each scheduled domain's event once, a few statements each, until the check is due.
+- emits the event again for the domain's `nextCheckAt` when that's still to come, as when a run stopped after saving a
+  check but before the outbox heard;
+- otherwise checks the domain, and emits the event again for its next check while the domain is `pending` or `active`.
 
 A domain still `pending` 7 days after `checkingSince` becomes `failed`, with an error that says checking stopped and to
 fix the records and check again, which `check` does for another 7 days. A failed domain that held a hostname at the
@@ -349,14 +352,14 @@ const match = await app.api.domains.lookup({ hostname: new URL(request.url).host
 
 ## Events
 
-| Event                   | Data                         | When                                                                           |
-| ----------------------- | ---------------------------- | ------------------------------------------------------------------------------ |
-| `domain.added`          | `{ domain }`                 | A domain was added                                                             |
-| `domain.verified`       | `{ domain }`                 | A custom domain became `active`                                                |
-| `domain.status.changed` | `{ domain, from }`           | A domain's status changed, including to `failed` when another one took it over |
-| `domain.removed`        | `{ domain }`                 | A domain was removed                                                           |
-| `primary.changed`       | `{ orgId, domain }`          | The organization's primary domain changed, or it has none                      |
-| `check.scheduled`       | `{ domainId, token, dueAt }` | Domains' own, for its schedule of checks                                       |
+| Event                   | Data                  | When                                                                           |
+| ----------------------- | --------------------- | ------------------------------------------------------------------------------ |
+| `domain.added`          | `{ domain }`          | A domain was added                                                             |
+| `domain.verified`       | `{ domain }`          | A custom domain became `active`                                                |
+| `domain.status.changed` | `{ domain, from }`    | A domain's status changed, including to `failed` when another one took it over |
+| `domain.removed`        | `{ domain }`          | A domain was removed                                                           |
+| `primary.changed`       | `{ orgId, domain }`   | The organization's primary domain changed, or it has none                      |
+| `check.scheduled`       | `{ domainId, token }` | Domains' own, for its schedule of checks                                       |
 
 `domain` is a `DomainSummary`: `id`, `orgId` (`null` in an app without organizations), `hostname`, `kind`, `status` and
 `primary`. A feature that caches lookups, such as short links, can drop a hostname on `domain.removed` and
@@ -369,6 +372,10 @@ const match = await app.api.domains.lookup({ hostname: new URL(request.url).host
   people with the `owner` or `admin` role. Identity providers name roles differently, such as Clerk's `org:admin`, so
   most apps pass their own.
 - A custom domain serves an organization only once it proves it owns the hostname, whatever `canManage` allows.
+- Domains doesn't rate-limit its actions. Rate-limit `add`, `remove` and `check` for each organization at the app's HTTP
+  layer, such as with a Workers rate limiting binding. Otherwise an organization with a DNS API could remove and add a
+  proven domain again and again, and each time the provider registers and deletes a hostname, which uses up the app's
+  shared provider API limit.
 - `lookup`, `getPrimary` and `removeAll` are server only.
 
 ## Where the provider plugs in

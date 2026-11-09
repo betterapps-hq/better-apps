@@ -44,7 +44,8 @@ again. Call `app.api.domains.removeAll({ orgId })` when an organization is delet
   `_verify` by default for `_verify.links.acme.com`.
 - `dns` looks up the records customers add, with `dnsOverHttps()` by default.
 - `canManage` says who adds, checks and removes domains and chooses the primary one: the `owner` and `admin` roles by
-  default. Every signed-in member can list them.
+  default. Every signed-in member can list them. Rate-limit `add`, `remove` and `check` for each organization at the
+  app's HTTP layer, since each provider registration counts against the app's shared provider API limit.
 - `maxPerOrg` caps an organization's domains of both kinds, 10 by default.
 
 ## Actions
@@ -73,8 +74,9 @@ A custom domain takes its hostname once a check finds its ownership record, `_ve
 token, and is registered with the provider then. It's `active` once the provider reports its hostname and certificate
 active. A domain whose holder's ownership record is gone passes to another organization that proves it owns it. Each
 record shows whether the last check `found` it. Pending domains are checked again after 1, 2, 5, 10, 15 and 30 minutes,
-1 and 2 hours, then every 4 hours, and active ones every 24 hours, through domains' own `check.scheduled` event left for
-later `app.deliverEvents()` runs. One still pending after 7 days becomes `failed`; "check now" starts another 7 days.
+1 and 2 hours, then every 4 hours, and active ones every 24 hours, through domains' own `check.scheduled` event, which
+the outbox holds until it's due. One still pending after 7 days becomes `failed`; "check now" starts another 7 days. A
+certificate being renewed doesn't make an active domain pending.
 
 ## Events
 

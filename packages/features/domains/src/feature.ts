@@ -289,7 +289,7 @@ async function add(config: Config, context: Context, input: AddDomainInput): Pro
   // Nothing is checked yet: the ownership record's token is new, so no DNS holds it. The first scheduled check is
   // written with the domain, so it's never left without one.
   context.emit("domain.added", { domain: summary(row) })
-  context.emit("check.scheduled", { domainId: id, token, dueAt: firstCheck.toISOString() }, { later: true })
+  context.emit("check.scheduled", { domainId: id, token }, { availableAt: firstCheck })
   return toDomain(await insert(db, row))
 }
 

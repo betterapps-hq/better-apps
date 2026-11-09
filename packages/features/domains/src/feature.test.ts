@@ -179,7 +179,7 @@ describe("custom domains", () => {
     ])
     // Nothing reaches the provider until the organization proves it owns the hostname.
     expect(provider.hostnames.size).toBe(0)
-    expect(scheduled()).toEqual([{ domainId: domain.id, token: expect.any(String), dueAt: minutes(1).toISOString() }])
+    expect(scheduled()).toEqual([{ domainId: domain.id, token: expect.any(String), dueAt: minutes(1) }])
     await expect(api.lookup({ hostname: "links.acme.com" })).resolves.toBeNull()
   })
 
@@ -356,6 +356,54 @@ describe("ownership", () => {
     await expect(api.lookup({ hostname: "links.acme.com" })).resolves.toMatchObject({ orgId: "acme", verified: true })
   })
 
+  it("stays with its holder when the holder's record can't be looked up", async () => {
+    const t = setup()
+    const { api, as, provider } = t
+    await addReady(t, "ada", "links.acme.com")
+    provider.dns.unpublish("_verify.links.acme.com", "TXT")
+    const rival = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("gus"))
+    t.prove(rival)
+    // The rival's own record is found, then the lookup of the holder's fails.
+    const { resolve } = provider.dns
+    let ownershipLookups = 0
+    provider.dns.resolve = async (name, type) => {
+      if (type === "TXT" && name === "_verify.links.acme.com" && ++ownershipLookups > 1) {
+        throw new Error("DNS is down")
+      }
+      return resolve(name, type)
+    }
+    await expect(api.check({ domainId: rival.id }, as("gus"))).resolves.toMatchObject({
+      status: "pending",
+      error: lookupError
+    })
+    await expect(api.lookup({ hostname: "links.acme.com" })).resolves.toMatchObject({ orgId: "acme", verified: true })
+    expect((await api.list(undefined, as("ada"))).domains[0]).toMatchObject({ status: "active", primary: true })
+  })
+
+  it("goes to one of two organizations proving it at once", async () => {
+    const t = setup()
+    const { api, as, provider } = t
+    const [acme, globex] = await Promise.all([
+      api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada")),
+      api.add({ kind: "custom", hostname: "links.acme.com" }, as("gus"))
+    ])
+    t.prove(acme)
+    t.prove(globex)
+    const checked = await Promise.all([
+      api.check({ domainId: acme.id }, as("ada")),
+      api.check({ domainId: globex.id }, as("gus"))
+    ])
+    expect(checked.map((domain) => domain.error).sort()).toEqual(
+      [
+        cnameError("links.acme.com"),
+        "Another organization's TXT record for _verify.links.acme.com is still in place. Remove it, then check again."
+      ].sort()
+    )
+    expect(provider.hostnames.size).toBe(1)
+    const winner = checked.find((domain) => domain.error === cnameError("links.acme.com"))
+    await expect(api.lookup({ hostname: "links.acme.com" })).resolves.toMatchObject({ domainId: winner?.id })
+  })
+
   it("can't be proven while the DNS can't be read", async () => {
     const t = setup()
     const added = await t.api.add({ kind: "custom", hostname: "links.acme.com" }, t.as("ada"))
@@ -465,6 +513,21 @@ describe("check", () => {
     })
   })
 
+  it("keeps a ready domain ready while its certificate is renewed", async () => {
+    const t = setup()
+    const added = await addReady(t, "ada", "links.acme.com")
+    t.provider.holdCertificate("links.acme.com", "pending")
+    advance()
+    await expect(t.api.check({ domainId: added.id }, t.as("ada"))).resolves.toMatchObject({
+      status: "active",
+      certificate: "pending",
+      primary: true,
+      error: null
+    })
+    await expect(t.api.lookup({ hostname: "links.acme.com" })).resolves.toMatchObject({ verified: true })
+    expect(t.events("domain.status.changed")).toHaveLength(1)
+  })
+
   it("restarts validation of a hostname that moved", async () => {
     const t = setup()
     const added = await addReady(t, "ada", "links.acme.com")
@@ -568,7 +631,7 @@ describe("scheduled rechecks", () => {
     await app.deliverEvents()
     const daily = later(minutes(18), recheckMs)
     expect(await domain()).toMatchObject({ status: "active", primary: true, nextCheckAt: daily })
-    expect(scheduled()).toEqual([{ domainId: added.id, token: expect.any(String), dueAt: daily.toISOString() }])
+    expect(scheduled()).toEqual([{ domainId: added.id, token: expect.any(String), dueAt: daily }])
     vi.setSystemTime(daily)
     await app.deliverEvents()
     expect(await domain()).toMatchObject({
@@ -633,15 +696,38 @@ describe("scheduled rechecks", () => {
     const added = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))
     vi.setSystemTime(minutes(1))
     await app.deliverEvents()
-    // As though the run stopped after saving the check but before the outbox heard: the event is still the old one.
+    // As though the run stopped after saving the check but before the outbox heard: the event is due again at once.
     const [event] = scheduled()
     database.sqlite
-      .prepare("UPDATE betterAppsEvent SET data = ? WHERE type = 'check.scheduled'")
-      .run(JSON.stringify({ ...event, dueAt: minutes(1).toISOString() }))
+      .prepare("UPDATE betterAppsEvent SET availableAt = ? WHERE type = 'check.scheduled'")
+      .run(minutes(1).getTime())
     vi.setSystemTime(minutes(2))
     await app.deliverEvents()
     expect((await api.list(undefined, as("ada"))).domains[0]).toMatchObject({ lastCheckedAt: minutes(1) })
-    expect(scheduled()).toEqual([{ domainId: added.id, token: event?.token, dueAt: minutes(3).toISOString() }])
+    expect(scheduled()).toEqual([{ domainId: added.id, token: event?.token, dueAt: minutes(3) }])
+  })
+
+  it("aren't delivered before they're due", async () => {
+    const t = setup()
+    const { api, as, app } = t
+    const added = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))
+    const none = { delivered: 0, failed: 0 }
+    expect(await app.deliverEvents()).toEqual(none)
+    vi.setSystemTime(later(minutes(1), -1))
+    expect(await app.deliverEvents()).toEqual(none)
+    vi.setSystemTime(minutes(1))
+    expect(await app.deliverEvents()).toEqual({ delivered: 1, failed: 0 })
+    t.prove(added)
+    t.route("links.acme.com")
+    vi.setSystemTime(minutes(3))
+    await app.deliverEvents()
+    vi.setSystemTime(minutes(8))
+    await app.deliverEvents()
+    const [domain] = (await api.list(undefined, as("ada"))).domains
+    expect(domain).toMatchObject({ status: "active", nextCheckAt: later(minutes(8), recheckMs) })
+    // A ready domain's daily check costs nothing until the day is up.
+    vi.setSystemTime(later(minutes(8), recheckMs - 1))
+    expect(await app.deliverEvents()).toEqual(none)
   })
 
   it("stop for a domain that was removed", async () => {
