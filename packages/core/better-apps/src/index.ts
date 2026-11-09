@@ -57,6 +57,7 @@ export type {
 export {
   defineSubject,
   type GrantArgs,
+  type GrantCheck,
   type SubjectArgs,
   type SubjectCheck,
   type SubjectContext,

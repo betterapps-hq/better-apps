@@ -384,6 +384,11 @@ export function getFeatureTables(features: readonly BetterAppsFeature[]): Databa
 // @public
 export interface GrantArgs {
     reportError: (error: unknown) => void;
+}
+
+// @public
+export interface GrantCheck extends SubjectRef {
+    // (undocumented)
     request: Request;
 }
 
@@ -558,7 +563,7 @@ export interface SubjectDefinition {
 
 // @public
 export interface SubjectGrants {
-    canViewMany(refs: readonly SubjectRef[], args: GrantArgs, context: SubjectContext): readonly boolean[] | Promise<readonly boolean[]>;
+    canViewMany(checks: readonly GrantCheck[], args: GrantArgs, context: SubjectContext): readonly boolean[] | Promise<readonly boolean[]>;
 }
 
 // @public

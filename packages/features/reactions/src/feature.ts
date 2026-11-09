@@ -943,6 +943,7 @@ async function forgetEmojis(config: Config, context: Context): Promise<void> {
 
 /** Someone a live updates feature sends events to, with the request they connected with. */
 export interface LiveViewer {
+  /** Who's connected: a signed-in user, or `null` for a signed-out visitor. */
   actor: Actor | null
   /** Their request, so a grant it carries, such as a share link, shows them the record, but not who reacted. */
   request?: Request | null | undefined

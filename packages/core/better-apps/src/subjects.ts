@@ -30,14 +30,17 @@ export interface ViewOptions {
   request?: Request | null | undefined
 }
 
-/** What a feature's grants receive besides the subjects. */
-export interface GrantArgs {
-  /** The request whose grants count. */
+/** A subject a feature's grants are asked about, and the request whose grants count. */
+export interface GrantCheck extends SubjectRef {
   request: Request
+}
+
+/** What a feature's grants receive besides the checks. */
+export interface GrantArgs {
   /**
    * Reports an error the grants recovered from, such as a lookup that failed and so granted nothing, to the app's
-   * `onError`, named as the feature's, handing the report to the request's `waitUntil` when it's being served with one.
-   * It never throws, and it doesn't wait for the report.
+   * `onError`, named as the feature's, handing the report to a checked request's `waitUntil` when one has it. It never
+   * throws, and it doesn't wait for the report.
    */
   reportError: (error: unknown) => void
 }
@@ -48,11 +51,12 @@ export interface GrantArgs {
  */
 export interface SubjectGrants {
   /**
-   * Which of the subjects the request may see, in the same order. It's asked only about subjects the app's rules
-   * refuse, once per request in a check, so it can read what the request carries in one query.
+   * Which of the subjects each check's request may see, in the same order. It's asked only about checks the app's rules
+   * refuse, once per call of `canViewMany`, with every request in it, such as one per live connection, so it can read
+   * what they all carry in one query. A subject asked twice for the same request is asked once.
    */
   canViewMany(
-    refs: readonly SubjectRef[],
+    checks: readonly GrantCheck[],
     args: GrantArgs,
     context: SubjectContext
   ): readonly boolean[] | Promise<readonly boolean[]>
@@ -151,8 +155,8 @@ export function createSubjects(
     db: DatabaseAdapter
     identity: Identity
     grants?: readonly FeatureGrants[] | undefined
-    /** Reports a grant's error as its feature's, for the request it was checking. It never throws. */
-    reportError?: ((error: unknown, context: ErrorContext, request: Request) => void) | undefined
+    /** Reports a grant's error as its feature's, with the requests it was checking. It never throws. */
+    reportError?: ((error: unknown, context: ErrorContext, requests: readonly Request[]) => void) | undefined
   }
 ): Subjects {
   const grants = options.grants ?? []
@@ -240,41 +244,53 @@ export function createSubjects(
       return allowed
     })
 
-  /** Widens the app's answers with the grants each check's request carries, asking each feature once per request. */
+  /**
+   * Widens the app's answers with the grants each check's request carries, asking each feature once about every refused
+   * check that carries a request, with repeated ones asked once.
+   */
   const canViewMany = async (checks: readonly SubjectCheck[]): Promise<boolean[]> => {
     const allowed = await byRules(checks)
     if (grants.length === 0) {
       return allowed
     }
-    const byRequest = new Map<Request, number[]>()
-    for (const [index, check] of checks.entries()) {
-      if (!allowed[index] && check.request) {
-        byRequest.set(check.request, [...(byRequest.get(check.request) ?? []), index])
+    const requestIds = new Map<Request, number>()
+    const asked = new Map<string, { check: GrantCheck; indexes: number[] }>()
+    for (const [index, { subjectType, subjectId, request }] of checks.entries()) {
+      if (allowed[index] || !request) {
+        continue
       }
+      if (!requestIds.has(request)) {
+        requestIds.set(request, requestIds.size)
+      }
+      const key = JSON.stringify([requestIds.get(request), subjectType, subjectId])
+      const found = asked.get(key) ?? { check: { subjectType, subjectId, request }, indexes: [] }
+      found.indexes.push(index)
+      asked.set(key, found)
     }
-    await Promise.all(
-      [...byRequest].map(async ([request, indexes]) => {
-        const refs = indexes.map((index) => {
-          const { subjectType, subjectId } = checks[index] as SubjectCheck
-          return { subjectType, subjectId }
-        })
-        const answers = await Promise.all(
-          grants.map(async ({ feature, grants: granted }) => {
-            const reportError = (error: unknown) => options.reportError?.(error, { feature }, request)
-            try {
-              return await granted.canViewMany(refs, { request, reportError }, context)
-            } catch (error) {
-              // A grant that fails grants nothing, rather than failing the check and other features' grants with it.
-              reportError(error)
-              return refs.map(() => false)
-            }
-          })
-        )
-        for (const [position, index] of indexes.entries()) {
-          allowed[index] = answers.some((granted) => granted[position] === true)
+    if (asked.size === 0) {
+      return allowed
+    }
+    const askedChecks = [...asked.values()].map(({ check }) => check)
+    const requests = [...requestIds.keys()]
+    const answers = await Promise.all(
+      grants.map(async ({ feature, grants: granted }) => {
+        const reportError = (error: unknown) => options.reportError?.(error, { feature }, requests)
+        try {
+          return await granted.canViewMany(askedChecks, { reportError }, context)
+        } catch (error) {
+          // A grant that fails grants nothing, rather than failing the check and other features' grants with it.
+          reportError(error)
+          return askedChecks.map(() => false)
         }
       })
     )
+    for (const [position, { indexes }] of [...asked.values()].entries()) {
+      if (answers.some((granted) => granted[position] === true)) {
+        for (const index of indexes) {
+          allowed[index] = true
+        }
+      }
+    }
     return allowed
   }
 

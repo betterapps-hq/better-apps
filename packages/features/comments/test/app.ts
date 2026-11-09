@@ -67,10 +67,11 @@ export function sharing(...invoiceIds: string[]): Request {
 const shares = defineFeature({
   id: "shares",
   grants: {
-    canViewMany: (refs, { request }) => {
-      const shared = (request.headers.get("x-share") ?? "").split(",")
-      return refs.map((ref) => ref.subjectType === "invoice" && shared.includes(ref.subjectId))
-    }
+    canViewMany: (checks) =>
+      checks.map(
+        ({ subjectType, subjectId, request }) =>
+          subjectType === "invoice" && (request.headers.get("x-share") ?? "").split(",").includes(subjectId)
+      )
   }
 })
 

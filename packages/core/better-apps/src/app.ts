@@ -231,13 +231,19 @@ export function createBetterApps<const Features extends readonly BetterAppsFeatu
       // The runtime refused it, such as after its context ended, so the report runs on without it.
     }
   }
-  // Each request's waitUntil while it's served, so a grant's report from a check on it isn't cut off.
+  // The waitUntil each request was served or called with, so a grant's report from a check on it isn't cut off. Entries
+  // go with their request, and a waitUntil the runtime refuses after the response is sent is ignored.
   const waitUntils = new WeakMap<Request, (promise: Promise<unknown>) => void>()
   const subjects = createSubjects(declareSubjects(options), {
     db,
     identity,
     grants: features.flatMap((feature) => (feature.grants ? [{ feature: feature.id, grants: feature.grants }] : [])),
-    reportError: (error, context, request) => onError(error, context, waitUntils.get(request))
+    reportError: (error, context, requests) =>
+      onError(
+        error,
+        context,
+        requests.map((request) => waitUntils.get(request)).find((waitUntil) => waitUntil !== undefined)
+      )
   })
   const outbox = createOutbox({ db, features, identity, subjects, onError })
 

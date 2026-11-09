@@ -41,13 +41,11 @@
     "zod": "^4.6.7"
   },
   "peerDependencies": {
-    "@better-apps/comments": "workspace:*",
     "@better-apps/react": "workspace:*",
     "better-apps": "workspace:*",
     "react": "^19.0.0"
   },
   "devDependencies": {
-    "@better-apps/comments": "workspace:*",
     "@better-apps/react": "workspace:*",
     "@better-apps/testing": "workspace:*",
     "@repo/typescript-config": "workspace:*",

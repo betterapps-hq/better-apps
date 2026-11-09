@@ -119,13 +119,13 @@ export const app = createBetterApps({
 ## Access grants
 
 A feature can let a request see subjects the app's rules don't let its sender see, such as a record shared through a
-link. It declares `grants`, whose `canViewMany(refs, { request, reportError }, context)` says which subjects the request
-may see.
+link. It declares `grants`, whose `canViewMany(checks, { reportError }, context)` says which subject each check's
+`request` may see.
 
 ```ts
 const shares = defineFeature({
   id: "shares",
-  grants: { canViewMany: async (refs, { request }) => sharedWith(request, refs) }
+  grants: { canViewMany: async (checks) => sharedWith(checks) }
 })
 
 await app.subjects.canView(actor, { subjectType: "invoice", subjectId }, { request })
@@ -135,12 +135,13 @@ await app.subjects.canView(actor, { subjectType: "invoice", subjectId }, { reque
   to `canViewMany`. Without it, only the app's rules answer.
 - Pass the request only for checks about the person who made it, and only for reading. Checks for other people, such as
   who a mention reaches, and checks before a write leave it out, so a grant never lets anyone change anything.
-- Only the checks the app's rules refuse are asked of grants: each feature's once per request, with that request's
-  subjects in one call.
+- Only the checks the app's rules refuse are asked of grants: each feature's once per `canViewMany` call, with every
+  request in it, such as one per live connection, so a grant can read what they all carry in one query. A subject asked
+  twice for the same request is asked once.
 - A signed-in user and a signed-out visitor are granted alike. `isPublic` stays about the app's rules.
 - Grants that recover from an error, such as a lookup that failed and so granted nothing, pass it to `reportError`. It
-  goes to the app's `onError` as the feature's, with the request's `waitUntil` when it has one, and the check goes on. A
-  grant that throws grants nothing for that check, and its error goes to `onError` the same way.
+  goes to the app's `onError` as the feature's, with a checked request's `waitUntil` when one has it, and the check goes
+  on. A grant that throws grants nothing for that check, and its error goes to `onError` the same way.
 
 ## Identity
 

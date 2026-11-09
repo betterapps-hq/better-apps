@@ -1,9 +1,6 @@
-import { comments, commentSubjectTypes } from "@better-apps/comments"
-import { createTestApp } from "@better-apps/testing"
 import type { BetterAppsEvent } from "better-apps"
 import { describe, expect, it } from "vite-plus/test"
-import { expectCode, options, setup, shares, sharing, subjects, users } from "../test/app.js"
-import { reactions } from "./index.js"
+import { expectCode, options, setup, sharing } from "../test/app.js"
 
 // Gus's organization owns inv-globex; Bob, in another one, sees it only through a grant, such as a share link.
 const shared = { subjectType: "invoice", subjectId: "inv-globex" } as const
@@ -119,31 +116,5 @@ describe("reactions a request's grant reaches", () => {
       null,
       expect.objectContaining({ userId: "gus", mine: true })
     ])
-  })
-
-  it("reach the reactions on a record's comments, through a grant to the record", async () => {
-    const { app, identity } = createTestApp({
-      subjects,
-      features: [
-        comments({ subjects: { invoice: { canComment: () => true } } }),
-        reactions({ subjects: { [commentSubjectTypes.comment]: {} } }),
-        shares
-      ],
-      users
-    })
-    const gus = { actor: identity.actor("gus") }
-    const { comment } = await app.api.comments.createThread({ ...shared, body: "Due Friday" }, gus)
-    const onComment = { subjectType: commentSubjectTypes.comment, subjectId: comment.id }
-    await app.api.reactions.react({ ...onComment, emoji: "👍" }, gus)
-    const list = { subjectType: commentSubjectTypes.comment, subjectIds: [comment.id] }
-    const bob = { actor: identity.actor("bob"), request: sharing("inv-globex") }
-    expect((await app.api.reactions.listReactions(list, bob))[comment.id]).toEqual([
-      { emoji: "👍", count: 1, reacted: false }
-    ])
-    expect(
-      (await app.api.reactions.listReactions(list, { actor: null, request: sharing("inv-globex") }))[comment.id]
-    ).toHaveLength(1)
-    expect((await app.api.reactions.listReactions(list, { actor: identity.actor("bob") }))[comment.id]).toEqual([])
-    await expectCode(app.api.reactions.react({ ...onComment, emoji: "🎉" }, bob), "NOT_FOUND")
   })
 })

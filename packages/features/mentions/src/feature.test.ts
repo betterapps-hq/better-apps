@@ -82,10 +82,11 @@ const noteMentions = defineMentionSource({
 const shares = defineFeature({
   id: "shares",
   grants: {
-    canViewMany: (refs, { request }) => {
-      const shared = (request.headers.get("x-share") ?? "").split(",")
-      return refs.map((ref) => ref.subjectType === "note" && shared.includes(ref.subjectId))
-    }
+    canViewMany: (checks) =>
+      checks.map(
+        ({ subjectType, subjectId, request }) =>
+          subjectType === "note" && (request.headers.get("x-share") ?? "").split(",").includes(subjectId)
+      )
   }
 })
 

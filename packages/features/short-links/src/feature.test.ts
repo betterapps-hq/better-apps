@@ -336,6 +336,29 @@ describe("access through a link", () => {
     expect(answer.headers.get("set-cookie")).not.toContain("Secure")
   })
 
+  it("reads every request's links in one query, and none for subject types links can't grant", async () => {
+    const { app, api, as } = setup()
+    const first = await api.create({ target: inv1, grantsView: true }, as("ada"))
+    const second = await api.create(
+      { target: { subjectType: "invoice", subjectId: "inv-2" }, grantsView: true },
+      as("ada")
+    )
+    const reads = vi.spyOn(app.db, "findMany")
+    const holder = (code: string) => request(`better-apps-links=${code}`)
+    const allowed = await app.subjects.canViewMany([
+      { actor: null, ...inv1, request: holder(first.code) },
+      { actor: null, subjectType: "invoice", subjectId: "inv-2", request: holder(second.code) },
+      { actor: null, ...inv1, request: holder(second.code) }
+    ])
+    expect(allowed).toEqual([true, true, false])
+    expect(reads.mock.calls.filter(([query]) => query.model === "shortLink")).toHaveLength(1)
+    reads.mockClear()
+    const page = { subjectType: "page", subjectId: "home" }
+    expect(await app.subjects.canView(null, page, { request: holder(first.code) })).toBe(false)
+    expect(reads.mock.calls.filter(([query]) => query.model === "shortLink")).toHaveLength(0)
+    reads.mockRestore()
+  })
+
   it("reads the links again for each check, so a request reused by a live connection sees changes at once", async () => {
     const { app, api, as } = setup()
     const link = await api.create({ target: inv1, grantsView: true }, as("ada"))

@@ -94,21 +94,22 @@ export function commentGrants(config: Config): SubjectGrants {
     [commentSubjectTypes.comment]: threadsOfComments
   }
   return {
-    async canViewMany(refs, { request }, context) {
-      const answers = refs.map(() => false)
+    async canViewMany(checks, _args, context) {
+      const answers = checks.map(() => false)
       await Promise.all(
         Object.entries(finders).map(async ([subjectType, find]) => {
-          const indexes = refs.flatMap((ref, index) => (ref.subjectType === subjectType ? [index] : []))
+          const indexes = checks.flatMap((check, index) => (check.subjectType === subjectType ? [index] : []))
           if (indexes.length === 0) {
             return
           }
           const threads = await find(
             context.db,
-            indexes.map((index) => refs[index]?.subjectId ?? "")
+            indexes.map((index) => checks[index]?.subjectId ?? "")
           )
           const pairs = indexes.flatMap((index) => {
-            const thread = threads.get(refs[index]?.subjectId ?? "")
-            return thread ? [{ index, actor: null, thread, request }] : []
+            const check = checks[index]
+            const thread = threads.get(check?.subjectId ?? "")
+            return check && thread ? [{ index, actor: null, thread, request: check.request }] : []
           })
           const views = await viewThreads(config.subjects, context.subjects, pairs)
           for (const [position, { index }] of pairs.entries()) {

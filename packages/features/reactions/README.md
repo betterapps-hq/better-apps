@@ -128,8 +128,9 @@ may see, or `null` when they can't see the record. With the viewer's request, gr
 reads. Its `mine` says whether the viewer made the change, and its `userId` is `""` when `reactorVisibility` keeps who
 reacted from that viewer. Removals marked `bulk` aren't sent to browsers; instead `subject.changed` and `subject.moved`
 become one `subject.changed` client event for the record, so browsers load it again.
-`toClientEvents({ event, viewers })` does the same for many viewers, each `{ actor, request? }`, in order, with one
-`canViewMany` call by the app's rules and one for grants, for a live updates feature with many connections.
+`toClientEvents({ event, viewers })` does the same for many viewers, each `{ actor, request? }`, in order, for a live
+updates feature with many connections. It makes one `canViewMany` call by the app's rules, and one for the grants the
+refused viewers' requests carry, which each granting feature answers for all of them at once.
 
 ## In the browser
 

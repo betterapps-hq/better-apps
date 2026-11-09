@@ -93,7 +93,6 @@ export interface ListReactorsInput<Types extends ReactionsTypes = ReactionsTypes
 
 // @public
 export interface LiveViewer {
-    // (undocumented)
     actor: Actor | null;
     request?: Request | null | undefined;
 }

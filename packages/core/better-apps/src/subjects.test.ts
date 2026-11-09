@@ -176,16 +176,18 @@ describe("subjects", () => {
     )
   })
 
-  it("counts grants a request carries, only for checks that pass it, asking each feature once per request", async () => {
+  it("counts grants a request carries, only for checks that pass it, asking each feature once per call", async () => {
     const asked: string[][] = []
     // Grants invoices whose id is in the request's x-share header.
     const shares = defineFeature({
       id: "shares",
       grants: {
-        canViewMany: (refs, { request }) => {
-          asked.push(refs.map((ref) => ref.subjectId))
-          const shared = (request.headers.get("x-share") ?? "").split(",")
-          return refs.map((ref) => ref.subjectType === "invoice" && shared.includes(ref.subjectId))
+        canViewMany: (checks) => {
+          asked.push(checks.map((check) => check.subjectId))
+          return checks.map(
+            ({ subjectType, subjectId, request }) =>
+              subjectType === "invoice" && (request.headers.get("x-share") ?? "").split(",").includes(subjectId)
+          )
         }
       }
     })
@@ -210,6 +212,18 @@ describe("subjects", () => {
     expect(allowed).toEqual([true, true, false, false])
     // inv-1 passed the app's rules, so only the refused checks that carry the request were asked about.
     expect(asked).toEqual([["inv-2", "draft"]])
+
+    // Checks carrying different requests, such as one per live connection, are asked together, and repeats once.
+    asked.length = 0
+    const other = new Request("https://app.test/", { headers: { "x-share": "inv-3" } })
+    const many = await subjects.canViewMany([
+      { actor: null, ...inv2, request },
+      { actor: solo, ...inv2, request },
+      { actor: null, ...inv2, request: other },
+      { actor: null, subjectType: "invoice", subjectId: "inv-3", request: other }
+    ])
+    expect(many).toEqual([true, true, false, true])
+    expect(asked).toEqual([["inv-2", "inv-2", "inv-3"]])
   })
 
   it("lets grants report an error they recovered from to the app's onError, as their feature's", async () => {
@@ -217,9 +231,9 @@ describe("subjects", () => {
     const shares = defineFeature({
       id: "shares",
       grants: {
-        canViewMany: (refs, { reportError }) => {
+        canViewMany: (checks, { reportError }) => {
           reportError(failure)
-          return refs.map(() => false)
+          return checks.map(() => false)
         }
       }
     })
@@ -242,7 +256,7 @@ describe("subjects", () => {
     })
     const shares = defineFeature({
       id: "shares",
-      grants: { canViewMany: (refs) => refs.map((ref) => ref.subjectId === "inv-2") }
+      grants: { canViewMany: (checks) => checks.map((check) => check.subjectId === "inv-2") }
     })
     const onError = vi.fn<(error: unknown, context: ErrorContext) => void>()
     const { subjects } = setup({ invoice, page }, [broken, shares], onError)
@@ -267,9 +281,9 @@ describe("subjects", () => {
     const shares = defineFeature({
       id: "shares",
       grants: {
-        canViewMany: (refs, { reportError }) => {
+        canViewMany: (checks, { reportError }) => {
           reportError(new Error("A link's maker couldn't be checked."))
-          return refs.map(() => false)
+          return checks.map(() => false)
         }
       },
       actions: {
