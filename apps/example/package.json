@@ -21,6 +21,7 @@
     "@better-apps/mentions": "workspace:*",
     "@better-apps/react": "workspace:*",
     "@better-apps/reactions": "workspace:*",
+    "@better-apps/short-links": "workspace:*",
     "@better-apps/tanstack-start": "workspace:*",
     "@buildkitgg/shadcn-alerts-manager": "0.1.0",
     "@buildkitgg/shadcn-baseui-kit": "npm:@buildkitgg/shadcn-baseui-nova@0.5.0",

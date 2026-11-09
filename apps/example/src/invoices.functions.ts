@@ -3,18 +3,31 @@ import { createServerFn } from "@tanstack/react-start"
 import { getRequest } from "@tanstack/react-start/server"
 import { asc, desc, eq } from "drizzle-orm"
 import { z } from "zod"
-import { identity } from "./better-apps.server"
+import { app, identity } from "./better-apps.server"
 import { db } from "./db/database.server"
 import { invoice, invoiceLine, invoiceStatuses } from "./db/schema"
 
-export const listInvoices = createServerFn({ method: "GET" }).handler(() =>
-  db.select().from(invoice).orderBy(desc(invoice.issuedOn), desc(invoice.number))
-)
+/** Every invoice, for someone signed in, or `null` for a signed-out visitor. */
+export const listInvoices = createServerFn({ method: "GET" }).handler(async () => {
+  if (!(await identity.getActor(getRequest()))) {
+    return null
+  }
+  return db.select().from(invoice).orderBy(desc(invoice.issuedOn), desc(invoice.number))
+})
 
-/** An invoice with what it bills for. */
+/**
+ * An invoice with what it bills for, for someone signed in or a visitor who opened a short link that shares it, or
+ * `null` for anyone else, who needs to sign in.
+ */
 export const getInvoice = createServerFn({ method: "GET" })
   .validator(z.object({ id: z.string() }))
   .handler(async ({ data }) => {
+    const request = getRequest()
+    const actor = await identity.getActor(request)
+    // The request carries the short links its visitor opened, so a link that shares the invoice counts.
+    if (!actor && !(await app.subjects.canView(null, { subjectType: "invoice", subjectId: data.id }, { request }))) {
+      return null
+    }
     const [found] = await db.select().from(invoice).where(eq(invoice.id, data.id))
     if (!found) {
       throw notFound()
