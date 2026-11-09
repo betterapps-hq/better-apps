@@ -44,6 +44,7 @@ export { defineFeature, type BetterAppsFeature } from "./feature.js"
 export { localIdentity, type Actor, type Author, type Identity, type IdentityUser, type LocalUser } from "./identity.js"
 export type { BetterAppsOptions } from "./options.js"
 export type { DeliverOptions, DeliveryReport, ErrorContext } from "./outbox.js"
+export { defineRoute, type RouteContext, type RouteDefinition, type RouteMethod } from "./route.js"
 export type {
   DatabaseSchema,
   FeatureSchema,
@@ -59,8 +60,10 @@ export {
   type SubjectCheck,
   type SubjectContext,
   type SubjectDefinition,
+  type SubjectGrants,
   type SubjectRef,
-  type Subjects
+  type Subjects,
+  type ViewOptions
 } from "./subjects.js"
 export type {
   InferSchemaInput,

@@ -170,4 +170,40 @@ describe("subjects", () => {
       'The "declares" feature declares the "invoice" subject type, which is already declared.'
     )
   })
+
+  it("counts grants a request carries, only for checks that pass it, asking each feature once per request", async () => {
+    const asked: string[][] = []
+    // Grants invoices whose id is in the request's x-share header.
+    const shares = defineFeature({
+      id: "shares",
+      grants: {
+        canViewMany: (refs, { request }) => {
+          asked.push(refs.map((ref) => ref.subjectId))
+          const shared = (request.headers.get("x-share") ?? "").split(",")
+          return refs.map((ref) => ref.subjectType === "invoice" && shared.includes(ref.subjectId))
+        }
+      }
+    })
+    const { subjects } = setup({ invoice, page }, [shares])
+    const request = new Request("https://app.test/", { headers: { "x-share": "inv-2" } })
+    const inv2 = { subjectType: "invoice", subjectId: "inv-2" }
+    expect(await subjects.canView(null, inv2)).toBe(false)
+    expect(await subjects.canView(ada, inv2)).toBe(false)
+    expect(asked).toEqual([])
+    expect(await subjects.canView(null, inv2, { request })).toBe(true)
+    expect(await subjects.canView(ada, inv2, { request })).toBe(true)
+    expect(await subjects.canView(ada, { subjectType: "invoice", subjectId: "inv-3" }, { request })).toBe(false)
+    expect(await subjects.isPublic(inv2)).toBe(false)
+
+    asked.length = 0
+    const allowed = await subjects.canViewMany([
+      { actor: ada, subjectType: "invoice", subjectId: "inv-1", request },
+      { actor: ada, ...inv2, request },
+      { actor: solo, ...inv2 },
+      { actor: null, subjectType: "page", subjectId: "draft", request }
+    ])
+    expect(allowed).toEqual([true, true, false, false])
+    // inv-1 passed the app's rules, so only the refused checks that carry the request were asked about.
+    expect(asked).toEqual([["inv-2", "draft"]])
+  })
 })

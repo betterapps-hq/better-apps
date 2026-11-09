@@ -123,9 +123,11 @@ export type BetterAppsEvents<Features extends readonly BetterAppsFeature[]> = Fe
 export interface BetterAppsFeature {
     actions?: Readonly<Record<string, ActionDefinition>> | undefined;
     events?: Readonly<Record<string, EventDefinition>> | undefined;
+    grants?: SubjectGrants | undefined;
     id: string;
     on?: Readonly<Record<string, Readonly<Record<string, EventHandler>>>> | undefined;
     options?: unknown;
+    routes?: Readonly<Record<string, RouteDefinition>> | undefined;
     schema?: FeatureSchema | undefined;
     subjects?: Readonly<Record<string, SubjectDefinition>> | undefined;
     usesSubjects?: readonly string[] | undefined;
@@ -258,6 +260,9 @@ export function defineEvent<Data = unknown>(): EventDefinition<Data>;
 export function defineFeature<const Feature extends BetterAppsFeature>(feature: Feature): Feature;
 
 // @public
+export function defineRoute(route: RouteDefinition): RouteDefinition;
+
+// @public
 export function defineSubject(subject: SubjectDefinition): SubjectDefinition;
 
 // @public
@@ -288,6 +293,7 @@ export interface ErrorContext {
     event?: BetterAppsEvent | undefined;
     // (undocumented)
     feature?: string | undefined;
+    route?: string | undefined;
 }
 
 // @public
@@ -433,6 +439,35 @@ export interface LocalUser {
 }
 
 // @public
+export interface RouteContext {
+    // (undocumented)
+    db: DatabaseAdapter;
+    getActor(): Promise<Actor | null>;
+    // (undocumented)
+    identity: Identity;
+    // (undocumented)
+    now: Date;
+    params: Readonly<Record<string, string>>;
+    // (undocumented)
+    request: Request;
+    subjects: Subjects;
+    url: URL;
+    waitUntil(promise: Promise<unknown>): void;
+}
+
+// @public
+export interface RouteDefinition {
+    // (undocumented)
+    handler(context: RouteContext): Response | Promise<Response>;
+    // (undocumented)
+    method: RouteMethod;
+    path: string;
+}
+
+// @public
+export type RouteMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+
+// @public
 export type Row = Record<string, unknown>;
 
 // @public
@@ -492,6 +527,7 @@ export interface SubjectArgs extends SubjectRef {
 export interface SubjectCheck extends SubjectRef {
     // (undocumented)
     actor: Actor | null;
+    request?: Request | null | undefined;
 }
 
 // @public
@@ -514,6 +550,13 @@ export interface SubjectDefinition {
 }
 
 // @public
+export interface SubjectGrants {
+    canViewMany(refs: readonly SubjectRef[], args: {
+        request: Request;
+    }, context: SubjectContext): readonly boolean[] | Promise<readonly boolean[]>;
+}
+
+// @public
 export interface SubjectRef {
     // (undocumented)
     subjectId: string;
@@ -523,7 +566,7 @@ export interface SubjectRef {
 
 // @public
 export interface Subjects {
-    canView(actor: Actor | null, ref: SubjectRef): Promise<boolean>;
+    canView(actor: Actor | null, ref: SubjectRef, options?: ViewOptions): Promise<boolean>;
     canViewMany(checks: readonly SubjectCheck[]): Promise<boolean[]>;
     getOrgId(ref: SubjectRef, actor?: Actor | null): Promise<string | null>;
     getOrgIds(refs: readonly SubjectRef[], actor?: Actor | null): Promise<(string | null)[]>;
@@ -550,6 +593,11 @@ export interface TableSchema {
     indexes?: readonly TableIndex[] | undefined;
     // (undocumented)
     modelName: string;
+}
+
+// @public
+export interface ViewOptions {
+    request?: Request | null | undefined;
 }
 
 // @public

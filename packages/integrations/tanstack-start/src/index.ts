@@ -42,7 +42,10 @@ export interface StartBindings<Features extends readonly BetterAppsFeature[]> {
    * from server routes. Options such as `actor`, `author` and `silent` work as they do on `app.api`.
    */
   api: BetterAppsApi<Features>
-  /** Handlers for a catch-all server route at the app's base path, such as `src/routes/api/apps/$.ts`. */
+  /**
+   * Handlers for a catch-all server route at the app's base path, such as `src/routes/api/apps/$.ts`, and at features'
+   * route paths, such as `src/routes/s/$.ts`.
+   */
   handlers: StartRouteHandlers
   /**
    * Creates a client for server code that calls the app in process, as the user of the request being served. Feature

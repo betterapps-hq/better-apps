@@ -6,6 +6,7 @@ import type { BetterAppsFeature } from "./feature.js"
 import type { Actor, Author, Identity } from "./identity.js"
 import type { BetterAppsOptions } from "./options.js"
 import { createOutbox, type DeliverOptions, type DeliveryReport, type ErrorContext } from "./outbox.js"
+import { compileRoutes, matchRoute, type CompiledRoute } from "./route.js"
 import type { StandardSchemaV1 } from "./standard-schema.js"
 import { createSubjects, type SubjectDefinition, type Subjects } from "./subjects.js"
 
@@ -26,10 +27,11 @@ export interface CreateBetterAppsOptions<
   /** The largest request body `app.handler` reads, in bytes. The default is 1 MiB. */
   maxBodySize?: number | undefined
   /**
-   * Reports errors no caller sees: unexpected errors in actions called over HTTP, and subscribers that fail. The default
-   * logs them with `console.error`. If it throws or rejects, that's logged too, and delivery and the action's result go
-   * on as if it hadn't. A promise it returns is handed to the request's, call's or delivery run's `waitUntil` when it has
-   * one, so the report isn't cut off on Workers. Otherwise nothing waits for it.
+   * Reports errors no caller sees: unexpected errors in actions called over HTTP and in routes, work routes keep running
+   * after their response, and subscribers that fail. The default logs them with `console.error`. If it throws or
+   * rejects, that's logged too, and delivery and the action's result go on as if it hadn't. A promise it returns is
+   * handed to the request's, call's or delivery run's `waitUntil` when it has one, so the report isn't cut off on
+   * Workers. Otherwise nothing waits for it.
    */
   onError?: ((error: unknown, context: ErrorContext) => void | Promise<void>) | undefined
 }
@@ -52,7 +54,10 @@ export interface ApiCallOptions {
 
 /** The platform hooks `app.handler` uses, such as a Cloudflare Worker's execution context. */
 export interface HandlerContext {
-  /** Keeps event delivery running after the response is sent. Without it, the response waits for delivery. */
+  /**
+   * Keeps event delivery, and work routes hand it, running after the response is sent. Without it, the response waits
+   * for them.
+   */
   waitUntil?(promise: Promise<unknown>): void
 }
 
@@ -91,8 +96,8 @@ export interface BetterApp<Features extends readonly BetterAppsFeature[] = reado
   /** Calls actions from server code, typed per feature, with options a browser can't send. */
   api: BetterAppsApi<Features>
   /**
-   * Answers `POST {basePath}/{feature}/{action}` with the action's JSON input as the body. Works on any runtime with the
-   * Fetch API, such as Cloudflare Workers and Node.
+   * Answers `POST {basePath}/{feature}/{action}` with the action's JSON input as the body, and the features' routes, such
+   * as `GET /s/:code`. Works on any runtime with the Fetch API, such as Cloudflare Workers and Node.
    */
   handler(request: Request, context?: HandlerContext): Promise<Response>
   /** Delivers events left in the outbox by a crash or a failing subscriber. Call it from a scheduled job. */
@@ -160,8 +165,8 @@ async function readBody(request: Request, limit: number): Promise<string> {
   return new TextDecoder().decode(body)
 }
 
-function errorResponse(error: BetterAppsError): Response {
-  const headers = error.status === 405 ? { allow: "POST" } : undefined
+function errorResponse(error: BetterAppsError, allow = "POST"): Response {
+  const headers = error.status === 405 ? { allow } : undefined
   const body = { error: { code: error.code, message: error.message, ...(error.issues && { issues: error.issues }) } }
   return Response.json(body, { status: error.status, headers })
 }
@@ -205,7 +210,7 @@ export function createBetterApps<const Features extends readonly BetterAppsFeatu
   const report =
     options.onError ??
     ((error: unknown, context: ErrorContext) => {
-      const where = [context.feature, context.action ?? context.event?.type].filter(Boolean).join(" ")
+      const where = [context.feature, context.action ?? context.route ?? context.event?.type].filter(Boolean).join(" ")
       console.error(`Better Apps${where ? ` (${where})` : ""}:`, error)
     })
   // A reporter that fails, such as one using a context that has ended, mustn't stop delivery or replace a result.
@@ -226,7 +231,11 @@ export function createBetterApps<const Features extends readonly BetterAppsFeatu
       // The runtime refused it, such as after its context ended, so the report runs on without it.
     }
   }
-  const subjects = createSubjects(declareSubjects(options), { db, identity })
+  const subjects = createSubjects(declareSubjects(options), {
+    db,
+    identity,
+    grants: features.flatMap((feature) => (feature.grants ? [feature.grants] : []))
+  })
   const outbox = createOutbox({ db, features, identity, subjects, onError })
 
   const actions = new Map<string, Map<string, { feature: BetterAppsFeature; action: ActionDefinition }>>()
@@ -245,6 +254,17 @@ export function createBetterApps<const Features extends readonly BetterAppsFeatu
     }
     actions.set(feature.id, byName)
   }
+  const routes = compileRoutes(
+    features.flatMap((feature) =>
+      Object.entries(feature.routes ?? {}).map(([name, route]) => ({
+        owner: feature,
+        ownerId: feature.id,
+        name,
+        route
+      }))
+    ),
+    basePath
+  )
 
   async function run(feature: BetterAppsFeature, action: ActionDefinition, rawInput: unknown, call: Call) {
     const input = action.input ? await validate(action.input, rawInput) : rawInput
@@ -312,8 +332,74 @@ export function createBetterApps<const Features extends readonly BetterAppsFeatu
     api[featureId] = methods
   }
 
+  async function serveRoute(
+    { owner: feature, name, route }: CompiledRoute<BetterAppsFeature>,
+    params: Record<string, string>,
+    request: Request,
+    url: URL,
+    waitUntil: ((promise: Promise<unknown>) => void) | undefined
+  ): Promise<Response> {
+    const where = { feature: feature.id, route: name }
+    // Work the platform can't keep running after the response is waited for before it's sent.
+    const kept: Promise<unknown>[] = []
+    const keep = (promise: Promise<unknown>) => {
+      const watched = promise.then(
+        () => undefined,
+        (error: unknown) => onError(error, where, waitUntil)
+      )
+      if (waitUntil) {
+        try {
+          waitUntil(watched)
+          return
+        } catch {
+          // The runtime refused it, such as after its context ended, so the response waits for it instead.
+        }
+      }
+      kept.push(watched)
+    }
+    let actor: Promise<Actor | null> | undefined
+    try {
+      const response = await route.handler({
+        request,
+        url,
+        params,
+        db,
+        identity,
+        subjects,
+        now: new Date(),
+        getActor: async () => (actor ??= identity.getActor(request)),
+        waitUntil: keep
+      })
+      return request.method === "HEAD" && response.body ? new Response(null, response) : response
+    } catch (error) {
+      if (error instanceof BetterAppsError) {
+        return errorResponse(error)
+      }
+      onError(error, where, waitUntil)
+      return internalError()
+    } finally {
+      await Promise.all(kept)
+    }
+  }
+
   async function handler(request: Request, context: HandlerContext = {}): Promise<Response> {
-    const { pathname } = new URL(request.url)
+    const url = new URL(request.url)
+    const { pathname } = url
+    if (routes.length > 0) {
+      const match = matchRoute(routes, request.method, pathname)
+      if (match.found) {
+        return serveRoute(match.found, match.params, request, url, context.waitUntil?.bind(context))
+      }
+      if (match.allowed.length > 0) {
+        const allow = [...new Set(match.allowed.flatMap((method) => (method === "GET" ? ["GET", "HEAD"] : [method])))]
+        return errorResponse(
+          new BetterAppsError("METHOD_NOT_ALLOWED", `This address takes ${allow.join(", ")} requests.`, {
+            status: 405
+          }),
+          allow.join(", ")
+        )
+      }
+    }
     const [featureId, name, ...rest] = pathname.startsWith(`${basePath}/`)
       ? pathname.slice(basePath.length + 1).split("/")
       : []

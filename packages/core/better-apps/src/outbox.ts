@@ -24,6 +24,8 @@ export interface DeliverOptions {
 export interface ErrorContext {
   feature?: string | undefined
   action?: string | undefined
+  /** The route whose handler, or work it kept running, failed. */
+  route?: string | undefined
   event?: BetterAppsEvent | undefined
 }
 

@@ -16,6 +16,33 @@ export interface SubjectArgs extends SubjectRef {
 /** A subject, and who's asking about it: a signed-in user, or `null` for a signed-out visitor. */
 export interface SubjectCheck extends SubjectRef {
   actor: Actor | null
+  /**
+   * The request the person asking made, so access it carries, such as a share link they opened, counts too. Pass it
+   * only when the check is about that person, and leave it out for writes.
+   */
+  request?: Request | null | undefined
+}
+
+/** Options for a single `canView` check. */
+export interface ViewOptions {
+  /** The request the person asking made, so grants it carries count. See `SubjectCheck.request`. */
+  request?: Request | null | undefined
+}
+
+/**
+ * Access a request carries besides the app's rules, such as a share link a visitor opened, which a feature declares as
+ * its `grants`. It only widens checks that pass the request, and only for seeing subjects.
+ */
+export interface SubjectGrants {
+  /**
+   * Which of the subjects the request may see, in the same order. It's asked only about subjects the app's rules
+   * refuse, once per request in a check, so it can read what the request carries in one query.
+   */
+  canViewMany(
+    refs: readonly SubjectRef[],
+    args: { request: Request },
+    context: SubjectContext
+  ): readonly boolean[] | Promise<readonly boolean[]>
 }
 
 /** What subject checks receive besides their arguments, for subject types that read Better Apps' own tables. */
@@ -82,9 +109,15 @@ export interface Subjects {
   getOrgId(ref: SubjectRef, actor?: Actor | null): Promise<string | null>
   /** `getOrgId` for many subjects, in the same order, with one `getOrgIds` call per subject type. */
   getOrgIds(refs: readonly SubjectRef[], actor?: Actor | null): Promise<(string | null)[]>
-  /** Whether someone can see a subject. A signed-out visitor, `null`, sees only public subjects. */
-  canView(actor: Actor | null, ref: SubjectRef): Promise<boolean>
-  /** `canView` for many pairs, in the same order, with one `canViewMany` call per subject type. */
+  /**
+   * Whether someone can see a subject. A signed-out visitor, `null`, sees only public subjects. With the request they
+   * made, access it carries, such as a share link, counts too.
+   */
+  canView(actor: Actor | null, ref: SubjectRef, options?: ViewOptions): Promise<boolean>
+  /**
+   * `canView` for many checks, in the same order, with one `canViewMany` call per subject type, and one call of each
+   * feature's grants per request for the checks the app's rules refuse.
+   */
   canViewMany(checks: readonly SubjectCheck[]): Promise<boolean[]>
   /** Whether signed-out visitors can see a subject. */
   isPublic(ref: SubjectRef): Promise<boolean>
@@ -95,8 +128,9 @@ export interface Subjects {
 /** The app's subject types, from its options and its features, answering access checks. */
 export function createSubjects(
   declared: ReadonlyMap<string, SubjectDefinition>,
-  options: { db: DatabaseAdapter; identity: Identity }
+  options: { db: DatabaseAdapter; identity: Identity; grants?: readonly SubjectGrants[] | undefined }
 ): Subjects {
+  const grants = options.grants ?? []
   const definitionOf = (subjectType: string): SubjectDefinition => {
     const definition = declared.get(subjectType)
     if (!definition) {
@@ -160,7 +194,7 @@ export function createSubjects(
     return Promise.all(pairs.map(async (pair) => definition.canView(pair, context)))
   }
 
-  const canViewMany = async (checks: readonly SubjectCheck[]): Promise<boolean[]> =>
+  const byRules = async (checks: readonly SubjectCheck[]): Promise<boolean[]> =>
     byType(checks, false, async (definition, group) => {
       const signedIn = group.flatMap((check, index) => (check.actor ? [index] : []))
       const signedOut = group.flatMap((check, index) => (check.actor ? [] : [index]))
@@ -180,6 +214,33 @@ export function createSubjects(
       }
       return allowed
     })
+
+  /** Widens the app's answers with the grants each check's request carries, asking each feature once per request. */
+  const canViewMany = async (checks: readonly SubjectCheck[]): Promise<boolean[]> => {
+    const allowed = await byRules(checks)
+    if (grants.length === 0) {
+      return allowed
+    }
+    const byRequest = new Map<Request, number[]>()
+    for (const [index, check] of checks.entries()) {
+      if (!allowed[index] && check.request) {
+        byRequest.set(check.request, [...(byRequest.get(check.request) ?? []), index])
+      }
+    }
+    await Promise.all(
+      [...byRequest].map(async ([request, indexes]) => {
+        const refs = indexes.map((index) => {
+          const { subjectType, subjectId } = checks[index] as SubjectCheck
+          return { subjectType, subjectId }
+        })
+        const answers = await Promise.all(grants.map(async (grant) => grant.canViewMany(refs, { request }, context)))
+        for (const [position, index] of indexes.entries()) {
+          allowed[index] = answers.some((granted) => granted[position] === true)
+        }
+      })
+    )
+    return allowed
+  }
 
   const subjects: Subjects = {
     has: (subjectType) => declared.has(subjectType),
@@ -203,8 +264,8 @@ export function createSubjects(
         }
         return Promise.all(group.map(async (ref) => (await getOrgId(ref, context)) ?? null))
       }),
-    async canView(actor, ref) {
-      const [allowed] = await canViewMany([{ ...ref, actor }])
+    async canView(actor, ref, { request } = {}) {
+      const [allowed] = await canViewMany([{ ...ref, actor, request }])
       return allowed === true
     },
     canViewMany,
