@@ -27,6 +27,19 @@ describe("comment subject types", () => {
       ])
     ).toEqual([false, true, false, false])
     expect(await app.subjects.getOrgId(comment(open.comment.id))).toBe("acme")
+    expect(
+      await app.subjects.getOrgIds([comment(open.comment.id), thread(staff.thread.id), comment("missing")])
+    ).toEqual(["acme", "acme", null])
+  })
+
+  it("stops treating a deleted comment as a record", async () => {
+    const { app, api, as, identity } = setup()
+    const { thread, comment } = await api.createThread({ ...onInvoice, body: "First" }, as("bob"))
+    await api.reply({ threadId: thread.id, body: "Second" }, as("bob"))
+    await api.deleteComment({ commentId: comment.id }, as("bob"))
+    const ref = { subjectType: commentSubjectTypes.comment, subjectId: comment.id }
+    expect(await app.subjects.canView(identity.actor("bob"), ref)).toBe(false)
+    expect(await app.subjects.getOrgId(ref)).toBeNull()
   })
 
   it("makes threads public when their subject is, unless their visibility is restricted", async () => {
@@ -42,6 +55,10 @@ describe("comment subject types", () => {
     expect(await app.subjects.isPublic(comment(open.comment.id))).toBe(true)
     expect(await app.subjects.canView(null, comment(open.comment.id))).toBe(true)
     expect(await app.subjects.isPublic(comment(staff.comment.id))).toBe(false)
+    expect(await app.subjects.isPublicMany([comment(open.comment.id), comment(staff.comment.id)])).toEqual([
+      true,
+      false
+    ])
     expect(await app.subjects.getOrgId(comment(open.comment.id))).toBeNull()
   })
 

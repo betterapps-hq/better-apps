@@ -1,5 +1,5 @@
 import type { DatabaseAdapter, Row, WriteOperation } from "./database.js"
-import { eventModel, type BetterAppsEvent, type EventHandler } from "./events.js"
+import { eventModel, type BetterAppsEvent, type EmitOptions, type EventHandler } from "./events.js"
 import type { BetterAppsFeature } from "./feature.js"
 import type { Actor, Author, Identity } from "./identity.js"
 import type { Subjects } from "./subjects.js"
@@ -86,36 +86,45 @@ export function createOutbox(options: {
    * Collects one action's or subscriber's events. Its `db` adds them to the next `batch`, so they commit with the
    * change; `flush` writes any left over. `written` lists the ids that reached the outbox.
    */
-  function track(feature: BetterAppsFeature, scope: EventScope) {
-    const pending: WriteOperation[] = []
+  function track(feature: BetterAppsFeature, scope: EventScope, { holdLater = false } = {}) {
+    const pending: Row[] = []
     const written: string[] = []
+    // Events left for the next `deliverEvents`, which this run doesn't deliver once written.
+    const later = new Set<string>()
+    // With `holdLater`, a subscriber's later events wait to be written with its event's removal, so a delivery that
+    // fails or crashes before then never leaves them behind to run twice.
+    const held: Row[] = []
     const take = () => {
-      const events = pending.splice(0)
-      return { events, ids: events.map((event) => String((event as { data: Row }).data.id)) }
+      const rows = pending.splice(0)
+      return { events: eventWrites(rows), ids: rows.map((row) => String(row.id)).filter((id) => !later.has(id)) }
     }
-    const emit = (type: string, data: unknown) => {
+    const emit = (type: string, data: unknown, options?: EmitOptions) => {
       if (!feature.events || !Object.hasOwn(feature.events, type)) {
         throw new Error(`The "${feature.id}" feature doesn't declare a "${type}" event.`)
       }
       if (subscribersOf(feature.id, type).length === 0) {
         return
       }
-      pending.push({
-        type: "create",
-        model: eventModel,
-        data: {
-          id: crypto.randomUUID(),
-          feature: feature.id,
-          type,
-          data: data ?? null,
-          actor: scope.actor,
-          author: scope.author,
-          silent: scope.silent,
-          createdAt: scope.now,
-          availableAt: new Date(),
-          attempts: 0
+      const row: Row = {
+        id: crypto.randomUUID(),
+        feature: feature.id,
+        type,
+        data: data ?? null,
+        actor: scope.actor,
+        author: scope.author,
+        silent: scope.silent,
+        createdAt: scope.now,
+        availableAt: new Date(),
+        attempts: 0
+      }
+      if (options?.later === true) {
+        later.add(String(row.id))
+        if (holdLater) {
+          held.push(row)
+          return
         }
-      })
+      }
+      pending.push(row)
     }
     const batch = async (operations: readonly WriteOperation[]) => {
       const { events, ids } = take()
@@ -133,7 +142,15 @@ export function createOutbox(options: {
         written.push(...ids)
       }
     }
-    return { db: scoped, emit, flush, written }
+    return { db: scoped, emit, flush, written, held }
+  }
+
+  /** Writes event rows, many with one createMany, so a bulk job's page of them takes a few statements. */
+  function eventWrites(rows: readonly Row[]): WriteOperation[] {
+    if (rows.length > 1) {
+      return [{ type: "createMany", model: eventModel, data: rows }]
+    }
+    return rows.map((data) => ({ type: "create", model: eventModel, data }))
   }
 
   // Claims an event, runs its subscribers, and removes it once they all succeed. Returns the events they emitted.
@@ -154,22 +171,27 @@ export function createOutbox(options: {
     }
     const event = toEvent(row)
     const emitted: string[] = []
+    const later: Row[] = []
     try {
       for (const { feature, handle } of subscribersOf(event.feature, event.type)) {
-        const scope = track(feature, {
-          actor: event.actor,
-          author: event.author,
-          now: new Date(),
-          silent: event.silent
-        })
+        const scope = track(
+          feature,
+          { actor: event.actor, author: event.author, now: new Date(), silent: event.silent },
+          { holdLater: true }
+        )
         try {
           await handle(event, { db: scope.db, identity, subjects, emit: scope.emit })
           await scope.flush()
+          later.push(...scope.held)
         } finally {
           emitted.push(...scope.written)
         }
       }
-      await db.deleteMany({ model: eventModel, where: [{ field: "id", value: id }] })
+      // Events left for later are written with the event's removal, so a retried delivery emits them once.
+      await db.batch([
+        ...eventWrites(later),
+        { type: "deleteMany", model: eventModel, where: [{ field: "id", value: id }] }
+      ])
       report.delivered += 1
     } catch (error) {
       report.failed += 1

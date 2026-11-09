@@ -266,6 +266,20 @@ describe.each(databases)("drizzleAdapter on $name", ({ connect, dispose, unavail
         { group: { subjectId: "z", pinned: false }, count: 1 }
       ])
     })
+
+    it("reads the smallest value of fields in each group", async () => {
+      await addComment({ id: "m1", subjectId: "m", createdAt: "2026-01-02T00:00:00.000Z" })
+      await addComment({ id: "m2", subjectId: "m", createdAt: "2026-01-01T00:00:00.000Z" })
+      const groups = await adapter.countGroups({
+        model: "comment",
+        where: [{ field: "subjectId", value: "m" }],
+        groupBy: ["subjectId"],
+        min: ["createdAt"]
+      })
+      expect(groups).toEqual([
+        { group: { subjectId: "m" }, count: 2, min: { createdAt: new Date("2026-01-01T00:00:00.000Z") } }
+      ])
+    })
   })
 
   describe("update, updateMany and deleteMany", () => {
@@ -378,6 +392,24 @@ describe.each(databases)("drizzleAdapter on $name", ({ connect, dispose, unavail
       expect(await adapter.findOne({ model: "comment", where: [{ field: "id", value: "a" }] })).toMatchObject({
         body: "Hi"
       })
+    })
+
+    it("creates many rows across several statements, atomically with the rest", async () => {
+      const data = Array.from({ length: 25 }, (_, index) => ({ id: `c${index}`, subjectId: "post", body: `${index}` }))
+      const results = await adapter.batch([
+        { type: "createMany", model: "comment", data },
+        { type: "createMany", model: "comment", data: [] },
+        { type: "deleteMany", model: "comment", where: [{ field: "id", value: "c0" }] }
+      ])
+      expect(results).toEqual([25, 0, 1])
+      expect(await adapter.count({ model: "comment" })).toBe(24)
+      await expect(
+        adapter.batch([
+          { type: "createMany", model: "comment", data: [{ id: "new", subjectId: "post", body: "Hi" }] },
+          { type: "createMany", model: "comment", data: [{ id: "c1", subjectId: "post", body: "Duplicate" }] }
+        ])
+      ).rejects.toThrow(duplicateId)
+      expect(await adapter.count({ model: "comment" })).toBe(24)
     })
 
     it("runs a single write and no writes", async () => {

@@ -37,7 +37,16 @@ export interface EventContext {
   /** Who can see the app's subjects, such as for checking who an event may reach. */
   subjects: Subjects
   /** Emits one of the subscribing feature's own events, delivered after this one. */
-  emit(type: string, data: unknown): void
+  emit(type: string, data: unknown, options?: EmitOptions): void
+}
+
+/** How an emitted event is delivered. */
+export interface EmitOptions {
+  /**
+   * Leaves the event for the next `app.deliverEvents()` instead of delivering it in this run, so a bulk job can do a
+   * step per run, such as a few pages at a time, and continue in the next instead of in one long request.
+   */
+  later?: boolean | undefined
 }
 
 /** Handles another feature's event. Throwing leaves the event in the outbox to be retried. */

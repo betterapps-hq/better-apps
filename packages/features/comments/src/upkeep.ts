@@ -15,7 +15,7 @@ export interface UpkeepStep {
 const step = limits.maxThreadsPerPage
 const usersStep = 90
 
-async function subjectThreadIds(context: Context, subjectType: string, subjectId: string, orgIdNot?: string) {
+async function subjectThreads(context: Context, subjectType: string, subjectId: string, orgIdNot?: string) {
   const threads = await context.db.findMany<CommentThread>({
     model: threadModel,
     where: [
@@ -24,18 +24,40 @@ async function subjectThreadIds(context: Context, subjectType: string, subjectId
       ...(orgIdNot === undefined ? [] : [{ field: "orgId", operator: "ne" as const, value: orgIdNot }])
     ],
     sortBy: { field: "id", direction: "asc" },
-    limit: step,
-    select: ["id"]
+    limit: step
   })
-  return threads.map((thread) => thread.id)
+  const comments =
+    threads.length === 0
+      ? []
+      : await context.db.findMany<Comment>({
+          model: commentModel,
+          where: [{ field: "threadId", operator: "in", value: threads.map((thread) => thread.id) }],
+          select: ["id", "threadId"]
+        })
+  const commentIds = (thread: CommentThread) =>
+    comments.filter((comment) => comment.threadId === thread.id).map((comment) => comment.id)
+  return { threads, ids: threads.map((thread) => thread.id), commentIds }
 }
 
-/** Deletes up to 50 of a removed record's threads. The last step emits `subject.removed`. */
+const eventData = (thread: CommentThread) => ({
+  subjectType: thread.subjectType,
+  subjectId: thread.subjectId,
+  orgId: thread.orgId,
+  thread
+})
+
+/**
+ * Deletes up to 50 of a removed record's threads, emitting `thread.deleted` for each. The last step emits
+ * `subject.removed`.
+ */
 export async function removeSubject(config: Config, context: Context): Promise<UpkeepStep> {
   const { subjectType, subjectId } = context.input as { subjectType: string; subjectId: string }
   subjectOf(config.subjects, subjectType)
-  const ids = await subjectThreadIds(context, subjectType, subjectId)
+  const { threads, ids, commentIds } = await subjectThreads(context, subjectType, subjectId)
   const done = ids.length < step
+  for (const thread of threads) {
+    context.emit("thread.deleted", { ...eventData(thread), commentIds: commentIds(thread) })
+  }
   if (done) {
     context.emit("subject.removed", { subjectType, subjectId })
   }
@@ -48,14 +70,24 @@ export async function removeSubject(config: Config, context: Context): Promise<U
   return { done }
 }
 
-/** Moves up to 50 of a record's threads, and their comments, to another organization. The last step emits `subject.moved`. */
+/**
+ * Moves up to 50 of a record's threads, and their comments, to another organization, emitting `thread.moved` for each.
+ * The last step emits `subject.moved`.
+ */
 export async function moveSubject(config: Config, context: Context): Promise<UpkeepStep> {
   const input = context.input as { subjectType: string; subjectId: string; toOrgId: string | null }
   const { subjectType, subjectId } = input
   subjectOf(config.subjects, subjectType)
   const toOrgId = input.toOrgId ?? ""
-  const ids = await subjectThreadIds(context, subjectType, subjectId, toOrgId)
+  const { threads, ids, commentIds } = await subjectThreads(context, subjectType, subjectId, toOrgId)
   const done = ids.length < step
+  for (const thread of threads) {
+    context.emit("thread.moved", {
+      ...eventData({ ...thread, orgId: toOrgId }),
+      fromOrgId: thread.orgId,
+      commentIds: commentIds(thread)
+    })
+  }
   if (done) {
     context.emit("subject.moved", { subjectType, subjectId, toOrgId })
   }

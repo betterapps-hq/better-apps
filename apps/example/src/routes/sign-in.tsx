@@ -1,5 +1,22 @@
+import {
+  Avatar,
+  AvatarFallback,
+  Button,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Field,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+  FieldSeparator,
+  Input
+} from "@buildkitgg/shadcn-baseui-kit"
 import { createFileRoute } from "@tanstack/react-router"
 import { useState, type FormEvent } from "react"
+import { initials } from "../app-shell"
 import { demoPassword, demoUsers } from "../demo-users"
 
 /**
@@ -23,7 +40,7 @@ export const Route = createFileRoute("/sign-in")({
   validateSearch: (search: Record<string, unknown>): { redirect?: string | undefined } => ({
     redirect: sitePath(search.redirect)
   }),
-  head: () => ({ meta: [{ title: "Sign in – Better Apps example" }] }),
+  head: () => ({ meta: [{ title: "Sign in – Better Invoices" }] }),
   component: SignIn
 })
 
@@ -49,7 +66,7 @@ async function signIn(email: string, password: string): Promise<string | null> {
 }
 
 function SignIn() {
-  const { redirect = "/" } = Route.useSearch()
+  const { redirect = "/invoices" } = Route.useSearch()
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState<string | null>(null)
@@ -77,64 +94,89 @@ function SignIn() {
   }
 
   return (
-    <>
-      <h1>Sign in</h1>
-      <p className="lead">The example signs people in with Better Auth’s email and password sign-in.</p>
-      <form className="sign-in-form" onSubmit={handleSubmit}>
-        <label htmlFor="email">Email</label>
-        <input
-          id="email"
-          type="email"
-          autoComplete="username"
-          required
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          aria-invalid={error ? true : undefined}
-          aria-describedby={error ? "sign-in-error" : undefined}
-        />
-        <label htmlFor="password">Password</label>
-        <input
-          id="password"
-          type="password"
-          autoComplete="current-password"
-          required
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-          aria-invalid={error ? true : undefined}
-          aria-describedby={error ? "sign-in-error" : undefined}
-        />
-        {error && (
-          <p id="sign-in-error" className="form-error" role="alert">
-            {error}
-          </p>
-        )}
-        <button type="submit" aria-disabled={busy}>
-          Sign in
-        </button>
-      </form>
-      <section aria-labelledby="demo-title">
-        <h2 id="demo-title">Demo people</h2>
-        <p>
-          The example signs these people up on its first start. Their password is <code>{demoPassword}</code>.
-        </p>
-        <ul className="demo-people">
-          {demoUsers.map((person) => (
-            <li key={person.email}>
-              <span>
-                {person.name} <span className="muted">{person.email}</span>
-              </span>
-              <button
-                type="button"
-                className="secondary"
-                aria-disabled={busy}
-                onClick={() => void submit(person.email, demoPassword)}
-              >
-                Sign in as {person.name.split(" ")[0]}
-              </button>
-            </li>
-          ))}
-        </ul>
-      </section>
-    </>
+    <div className="sign-in-page">
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            <h1>Sign in</h1>
+          </CardTitle>
+          <CardDescription>The example signs people in with Better Auth’s email and password sign-in.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit}>
+            <FieldGroup>
+              <Field data-invalid={error ? true : undefined}>
+                <FieldLabel htmlFor="email">Email</FieldLabel>
+                <Input
+                  id="email"
+                  type="email"
+                  autoComplete="username"
+                  required
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  aria-invalid={error ? true : undefined}
+                  aria-describedby={error ? "sign-in-error" : undefined}
+                />
+              </Field>
+              <Field data-invalid={error ? true : undefined}>
+                <FieldLabel htmlFor="password">Password</FieldLabel>
+                <Input
+                  id="password"
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  aria-invalid={error ? true : undefined}
+                  aria-describedby={error ? "sign-in-error" : undefined}
+                />
+                {error && (
+                  <FieldError id="sign-in-error" role="alert">
+                    {error}
+                  </FieldError>
+                )}
+              </Field>
+              <Button type="submit" aria-disabled={busy}>
+                Sign in
+              </Button>
+              <FieldSeparator>Or use a demo person</FieldSeparator>
+              <section aria-labelledby="demo-title" className="stack">
+                <h2 id="demo-title" className="visually-hidden">
+                  Demo people
+                </h2>
+                <ul className="demo-people">
+                  {demoUsers.map((person) => (
+                    <li key={person.email} className="demo-person">
+                      <Avatar>
+                        <AvatarFallback>{initials(person.name)}</AvatarFallback>
+                      </Avatar>
+                      <div>
+                        <strong>{person.name}</strong>
+                        <span>
+                          {person.role}, {person.email}
+                        </span>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        aria-disabled={busy}
+                        onClick={() => void submit(person.email, demoPassword)}
+                      >
+                        Sign in as {person.name.split(" ")[0]}
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+                <p className="muted" style={{ fontSize: "0.8125rem" }}>
+                  The example signs these people up on its first start. Their password is <code>{demoPassword}</code>.
+                  Ada owns the workspace, so she can delete anyone’s comments and threads.
+                </p>
+              </section>
+            </FieldGroup>
+          </form>
+        </CardContent>
+      </Card>
+    </div>
   )
 }

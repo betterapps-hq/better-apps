@@ -76,6 +76,40 @@ describe("subjects", () => {
     )
   })
 
+  it("reads many organizations and public checks with one call per subject type, in order", async () => {
+    const getOrgIds = vi.fn<(refs: readonly { subjectId: string }[]) => (string | null)[]>(
+      (refs: readonly { subjectId: string }[]) => refs.map(({ subjectId }) => orgs[subjectId] ?? null)
+    )
+    const publicReadMany = vi.fn<(refs: readonly { subjectId: string }[]) => boolean[]>(
+      (refs: readonly { subjectId: string }[]) => refs.map(({ subjectId }) => subjectId.startsWith("public-"))
+    )
+    const { subjects } = setup({ invoice: { ...invoice, getOrgIds }, page: { ...page, publicReadMany } })
+    const refs = [
+      { subjectType: "invoice", subjectId: "inv-2" },
+      { subjectType: "invoice", subjectId: "inv-9" },
+      { subjectType: "invoice", subjectId: "inv-1" }
+    ]
+    expect(await subjects.getOrgIds(refs, ada)).toEqual(["globex", null, "acme"])
+    expect(getOrgIds).toHaveBeenCalledTimes(1)
+    expect(await subjects.getOrgIds([{ subjectType: "page", subjectId: "draft" }], solo)).toEqual([null])
+    const pages = ["public-home", "draft", "public-about"].map((subjectId) => ({ subjectType: "page", subjectId }))
+    expect(await subjects.isPublicMany(pages)).toEqual([true, false, true])
+    expect(await subjects.canViewMany(pages.map((ref) => ({ ...ref, actor: null })))).toEqual([true, false, true])
+    expect(publicReadMany).toHaveBeenCalledTimes(2)
+    const { subjects: plain } = setup()
+    expect(await plain.getOrgIds(refs.slice(0, 2))).toEqual(["globex", null])
+    expect(await plain.isPublicMany(pages)).toEqual([true, false, true])
+  })
+
+  it("answers a single public check with publicReadMany too", async () => {
+    const publicReadMany = (refs: readonly { subjectId: string }[]) =>
+      refs.map(({ subjectId }) => subjectId.startsWith("public-"))
+    const { subjects } = setup({ page: { ...page, publicRead: undefined, publicReadMany } })
+    expect(await subjects.isPublic({ subjectType: "page", subjectId: "public-home" })).toBe(true)
+    expect(await subjects.isPublic({ subjectType: "page", subjectId: "draft" })).toBe(false)
+    expect(await subjects.canView(null, { subjectType: "page", subjectId: "public-home" })).toBe(true)
+  })
+
   it("refuses a subject type nobody declares as invalid input", async () => {
     const { subjects } = setup()
     const error = await subjects.canView(ada, { subjectType: "order", subjectId: "1" }).catch((caught) => caught)

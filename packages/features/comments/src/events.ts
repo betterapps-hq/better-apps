@@ -15,6 +15,16 @@ export interface CommentEventData extends ThreadEventData {
   comment: Comment
 }
 
+/** A deleted thread, with the comments that went with it, so features attached to them can clean up. */
+export interface ThreadDeletedData extends ThreadEventData {
+  commentIds: string[]
+}
+
+/** A thread that moved to another organization with its record, and its comments that moved with it. */
+export interface ThreadMovedData extends ThreadDeletedData {
+  fromOrgId: string
+}
+
 /** A thread's anchor, as `thread.anchorUpdated` reports the previous one. */
 export interface StoredAnchor {
   kind: string
@@ -36,7 +46,8 @@ export const commentEvents = {
   "thread.resolved": defineEvent<ThreadEventData>(),
   "thread.reopened": defineEvent<ThreadEventData>(),
   "thread.anchorUpdated": defineEvent<ThreadEventData & { previousAnchor: StoredAnchor | null }>(),
-  "thread.deleted": defineEvent<ThreadEventData>(),
+  "thread.deleted": defineEvent<ThreadDeletedData>(),
+  "thread.moved": defineEvent<ThreadMovedData>(),
   "subject.moved": defineEvent<{ subjectType: string; subjectId: string; toOrgId: string }>(),
   "subject.removed": defineEvent<{ subjectType: string; subjectId: string }>(),
   "user.removed": defineEvent<{ userId: string }>()

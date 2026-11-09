@@ -16,6 +16,7 @@ import {
   isNull,
   lt,
   lte,
+  min as smallest,
   ne,
   notInArray,
   or,
@@ -141,10 +142,15 @@ async function sequence(queries: readonly PromiseLike<unknown>[]): Promise<unkno
   return results
 }
 
+/** A batch write that runs as one statement. */
+type SingleWrite = Exclude<ColumnWrite, { type: "createMany" }>
+
 function runWrite(driver: AdapterDriver, write: ColumnWrite): Promise<WriteResult> {
   switch (write.type) {
     case "create":
       return driver.create(write)
+    case "createMany":
+      return driver.createMany(write).then((rows) => rows.length)
     case "update":
       return driver.update(write)
     case "updateMany":
@@ -262,7 +268,7 @@ export function drizzleAdapter(db: DrizzleDatabase, config: DrizzleAdapterConfig
 
   // The query a write runs on PostgreSQL and SQLite. Counts come from returned ids, so they don't depend on how each
   // driver reports affected rows.
-  function writeQuery(database: Database, write: ColumnWrite): Query {
+  function writeQuery(database: Database, write: SingleWrite): Query {
     const table = getTable(write.table)
     if (write.type === "create") {
       return database.insert(table).values(write.data).returning()
@@ -289,7 +295,14 @@ export function drizzleAdapter(db: DrizzleDatabase, config: DrizzleAdapterConfig
     }
   }
 
-  function readWrite(write: ColumnWrite, result: unknown): WriteResult {
+  // How many rows one insert into a table takes: on SQLite, as many as fit D1's limit of bound parameters.
+  function rowsPerInsert(table: Table): number {
+    return provider === "sqlite"
+      ? Math.max(1, Math.floor(maxSqliteParameters / Object.keys(getTableColumns(table)).length))
+      : maxRowsPerInsert
+  }
+
+  function readWrite(write: SingleWrite, result: unknown): WriteResult {
     const rows = result as Row[]
     return write.type === "updateMany" || write.type === "deleteMany" ? rows.length : (rows[0] ?? null)
   }
@@ -306,6 +319,9 @@ export function drizzleAdapter(db: DrizzleDatabase, config: DrizzleAdapterConfig
     // them in a transaction. A single statement is atomic on its own.
     async function runAtomic(build: (database: Database) => Query[]): Promise<unknown[]> {
       const queries = build(database)
+      if (queries.length === 0) {
+        return []
+      }
       if (inTransaction || queries.length === 1) {
         return sequence(queries)
       }
@@ -357,11 +373,7 @@ export function drizzleAdapter(db: DrizzleDatabase, config: DrizzleAdapterConfig
       },
       async createMany({ table: name, data }) {
         const table = getTable(name)
-        const size =
-          provider === "sqlite"
-            ? Math.max(1, Math.floor(maxSqliteParameters / Object.keys(getTableColumns(table)).length))
-            : maxRowsPerInsert
-        const chunks = chunk(data, size)
+        const chunks = chunk(data, rowsPerInsert(table))
         if (provider !== "mysql") {
           const results = await runAtomic((database) =>
             chunks.map((rows) => database.insert(table).values(rows).returning())
@@ -424,19 +436,23 @@ export function drizzleAdapter(db: DrizzleDatabase, config: DrizzleAdapterConfig
         )
         return Number(row?.count ?? 0)
       },
-      async countGroups({ table: name, where, groupBy }) {
+      async countGroups({ table: name, where, groupBy, min }) {
         const table = getTable(name)
         const columns = groupBy.map((key) => getColumn(table, name, key))
         // Grouped columns are selected under positional keys, so a column named "count" can't collide.
         const fields = Object.fromEntries(columns.map((column, index) => [`group${index}`, column]))
+        const least = Object.fromEntries(
+          (min ?? []).map((key, index) => [`min${index}`, smallest(getColumn(table, name, key))])
+        )
         const rows = (await database
-          .select({ ...fields, count: count() })
+          .select({ ...fields, ...least, count: count() })
           .from(table)
           .where(whereClause(table, name, where))
           .groupBy(...columns)) as Row[]
         return rows.map((row) => ({
           group: Object.fromEntries(groupBy.map((key, index) => [key, row[`group${index}`]])),
-          count: Number(row.count)
+          count: Number(row.count),
+          ...(min?.length ? { min: Object.fromEntries(min.map((key, index) => [key, row[`min${index}`]])) } : {})
         }))
       },
       async update(write) {
@@ -484,8 +500,29 @@ export function drizzleAdapter(db: DrizzleDatabase, config: DrizzleAdapterConfig
           }
           return inTransaction ? run(driver) : transaction((tx) => run(createDriver(tx, true)))
         }
-        const results = await runAtomic((database) => writes.map((write) => writeQuery(database, write)))
-        return results.map((result, index) => readWrite(writes[index]!, result))
+        // A createMany runs as one insert per chunk of rows that fits, and reports how many rows it made.
+        const queriesOf = (database: Database, write: ColumnWrite): Query[] => {
+          if (write.type !== "createMany") {
+            return [writeQuery(database, write)]
+          }
+          const table = getTable(write.table)
+          const id = getColumn(table, write.table, "id")
+          return chunk(write.data, rowsPerInsert(table)).map((rows) =>
+            database.insert(table).values(rows).returning({ id })
+          )
+        }
+        const results = await runAtomic((database) => writes.flatMap((write) => queriesOf(database, write)))
+        let next = 0
+        return writes.map((write) => {
+          if (write.type !== "createMany") {
+            next += 1
+            return readWrite(write, results[next - 1])
+          }
+          const parts = Math.ceil(write.data.length / rowsPerInsert(getTable(write.table)))
+          const made = (results.slice(next, next + parts) as Row[][]).reduce((sum, rows) => sum + rows.length, 0)
+          next += parts
+          return made
+        })
       }
     }
     return driver

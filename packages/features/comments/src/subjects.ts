@@ -21,7 +21,7 @@ async function findRows<Row extends { id: string }>(db: DatabaseAdapter, model: 
 
 const threadsById: FindThreads = async (db, ids) => findRows<CommentThread>(db, threadModel, ids)
 
-// A comment's thread, keyed by the comment's id.
+// A comment's thread, keyed by the comment's id. A deleted comment has none, so nothing attaches to it any more.
 const threadsOfComments: FindThreads = async (db, ids) => {
   const comments = await findRows<Comment>(db, commentModel, ids)
   const threads = await threadsById(
@@ -31,7 +31,7 @@ const threadsOfComments: FindThreads = async (db, ids) => {
   const found = new Map<string, CommentThread>()
   for (const [id, comment] of comments) {
     const thread = threads.get(comment.threadId)
-    if (thread) {
+    if (thread && !comment.deletedAt) {
       found.set(id, thread)
     }
   }
@@ -55,11 +55,24 @@ function subjectOfThreads(config: Config, find: FindThreads): SubjectDefinition 
     }
     return result
   }
+  const orgIds = async (refs: readonly { subjectId: string }[], context: SubjectContext) => {
+    const threads = await find(
+      context.db,
+      refs.map((ref) => ref.subjectId)
+    )
+    return refs.map((ref) => threads.get(ref.subjectId)?.orgId || null)
+  }
   return {
     canView: async (args, context) => (await viewable([args], context))[0] === true,
     canViewMany: viewable,
-    getOrgId: async ({ subjectId }, context) => (await find(context.db, [subjectId])).get(subjectId)?.orgId || null,
-    publicRead: async ({ subjectId }, context) => (await viewable([{ actor: null, subjectId }], context))[0] === true
+    getOrgId: async (ref, context) => (await orgIds([ref], context))[0] ?? null,
+    getOrgIds: orgIds,
+    publicRead: async ({ subjectId }, context) => (await viewable([{ actor: null, subjectId }], context))[0] === true,
+    publicReadMany: async (refs, context) =>
+      viewable(
+        refs.map(({ subjectId }) => ({ actor: null, subjectId })),
+        context
+      )
   }
 }
 

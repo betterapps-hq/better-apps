@@ -35,6 +35,7 @@ export interface ColumnSort {
 /** A batch write with names mapped to the ORM schema's table and column keys. */
 export type ColumnWrite =
   | { type: "create"; table: string; data: Row }
+  | { type: "createMany"; table: string; data: Row[] }
   | { type: "update" | "updateMany"; table: string; where: ColumnWhere[]; update: Row }
   | { type: "incrementOne"; table: string; where: ColumnWhere[]; increment: Record<string, number>; set: Row }
   | { type: "deleteMany"; table: string; where: ColumnWhere[] }
@@ -55,7 +56,7 @@ export interface AdapterDriver {
     select?: string[] | undefined
   }): Promise<Row[]>
   count(input: { table: string; where: ColumnWhere[] }): Promise<number>
-  countGroups(input: { table: string; where: ColumnWhere[]; groupBy: string[] }): Promise<CountGroup[]>
+  countGroups(input: { table: string; where: ColumnWhere[]; groupBy: string[]; min?: string[] }): Promise<CountGroup[]>
   update(input: { table: string; where: ColumnWhere[]; update: Row }): Promise<Row | null>
   updateMany(input: { table: string; where: ColumnWhere[]; update: Row }): Promise<number>
   incrementOne(input: {
@@ -341,6 +342,12 @@ export function createAdapterFactory(config: AdapterFactoryConfig, driver: Adapt
       switch (operation.type) {
         case "create":
           return { type: "create", table, data: await toRow(modelKey, operation.data, "create") }
+        case "createMany":
+          return {
+            type: "createMany",
+            table,
+            data: await Promise.all(operation.data.map((item) => toRow(modelKey, item, "create")))
+          }
         case "update":
         case "updateMany":
           if (operation.type === "update") {
@@ -418,16 +425,22 @@ export function createAdapterFactory(config: AdapterFactoryConfig, driver: Adapt
         const modelKey = getModelKey(model)
         return driver.count({ table: getTableName(modelKey), where: toWhere(modelKey, where) })
       },
-      async countGroups({ model, where, groupBy }) {
+      async countGroups({ model, where, groupBy, min }) {
         const modelKey = getModelKey(model)
         const names = groupBy.map((fieldName) => getField(modelKey, fieldName)[0])
+        const smallest = (min ?? []).map((fieldName) => getField(modelKey, fieldName)[0])
         const groups = await driver.countGroups({
           table: getTableName(modelKey),
           where: toWhere(modelKey, where),
-          groupBy: toColumns(modelKey, groupBy)
+          groupBy: toColumns(modelKey, groupBy),
+          ...(min?.length ? { min: toColumns(modelKey, min) } : {})
         })
         return Promise.all(
-          groups.map(async ({ group, count }) => ({ group: await fromRow(modelKey, group, names), count }))
+          groups.map(async ({ group, count, min: least }) => ({
+            group: await fromRow(modelKey, group, names),
+            count,
+            ...(least ? { min: await fromRow(modelKey, least, smallest) } : {})
+          }))
         )
       },
       async update<T extends Row = Row>({ model, where, update }: Parameters<DatabaseAdapter["update"]>[0]) {

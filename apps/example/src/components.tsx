@@ -1,15 +1,25 @@
+import {
+  Button,
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle
+} from "@buildkitgg/shadcn-baseui-kit"
 import { Link, type ErrorComponentProps } from "@tanstack/react-router"
-import type { Invoice } from "./db/schema"
+import { FileQuestionIcon, TriangleAlertIcon } from "lucide-react"
+import type { InvoiceStatus } from "./db/schema"
 
-const statusLabels: Record<Invoice["status"], string> = {
+export const statusLabels: Record<InvoiceStatus, string> = {
   draft: "Draft",
   sent: "Sent",
-  paid: "Paid",
-  overdue: "Overdue"
+  overdue: "Overdue",
+  paid: "Paid"
 }
 
 export interface StatusLabelProps {
-  status: Invoice["status"]
+  status: InvoiceStatus
 }
 
 /** An invoice's status in words, with a color that only reinforces them. */
@@ -19,38 +29,40 @@ export function StatusLabel({ status }: StatusLabelProps) {
 
 export function NotFound() {
   return (
-    <section aria-labelledby="not-found-title">
-      <h1 id="not-found-title">Page not found</h1>
-      <p>There’s nothing at this address.</p>
-      <BackLink to="/">Go to notes</BackLink>
-    </section>
+    <Empty>
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <FileQuestionIcon />
+        </EmptyMedia>
+        <EmptyTitle>
+          <h1>Page not found</h1>
+        </EmptyTitle>
+        <EmptyDescription>There’s nothing at this address.</EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent>
+        <Button render={<Link to="/invoices" />} nativeButton={false}>
+          Go to invoices
+        </Button>
+      </EmptyContent>
+    </Empty>
   )
 }
 
 export function ErrorMessage({ error, reset }: ErrorComponentProps) {
   return (
-    <section aria-labelledby="error-title" role="alert">
-      <h1 id="error-title">Something went wrong</h1>
-      <p>{error instanceof Error ? error.message : "The page couldn't load."}</p>
-      <button type="button" onClick={reset}>
-        Try again
-      </button>
-    </section>
-  )
-}
-
-export interface BackLinkProps {
-  to: "/" | "/invoices"
-  children: string
-}
-
-/** A link back to a list, above a page's heading. */
-export function BackLink({ to, children }: BackLinkProps) {
-  return (
-    <p className="back-link">
-      <Link to={to} activeOptions={{ exact: true }}>
-        {children}
-      </Link>
-    </p>
+    <Empty role="alert">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <TriangleAlertIcon />
+        </EmptyMedia>
+        <EmptyTitle>
+          <h1>Something went wrong</h1>
+        </EmptyTitle>
+        <EmptyDescription>{error instanceof Error ? error.message : "The page couldn’t load."}</EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent>
+        <Button onClick={reset}>Try again</Button>
+      </EmptyContent>
+    </Empty>
   )
 }

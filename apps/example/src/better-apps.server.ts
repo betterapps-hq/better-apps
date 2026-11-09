@@ -4,6 +4,7 @@ import { createStartBindings } from "@better-apps/tanstack-start"
 import { createBetterApps } from "better-apps"
 import { auth } from "./auth.server"
 import { db } from "./db/database.server"
+import { seedComments } from "./db/seed-comments.server"
 import { features, subjects } from "./features"
 
 /** Who requests act for: the person signed in with Better Auth. */
@@ -19,3 +20,6 @@ export const app = createBetterApps({
 
 // Node has no waitUntil, so responses wait for event delivery. A Worker would pass its waitUntil here.
 export const { api, handlers, client } = createStartBindings(app)
+
+// Adds the sample conversations on the first start, through the features, as the demo people.
+await seedComments(app)

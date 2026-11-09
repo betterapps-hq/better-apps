@@ -348,6 +348,7 @@ describe("deleteComment", () => {
     expect(await api.deleteComment({ commentId: comment.id }, as("bob"))).toMatchObject({ threadDeleted: true })
     await expectCode(api.getThread({ threadId: thread.id }, as("bob")), "NOT_FOUND")
     expect(events("thread.deleted")).toHaveLength(1)
+    expect(events("thread.deleted")[0]?.data).toMatchObject({ commentIds: [comment.id] })
     expect(database.sqlite.prepare('SELECT COUNT(*) AS count FROM "comment"').get()).toEqual({ count: 0 })
   })
 
@@ -454,11 +455,13 @@ describe("thread actions", () => {
 
   it("lets only moderators delete a thread, with all its comments", async () => {
     const { api, as, events, database } = setup()
-    const { thread } = await api.createThread({ ...onInvoice, body: "One" }, as("bob"))
-    await api.reply({ threadId: thread.id, body: "Two" }, as("bob"))
+    const { thread, comment } = await api.createThread({ ...onInvoice, body: "One" }, as("bob"))
+    const { comment: reply } = await api.reply({ threadId: thread.id, body: "Two" }, as("bob"))
     await expectCode(api.deleteThread({ threadId: thread.id }, as("bob")), "FORBIDDEN")
     expect(await api.deleteThread({ threadId: thread.id }, as("ada"))).toEqual({ threadId: thread.id })
     expect(events("thread.deleted")).toHaveLength(1)
+    const deleted = events("thread.deleted")[0]?.data as { commentIds: string[] } | undefined
+    expect(deleted?.commentIds.sort()).toEqual([comment.id, reply.id].sort())
     expect(database.sqlite.prepare('SELECT COUNT(*) AS count FROM "comment"').get()).toEqual({ count: 0 })
   })
 })

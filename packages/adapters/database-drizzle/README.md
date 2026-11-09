@@ -28,13 +28,15 @@ const adapter = createDatabaseAdapter({
 
 - `findMany` sorts on one or more fields. `after` takes the previous page's last row and returns the rows that follow
   it. End the sort with a unique field, such as `id`, so rows with equal values aren't skipped.
-- `countGroups` counts rows for each combination of the `groupBy` fields in one query.
+- `countGroups` counts rows for each combination of the `groupBy` fields in one query, with the smallest value of each
+  field in `min`, such as when each group began.
 - `batch` runs its writes atomically. D1, libSQL, Neon's HTTP driver and `sqlite-proxy` with a batch callback send them
   in one `batch()` call. Other drivers run them in a transaction. sqlite-proxy without a batch callback still has a
   `batch()` that fails, so pass `batch: false` to use transactions there. better-sqlite3 and Bun's SQLite driver only
   have synchronous transactions, so batches of more than one write fail on them.
 - `createMany` inserts rows in chunks, atomically like `batch`. SQLite statements stay under D1's limit of 100 bound
-  parameters. Other databases take up to 1,000 rows per statement.
+  parameters. Other databases take up to 1,000 rows per statement. A `createMany` inside a `batch` is chunked the same
+  way, and returns how many rows it made.
 - `update` and `incrementOne` change the first matching row only. `incrementOne` checks its `where` again as it writes,
   so a guard such as `score < 10` holds when several requests write at once.
 - `contains`, `starts_with` and `ends_with` match the value literally. `%`, `_` and `\` aren't wildcards.

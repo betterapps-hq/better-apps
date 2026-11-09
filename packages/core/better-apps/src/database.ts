@@ -42,11 +42,15 @@ export type Row = Record<string, unknown>
 export interface CountGroup {
   group: Row
   count: number
+  /** The smallest value of each field `countGroups` was asked for in `min`, such as when the group's first row was made. */
+  min?: Row | undefined
 }
 
 /** A write that runs inside a batch. */
 export type WriteOperation =
   | { type: "create"; model: string; data: Row }
+  /** Creates rows with as few statements as the database allows, such as many rows a page of a bulk job writes. */
+  | { type: "createMany"; model: string; data: readonly Row[] }
   | { type: "update"; model: string; where: readonly Where[]; update: Row }
   | { type: "updateMany"; model: string; where: readonly Where[]; update: Row }
   | {
@@ -60,7 +64,7 @@ export type WriteOperation =
 
 /**
  * What each write in a batch returns, in order: the created row, the updated row or `null` when nothing matched, or the
- * number of rows `updateMany` and `deleteMany` changed.
+ * number of rows `createMany` made and `updateMany` and `deleteMany` changed.
  */
 export type WriteResult = Row | null | number
 
@@ -94,11 +98,12 @@ export interface DatabaseAdapter {
     select?: readonly string[] | undefined
   }): Promise<T[]>
   count(input: { model: string; where?: readonly Where[] | undefined }): Promise<number>
-  /** Counts rows per combination of `groupBy` values, in one query. */
+  /** Counts rows per combination of `groupBy` values, in one query, with the smallest value of each `min` field. */
   countGroups(input: {
     model: string
     where?: readonly Where[] | undefined
     groupBy: readonly [string, ...string[]]
+    min?: readonly string[] | undefined
   }): Promise<CountGroup[]>
   /** Updates the first row that matches and returns it, or `null` when none does. */
   update<T extends Row = Row>(input: { model: string; where: readonly Where[]; update: Row }): Promise<T | null>

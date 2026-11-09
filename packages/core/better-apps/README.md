@@ -99,17 +99,18 @@ export const app = createBetterApps({
 - `canView` says whether a signed-in user can see a subject, and so what features attach to it. `canViewMany` answers
   for many pairs at once, such as with one query; without it, `canView` runs for each pair.
 - `getOrgId` returns the organization that owns a subject. Features store it with what they attach, so ids repeated
-  across organizations never mix. It's required when the identity adapter reports organizations.
+  across organizations never mix. It's required when the identity adapter reports organizations. `getOrgIds` answers for
+  many subjects at once, for lists; without it, `getOrgId` runs for each.
 - `publicRead` lets signed-out visitors see subjects: `true` for all of them, or a check per subject. Nobody, by
-  default.
+  default. `publicReadMany` answers for many subjects at once; without it, `publicRead` runs for each.
 - Each feature adds its own rules on top, such as who can comment. A feature that uses a subject type the app doesn't
   declare stops `createBetterApps` with an error.
 - Features declare subject types for their own records, such as comments' `comments.comment`, so a reaction on a comment
   follows the comment's access.
 - Actions and subscribers check access through `context.subjects`, and server code through `app.subjects`:
-  `canView(actor, { subjectType, subjectId })`, `canViewMany`, `isPublic` and `getOrgId`. `null` as the actor is a
-  signed-out visitor. Checks receive the `db`, `identity` and `subjects` as a second argument, for subject types that
-  read Better Apps' tables.
+  `canView(actor, { subjectType, subjectId })`, `canViewMany`, `isPublic`, `isPublicMany`, `getOrgId` and `getOrgIds`.
+  The lists make one call per subject type. `null` as the actor is a signed-out visitor. Checks receive the `db`,
+  `identity` and `subjects` as a second argument, for subject types that read Better Apps' tables.
 
 ## Identity
 
@@ -163,7 +164,7 @@ await client.notes.add({ text: "Hi" })
 
 - `emit` adds an event to the action's next `db.batch`, so it's written to the core's outbox in the same transaction as
   the change, or in the same `batch()` on D1. Events emitted outside a batch are written after the handler returns. If
-  the batch fails, its events are never written.
+  the batch fails, its events are never written. Several events go in one `createMany`.
 - Once written, events are delivered to every subscriber, starting as soon as the action finishes. With a `waitUntil`,
   such as a Worker's execution context, the response doesn't wait for delivery, and `waitUntil` keeps it running after
   the response is sent. Without one, or if `waitUntil` throws, the call waits for delivery.
@@ -172,6 +173,9 @@ await client.notes.add({ text: "Hi" })
   scheduled job. Delivery is at least once, so subscribers skip event ids they've already handled.
 - When delivery has a `waitUntil`, a report `onError` is still making is handed to it too, so it isn't cut off. Pass a
   scheduled job's own `waitUntil` to `app.deliverEvents({ waitUntil })` for the same.
+- `emit(type, data, { later: true })` writes an event the same way but leaves it for the next `app.deliverEvents()` run,
+  so a bulk job can do a step per run and continue in the next instead of in one long request. A subscriber's later
+  events are written with its event's removal, so a delivery that fails or is retried emits them once.
 - Events nobody subscribes to aren't written. The outbox table, `betterAppsEvent`, is generated only when a feature
   subscribes to events.
 
@@ -182,4 +186,4 @@ await client.notes.add({ text: "Hi" })
   or any name that becomes the same snake_case table, such as `User` or `rate_limit`. That lets Better Auth share the
   same database. `betterAppsEvent` is reserved for the outbox.
 - Besides reads and writes, `DatabaseAdapter` sorts on several fields with an `after` cursor, counts rows per group,
-  creates many rows at once and runs several writes as one atomic `batch`.
+  creates many rows at once and runs several writes as one atomic `batch`, which can include a `createMany`.

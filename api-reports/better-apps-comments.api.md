@@ -120,7 +120,8 @@ export const commentEvents: {
     "thread.anchorUpdated": EventDefinition<ThreadEventData & {
     previousAnchor: StoredAnchor | null;
     }>;
-    "thread.deleted": EventDefinition<ThreadEventData>;
+    "thread.deleted": EventDefinition<ThreadDeletedData>;
+    "thread.moved": EventDefinition<ThreadMovedData>;
     "subject.moved": EventDefinition<    {
     subjectType: string;
     subjectId: string;
@@ -180,7 +181,8 @@ export function comments<const Options extends CommentsOptions>(options: Options
         "thread.anchorUpdated": EventDefinition<ThreadEventData & {
         previousAnchor: StoredAnchor | null;
         }>;
-        "thread.deleted": EventDefinition<ThreadEventData>;
+        "thread.deleted": EventDefinition<ThreadDeletedData>;
+        "thread.moved": EventDefinition<ThreadMovedData>;
         "subject.moved": EventDefinition<    {
         subjectType: string;
         subjectId: string;
@@ -572,6 +574,12 @@ export interface ThreadCounts {
 }
 
 // @public
+export interface ThreadDeletedData extends ThreadEventData {
+    // (undocumented)
+    commentIds: string[];
+}
+
+// @public
 export interface ThreadEventData {
     // (undocumented)
     orgId: string;
@@ -584,6 +592,12 @@ export interface ThreadEventData {
 
 // @public (undocumented)
 export const threadModel = "commentThread";
+
+// @public
+export interface ThreadMovedData extends ThreadDeletedData {
+    // (undocumented)
+    fromOrgId: string;
+}
 
 // @public
 export interface ThreadPage<Thread = CommentThread> {
