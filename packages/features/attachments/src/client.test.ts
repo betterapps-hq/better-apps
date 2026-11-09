@@ -289,10 +289,53 @@ describe("attachments client", () => {
     expect(requests.filter((name) => name === "listFiles")).toHaveLength(1)
   })
 
-  it("deletes files", async () => {
+  it("deletes files, and takes a file on its own off the records it's on", async () => {
     const { attachments, count } = browser()
     const file = await attachments.upload(pick("mine"), { owner: "user" })
+    await attachments.attach(inv1, [file.id])
+    expect(attachments.store.getSnapshot().subjects[key1]?.files.map((entry) => entry.id)).toEqual([file.id])
     await attachments.deleteFile(file.id)
     expect(count("attachmentFile")).toBe(0)
+    expect(attachments.store.getSnapshot().subjects[key1]?.files).toEqual([])
+  })
+
+  it("puts files that finish together in the server's order, whichever answer lands first", async () => {
+    const { attachments, holdAnswer, send } = browser()
+    await attachments.load("invoice", ["inv-1"])
+    const first = await attachments.prepareUpload(pick("a", "a.txt"), inv1)
+    const second = await attachments.prepareUpload(pick("b", "b.txt"), inv1)
+    await send(first.upload, "a")
+    await send(second.upload, "b")
+    // The first is saved first, but its answer arrives last.
+    const firstHeld = holdAnswer("completeUpload")
+    const finishingFirst = attachments.finishUpload(first)
+    await tick(10)
+    const secondHeld = holdAnswer("completeUpload")
+    const finishingSecond = attachments.finishUpload(second)
+    await tick(10)
+    secondHeld()
+    await finishingSecond
+    firstHeld()
+    await finishingFirst
+    expect(attachments.store.getSnapshot().subjects[key1]?.files.map((entry) => [entry.id, entry.position])).toEqual([
+      [first.file.id, 0],
+      [second.file.id, 1]
+    ])
+  })
+
+  it("keeps a reorder under way when an upload finishes meanwhile, with the new file after", async () => {
+    const { attachments, upload, hold } = browser()
+    const a = (await upload("bob", inv1)).file.id
+    const b = (await upload("bob", inv1)).file.id
+    await attachments.load("invoice", ["inv-1"])
+    const ids = () => attachments.store.getSnapshot().subjects[key1]?.files.map((entry) => entry.id)
+    const reorderHeld = hold("reorder")
+    const reordering = attachments.reorder(inv1, [b, a])
+    const c = await attachments.upload(pick("c", "c.txt"), inv1)
+    expect(ids()).toEqual([b, a, c.id])
+    reorderHeld()
+    await expect(reordering).rejects.toMatchObject({ code: "CONFLICT" })
+    // The server refused the order, since the record had three files by then, so its own order shows.
+    expect(ids()).toEqual([a, b, c.id])
   })
 })

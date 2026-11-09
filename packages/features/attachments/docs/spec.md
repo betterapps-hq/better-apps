@@ -374,9 +374,15 @@ const file = await attachments.upload(input.files[0], { subjectType: "invoice", 
   `{ name, size, loaded, state, error, file }` while it runs, `state` being `uploading`, `finishing`, `done`, `error` or
   `cancelled`. `startUpload` does the same and returns the upload's id at once. `cancel(id)` stops one and deletes what
   the server knew of it. A file the limits from `loadSettings` refuse fails at once, without a call.
-- An upload onto a record adds the file to the record's list when it finishes. `detach` and `reorder` show at once and
-  roll back when the server refuses, and a load that lands while they're saved keeps them. A record's reorders go to the
-  server one after another, so it keeps the last order asked for. `attach` loads the record again once it's done.
+- Each record's list is what the server last said, in its order, with this tab's writes still under way on top. Loads
+  replace what the server said. A saved write changes it as the server did: an upload that finishes goes in at the place
+  the server saved it, so uploads that finish together keep the server's order whichever answer lands first; a saved
+  `detach` or `deleteFile` takes the file out, and a saved `reorder` puts the list in that order. `attach` loads the
+  record again once it's done.
+- `detach` and `reorder` show at once, on top of the server's list, and a refused one leaves the server's list showing.
+  A record's reorders go to the server one after another, so it keeps the last order asked for.
+- Every write and event moves the record's version on, when it starts and when it settles, so an answer from a load that
+  went out before is dropped and the record loads again.
 - `applyEvent` takes events from `toClientEvent` and loads the record again. `dehydrate`, `hydrate` and `reset` work as
   in the other features. `reset` cancels calls under way, which reject with `ABORTED`, and a call it can't cancel, such
   as `finishUpload` with its own signal, changes nothing when it settles, so the previous person's files never come back

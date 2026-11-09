@@ -168,9 +168,19 @@ async function sendWithFetch(request: TransportRequest): Promise<{ status: numbe
 const defaultTransport: UploadTransport = (request) =>
   typeof XMLHttpRequest === "undefined" ? sendWithFetch(request) : sendWithXhr(request)
 
+/** A record's files in the server's order: by position, then when they were attached, then attachment id. */
+function inServerOrder(files: readonly AttachedFile[]): AttachedFile[] {
+  return [...files].sort(
+    (a, b) =>
+      a.position - b.position ||
+      a.attachedAt.getTime() - b.attachedAt.getTime() ||
+      (a.attachmentId < b.attachmentId ? -1 : 1)
+  )
+}
+
 /**
- * A record's files in the order a reorder still under way asked for, with any it didn't name after them, as loaded. With
- * no reorder under way, the files as loaded.
+ * A record's files in the order a reorder asked for, numbered from 0, with any it didn't name after them in the order
+ * given. With no order, the files as given.
  */
 function inOrder(files: AttachedFile[], order: readonly string[] | undefined): AttachedFile[] {
   if (!order) {
@@ -231,7 +241,12 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
   let controller = new AbortController()
   const resetListeners = new Set<() => void>()
   const uploadControllers = new Map<string, AbortController>()
-  // Each record's version goes up with every write and event, so an answer that went out before one is dropped.
+  // What the server last said about each record, in its order, kept up to date by this tab's writes once they're saved.
+  // The store shows it with this tab's writes still under way on top: files being taken off are left out, and the latest
+  // reorder's order is kept.
+  const bases = new Map<string, AttachedFile[]>()
+  // Each record's version goes up when a write starts and when it settles, and with every event, so an answer that went
+  // out before one is dropped and loaded again.
   const versions = new Map<string, number>()
   // The order each record's reorders under way asked for, the latest last, so a load that lands meanwhile keeps it.
   const reordering = new Map<string, { order: readonly string[]; count: number }>()
@@ -256,6 +271,14 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
       const current = state.subjects[key] ?? { files: [], state: "idle", error: null, pending: [] }
       return { ...state, subjects: { ...state.subjects, [key]: change(current) } }
     })
+  /** Changes a record's entry, then shows the server's list for it with this tab's writes under way on top. */
+  const refresh = (key: string, change: (subject: SubjectFiles) => Partial<SubjectFiles> = () => ({})) =>
+    setSubject(key, (subject) => {
+      const next = { ...subject, ...change(subject) }
+      const files = (bases.get(key) ?? []).filter((file) => !next.pending.includes(file.id))
+      return { ...next, files: inOrder(files, reordering.get(key)?.order) }
+    })
+  const setBase = (key: string, files: readonly AttachedFile[]) => bases.set(key, inServerOrder(files))
   const setUpload = (id: string, change: Partial<Upload>) =>
     store.setState((state) => {
       const current = state.uploads[id]
@@ -280,16 +303,11 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
           stale.push(id)
           continue
         }
-        const files = (answer[id] ?? []).map((file) => reviveFile<AttachedFile>(file))
-        setSubject(key, (current) => ({
-          ...current,
-          files: inOrder(
-            files.filter((file) => !current.pending.includes(file.id)),
-            reordering.get(key)?.order
-          ),
-          state: "ready",
-          error: null
-        }))
+        setBase(
+          key,
+          (answer[id] ?? []).map((file) => reviveFile<AttachedFile>(file))
+        )
+        refresh(key, () => ({ state: "ready", error: null }))
       }
       if (stale.length > 0) {
         await load(subjectType, stale)
@@ -414,10 +432,10 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
       const key = subjectKey(subjectType, subjectId)
       const attached = reviveFile<AttachedFile>(completed.attachment)
       bump(key)
-      setSubject(key, (current) => ({
-        ...current,
-        files: [...current.files.filter((item) => item.id !== attached.id), attached]
-      }))
+      // At the place the server saved it, so uploads that finish together keep the server's order whichever answer
+      // lands first.
+      setBase(key, [...(bases.get(key) ?? []).filter((item) => item.id !== attached.id), attached])
+      refresh(key)
     }
     return reviveFile<FileInfo>(completed.file)
   }
@@ -535,6 +553,7 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
       return files.map((file) => reviveFile<AttachedFile>(file))
     } finally {
       if (current()) {
+        bump(key)
         await load(subject.subjectType, [subject.subjectId]).catch(() => undefined)
       }
     }
@@ -543,29 +562,26 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
   /** Takes a file off a record. It goes at once, and comes back when the server refuses. */
   async function detach(subject: Subject<Types["subjectType"]>, fileId: string) {
     const key = subjectKey(subject.subjectType, subject.subjectId)
-    const removed = store.getSnapshot().subjects[key]?.files.find((file) => file.id === fileId)
     const current = scoped()
+    const settled = (entry: SubjectFiles) => ({ pending: entry.pending.filter((id) => id !== fileId) })
     bump(key)
-    setSubject(key, (current) => ({
-      ...current,
-      files: current.files.filter((file) => file.id !== fileId),
-      pending: [...current.pending, fileId]
-    }))
+    refresh(key, (entry) => ({ pending: [...entry.pending, fileId] }))
     try {
       await run("detach", { ...subject, fileId })
       if (current()) {
-        setSubject(key, (files) => ({ ...files, pending: files.pending.filter((id) => id !== fileId) }))
+        setBase(
+          key,
+          (bases.get(key) ?? []).filter((file) => file.id !== fileId)
+        )
         // A load still under way may have read the file before it came off, so its answer is dropped and it loads again.
         bump(key)
+        refresh(key, settled)
       }
     } catch (error) {
+      // Refused, the file shows again as the server last listed it.
       if (current()) {
         bump(key)
-        setSubject(key, (files) => ({
-          ...files,
-          pending: files.pending.filter((id) => id !== fileId),
-          files: removed ? [...files.files, removed].sort((a, b) => a.position - b.position) : files.files
-        }))
+        refresh(key, settled)
       }
       throw error
     }
@@ -574,8 +590,6 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
   /** Puts a record's files in a new order at once, and back when the server refuses. */
   async function reorder(subject: Subject<Types["subjectType"]>, fileIds: readonly string[]) {
     const key = subjectKey(subject.subjectType, subject.subjectId)
-    const before = store.getSnapshot().subjects[key]?.files ?? []
-    const byId = new Map(before.map((file) => [file.id, file]))
     const current = scoped()
     reordering.set(key, { order: [...fileIds], count: (reordering.get(key)?.count ?? 0) + 1 })
     const settle = () => {
@@ -587,13 +601,7 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
       }
     }
     bump(key)
-    setSubject(key, (current) => ({
-      ...current,
-      files: fileIds.flatMap((id, position) => {
-        const file = byId.get(id)
-        return file ? [{ ...file, position }] : []
-      })
-    }))
+    refresh(key)
     // The signal is taken now, so a reorder still waiting its turn when reset() runs never goes out as the next person.
     const { signal } = controller
     const write = (reorderChains.get(key) ?? Promise.resolve())
@@ -603,19 +611,20 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
     try {
       await write
       if (current()) {
+        // The server wrote every position, so its list is now in this order.
+        setBase(key, inOrder(bases.get(key) ?? [], fileIds))
         settle()
         // A load still under way may have read the order from before the write, so its answer is dropped and it loads
         // again.
         bump(key)
+        refresh(key)
       }
     } catch (error) {
+      // Refused, the files show in the server's last order, or a later reorder's still under way, and load again.
       if (current()) {
         settle()
         bump(key)
-        // A later reorder still under way keeps its order; otherwise the files go back as they were.
-        if (!reordering.has(key)) {
-          setSubject(key, (files) => ({ ...files, files: before }))
-        }
+        refresh(key)
         await load(subject.subjectType, [subject.subjectId]).catch(() => undefined)
       }
       throw error
@@ -626,9 +635,25 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
     }
   }
 
-  /** Deletes a file: a draft or upload of the caller's, or a file on its own. */
+  /** Deletes a file: a draft or upload of the caller's, or a file on its own, which comes off every record too. */
   async function deleteFile(fileId: string) {
+    const current = scoped()
     await run("deleteFile", { fileId })
+    if (!current()) {
+      return
+    }
+    // Every loaded record drops it, and loads under way, which may have read it before it went, load again.
+    for (const key of Object.keys(store.getSnapshot().subjects)) {
+      bump(key)
+      const files = bases.get(key)
+      if (files?.some((file) => file.id === fileId)) {
+        setBase(
+          key,
+          files.filter((file) => file.id !== fileId)
+        )
+        refresh(key)
+      }
+    }
   }
 
   /** Applies an event from `toClientEvent`, such as from a live updates feature, by loading the record again. */
@@ -652,23 +677,15 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
   function hydrate(snapshot: DehydratedAttachments) {
     store.setState((state) => ({
       ...state,
-      settings: { ...state.settings, ...(snapshot.settings as Record<string, AttachmentSettings>) },
-      subjects: {
-        ...state.subjects,
-        ...Object.fromEntries(
-          Object.entries(snapshot.subjects).map(([key, subject]) => [
-            key,
-            {
-              ...(subject as unknown as SubjectFiles),
-              error: null,
-              files: (subject.files as unknown as Serialized<AttachedFile>[]).map((file) =>
-                reviveFile<AttachedFile>(file)
-              )
-            }
-          ])
-        )
-      }
+      settings: { ...state.settings, ...(snapshot.settings as Record<string, AttachmentSettings>) }
     }))
+    for (const [key, subject] of Object.entries(snapshot.subjects)) {
+      setBase(
+        key,
+        (subject.files as unknown as Serialized<AttachedFile>[]).map((file) => reviveFile<AttachedFile>(file))
+      )
+      refresh(key, () => ({ state: subject.state, error: null, pending: subject.pending }))
+    }
   }
 
   /**
@@ -688,6 +705,7 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
       }
     }
     queued.clear()
+    bases.clear()
     versions.clear()
     reordering.clear()
     reorderChains.clear()
