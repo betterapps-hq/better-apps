@@ -376,6 +376,30 @@ describe("drafts", () => {
     }
   })
 
+  it("can't be finished once they expire, so finishing late can't pass the cap", async () => {
+    const { api, as, send, count } = setup({ maxDrafts: 2 })
+    const late = await api.createUpload(draft, as("bob"))
+    const onRecord = await api.createUpload({ ...inv1, name: "b.txt", contentType: "text/plain", size: 3 }, as("bob"))
+    expect((await send(late.upload, "abc")).status).toBe(204)
+    expect((await send(onRecord.upload, "abc")).status).toBe(204)
+    vi.useFakeTimers({ toFake: ["Date"] })
+    try {
+      vi.setSystemTime(Date.now() + 16 * 60_000)
+      const next = await api.createUpload(draft, as("bob"))
+      for (const fileId of [late.file.id, onRecord.file.id]) {
+        await expect(api.completeUpload({ fileId }, as("bob"))).rejects.toMatchObject({
+          code: "CONFLICT",
+          message: "That upload expired. Upload the file again."
+        })
+      }
+      expect((await send(next.upload, "abc")).status).toBe(204)
+      expect((await api.completeUpload({ fileId: next.file.id }, as("bob"))).file.status).toBe("ready")
+      expect(count(attachmentModel)).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it("keep the cap when uploads start at the same time", async () => {
     // Holds each upload at `canUpload` until all six have started, so they race for the last places.
     let release: (() => void) | undefined
@@ -618,6 +642,24 @@ describe("records that change", () => {
       expect(await api.moveSubject({ ...inv1, toOrgId: "globex" })).toEqual({ moved: 1, done: true })
       const listed = await api.listFiles({ subjectType: "invoice", subjectIds: ["inv-1"] }, as("gus"))
       expect(listed["inv-1"]?.map((entry) => [entry.id, entry.orgId])).toEqual([[file.id, "globex"]])
+    } finally {
+      invoices.set("inv-1", { orgId: "acme" })
+    }
+  })
+
+  it("keep their order when they move", async () => {
+    const { api, as, upload } = setup()
+    const ids: string[] = []
+    for (let index = 0; index < 3; index += 1) {
+      ids.push((await upload("bob", inv1)).file.id)
+    }
+    const order = [...ids].reverse()
+    await api.reorder({ ...inv1, fileIds: order }, as("bob"))
+    invoices.set("inv-1", { orgId: "globex" })
+    try {
+      expect(await api.moveSubject({ ...inv1, toOrgId: "globex" })).toEqual({ moved: 3, done: true })
+      const listed = await api.listFiles({ subjectType: "invoice", subjectIds: ["inv-1"] }, as("gus"))
+      expect(listed["inv-1"]?.map((entry) => entry.id)).toEqual(order)
     } finally {
       invoices.set("inv-1", { orgId: "acme" })
     }

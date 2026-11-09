@@ -200,6 +200,26 @@ describe("attachments client", () => {
     ])
   })
 
+  it("sends a record's reorders one after another, so the last one asked for is the one kept", async () => {
+    const { attachments, upload, requests, hold } = browser()
+    const a = (await upload("bob", inv1)).file.id
+    const b = (await upload("bob", inv1)).file.id
+    const c = (await upload("bob", inv1)).file.id
+    await attachments.load("invoice", ["inv-1"])
+    const order = () => attachments.store.getSnapshot().subjects[key1]?.files.map((entry) => entry.id)
+    const held = hold("reorder")
+    const first = attachments.reorder(inv1, [b, a, c])
+    const second = attachments.reorder(inv1, [b, c, a])
+    await tick()
+    expect(requests.filter((name) => name === "reorder")).toHaveLength(1)
+    expect(order()).toEqual([b, c, a])
+    held()
+    await Promise.all([first, second])
+    expect(requests.filter((name) => name === "reorder")).toHaveLength(2)
+    await attachments.load("invoice", ["inv-1"])
+    expect(order()).toEqual([b, c, a])
+  })
+
   it("loads a record again for a client event, and drops an answer that went out before it", async () => {
     const { attachments, upload, requests, hold } = browser()
     await attachments.load("invoice", ["inv-1"])

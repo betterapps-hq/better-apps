@@ -234,6 +234,8 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
   const versions = new Map<string, number>()
   // The order each record's reorders under way asked for, the latest last, so a load that lands meanwhile keeps it.
   const reordering = new Map<string, { order: readonly string[]; count: number }>()
+  // A record's reorders go to the server one after another, so the order it keeps is the last one asked for.
+  const reorderChains = new Map<string, Promise<unknown>>()
   const queued = new Map<string, Map<string, { resolve: () => void; reject: (error: unknown) => void }[]>>()
   let flushing: Promise<void> | null = null
   // Answers to calls made before a reset() belong to the previous person, so they change the store only in their
@@ -591,8 +593,14 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
         return file ? [{ ...file, position }] : []
       })
     }))
+    // The signal is taken now, so a reorder still waiting its turn when reset() runs never goes out as the next person.
+    const { signal } = controller
+    const write = (reorderChains.get(key) ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(() => call("attachments", "reorder", { ...subject, fileIds }, { signal }))
+    reorderChains.set(key, write)
     try {
-      await run("reorder", { ...subject, fileIds })
+      await write
       if (current()) {
         settle()
         // A load still under way may have read the order from before the write, so its answer is dropped and it loads
@@ -603,10 +611,17 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
       if (current()) {
         settle()
         bump(key)
-        setSubject(key, (files) => ({ ...files, files: before }))
+        // A later reorder still under way keeps its order; otherwise the files go back as they were.
+        if (!reordering.has(key)) {
+          setSubject(key, (files) => ({ ...files, files: before }))
+        }
         await load(subject.subjectType, [subject.subjectId]).catch(() => undefined)
       }
       throw error
+    } finally {
+      if (reorderChains.get(key) === write) {
+        reorderChains.delete(key)
+      }
     }
   }
 
@@ -674,6 +689,7 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
     queued.clear()
     versions.clear()
     reordering.clear()
+    reorderChains.clear()
     store.setState(empty)
     for (const listener of resetListeners) {
       listener()

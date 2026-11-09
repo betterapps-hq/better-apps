@@ -282,7 +282,8 @@ and the original is served.
 
 ## Files that are never attached
 
-- An upload that never finishes stays `pending` until its URL expires, after `uploadTtl`.
+- An upload that never finishes stays `pending` until its URL expires, after `uploadTtl`. It can't be finished after
+  that, since it no longer counts toward `maxDrafts`.
 - A draft that's never attached expires after `draftTtl`.
 - A file that leaves its only record is marked `deleted` at once.
 
@@ -304,7 +305,7 @@ then deletes the bytes again, in case some arrived, and the row. Bytes that fail
 Attachments keep the organization of the record when they were attached. When a record moves to another organization,
 its attachments stay hidden, and don't count toward its limit there, until server code calls
 `app.api.attachments.moveSubject({ subjectType, subjectId, toOrgId })`, which moves the attachments and the files the
-record keeps. Files kept on their own stay with their owner, and stay on the record.
+record keeps, in their order. Files kept on their own stay with their owner, and stay on the record.
 
 `removeSubject({ subjectType, subjectId })` takes every file off a deleted record and deletes the files it kept.
 `removeUser({ userId })` deletes a person's own files and drafts, and their uploads that haven't finished, including
@@ -372,8 +373,8 @@ const file = await attachments.upload(input.files[0], { subjectType: "invoice", 
   `cancelled`. `startUpload` does the same and returns the upload's id at once. `cancel(id)` stops one and deletes what
   the server knew of it. A file the limits from `loadSettings` refuse fails at once, without a call.
 - An upload onto a record adds the file to the record's list when it finishes. `detach` and `reorder` show at once and
-  roll back when the server refuses, and a load that lands while they're saved keeps them. `attach` loads the record
-  again once it's done.
+  roll back when the server refuses, and a load that lands while they're saved keeps them. A record's reorders go to the
+  server one after another, so it keeps the last order asked for. `attach` loads the record again once it's done.
 - `applyEvent` takes events from `toClientEvent` and loads the record again. `dehydrate`, `hydrate` and `reset` work as
   in the other features. `reset` cancels calls under way, which reject with `ABORTED`, and a call it can't cancel, such
   as `finishUpload` with its own signal, changes nothing when it settles, so the previous person's files never come back

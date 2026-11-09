@@ -165,6 +165,8 @@ export async function createUpload(config: Config, context: Context): Promise<Cr
   }
 }
 
+const expiredUpload = () => new AttachmentsError("CONFLICT", "That upload expired. Upload the file again.")
+
 /** The caller's own upload, or `NOT_FOUND`. Trusted server code can finish anyone's. */
 async function ownUpload(context: Context, fileId: string): Promise<AttachmentFile> {
   const file = await context.db.findOne<AttachmentFile>({ model: fileModel, where: [{ field: "id", value: fileId }] })
@@ -199,6 +201,12 @@ export async function completeUpload(config: Config, context: Context): Promise<
   if (file.status === "ready") {
     return { file: await presentFinished(config, context, file), attachment: null }
   }
+  // An expired upload no longer counts toward `maxDrafts` and waits for the sweep, so finishing it late can't make a
+  // draft past the cap.
+  const now = new Date()
+  if (file.expiresAt !== null && file.expiresAt.getTime() <= now.getTime()) {
+    throw expiredUpload()
+  }
   const stored = await config.storage.head(file.storageKey)
   if (!stored) {
     throw new AttachmentsError("CONFLICT", "The file hasn't arrived yet. Send it, then finish the upload.")
@@ -209,7 +217,7 @@ export async function completeUpload(config: Config, context: Context): Promise<
     throw new AttachmentsError("INVALID_INPUT", "The file that arrived doesn't match the upload. Send it again.")
   }
   const keptByRecord = file.target !== null
-  const expiresAt = file.owner === null && !keptByRecord ? new Date(Date.now() + config.draftTtlMs) : null
+  const expiresAt = file.owner === null && !keptByRecord ? new Date(now.getTime() + config.draftTtlMs) : null
   const ready: AttachmentFile = {
     ...file,
     status: "ready",
@@ -217,14 +225,15 @@ export async function completeUpload(config: Config, context: Context): Promise<
     expiresAt,
     target: null,
     etag: stored.etag,
-    uploadedAt: new Date()
+    uploadedAt: now
   }
   const markReady: WriteOperation = {
     type: "update",
     model: fileModel,
     where: [
       { field: "id", value: file.id },
-      { field: "status", value: "pending" }
+      { field: "status", value: "pending" },
+      { field: "expiresAt", operator: "gt", value: now }
     ],
     update: {
       status: "ready",
@@ -240,8 +249,12 @@ export async function completeUpload(config: Config, context: Context): Promise<
   if (!keptByRecord) {
     const [updated] = await context.db.batch([markReady])
     if (!updated) {
-      // Another call finished it meanwhile, or it was deleted or expired, which `ownUpload` reports.
-      return { file: await presentFinished(config, context, await ownUpload(context, file.id)), attachment: null }
+      // Another call finished it meanwhile, or it was deleted, which `ownUpload` reports, or it expired.
+      const current = await ownUpload(context, file.id)
+      if (current.status !== "ready") {
+        throw expiredUpload()
+      }
+      return { file: await presentFinished(config, context, current), attachment: null }
     }
     announce()
     return { file: await present(config, ready), attachment: null }
@@ -255,7 +268,7 @@ export async function completeUpload(config: Config, context: Context): Promise<
     const [attached] = await addLinks(config, context, ref, [ready], {
       before: [markReady],
       guarded: [file.id],
-      conflict: "That upload expired. Upload the file again.",
+      conflict: expiredUpload().message,
       committed: announce
     })
     return { file: await present(config, ready), attachment: attached ?? null }

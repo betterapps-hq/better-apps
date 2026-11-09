@@ -105,7 +105,10 @@ export async function sweep(config: Config, writer: Writer): Promise<SweepResult
   return { removed: gone.length, done: leftovers.length + expired.length < removalPage }
 }
 
-/** Finds a page of attachments on some records of one subject type, reading at most `maxReads` lists of ids. */
+/**
+ * Finds a page of attachments on some records of one subject type, reading at most `maxReads` lists of ids. Each record's
+ * come in its order, record by record, so a move that takes several pages keeps the order.
+ */
 async function pageOf(
   db: Context["db"],
   subjectType: string,
@@ -128,6 +131,11 @@ async function pageOf(
           { field: "subjectType", value: subjectType },
           { field: "subjectId", operator: "in", value: list },
           ...(notOrgId === undefined ? [] : [{ field: "orgId", operator: "ne" as const, value: notOrgId }])
+        ],
+        sortBy: [
+          { field: "subjectId", direction: "asc" },
+          { field: "position", direction: "asc" },
+          { field: "id", direction: "asc" }
         ],
         limit: limit - rows.length
       }))
