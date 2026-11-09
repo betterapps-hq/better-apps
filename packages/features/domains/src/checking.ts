@@ -16,6 +16,8 @@ import {
   ownershipError,
   ownershipRecord,
   recheckMs,
+  releaseLeaseMs,
+  releasingError,
   statusOf,
   unchecked
 } from "./checks.js"
@@ -83,20 +85,48 @@ export async function claimPrimary(writer: Writer, row: DomainRow): Promise<Doma
   return primary
 }
 
-async function removeAtProvider(config: Config, row: DomainRow): Promise<void> {
-  if (row.kind === "custom" && row.providerId !== null && config.provider) {
-    const { provider } = config
-    const { providerId } = row
+async function removeAtProvider(config: Config, providerId: string | null): Promise<void> {
+  const { provider } = config
+  if (providerId !== null && provider) {
     await fromProvider(() => provider.remove(providerId))
   }
 }
 
 /**
+ * Marks a custom domain as deleting its hostname at the provider, while `where` still holds, and returns it as it is
+ * now, or `null` when it changed. Until `releaseLeaseMs` after, no other organization can take the hostname over, so
+ * the provider id it returns stays this domain's while it's deleted.
+ */
+async function holdForRelease(writer: Writer, id: string, where: readonly Where[]): Promise<DomainRow | null> {
+  const [held] = await writer.db.batch([
+    {
+      type: "update",
+      model: domainModel,
+      where: [{ field: "id", value: id }, ...where],
+      update: { releasingAt: new Date() }
+    }
+  ])
+  return held as DomainRow | null
+}
+
+/**
  * Removes a domain: from the provider first, so a failure there keeps the row to try again, then from the app. Returns
- * whether this call removed it.
+ * whether this call removed it. The provider id is read as the domain is held for the removal, not when it was read
+ * before, so a hostname that passed to another organization meanwhile stays with it.
  */
 export async function removeDomain(config: Config, writer: Writer, row: DomainRow): Promise<boolean> {
-  await removeAtProvider(config, row)
+  let current = row
+  if (row.kind === "custom") {
+    const held = await holdForRelease(writer, row.id, [])
+    if (!held) {
+      return false
+    }
+    current = held
+    // Only the domain holding the hostname has it at the provider.
+    if (held.claimedHostname !== null) {
+      await removeAtProvider(config, held.providerId)
+    }
+  }
   const [removed] = await writer.db.batch([
     { type: "deleteMany", model: domainModel, where: [{ field: "id", value: row.id }] }
   ])
@@ -104,10 +134,10 @@ export async function removeDomain(config: Config, writer: Writer, row: DomainRo
     return false
   }
   await announce(writer, [
-    ["domain.removed", { domain: summary(row) }],
-    ...(row.primaryOf === null
+    ["domain.removed", { domain: summary(current) }],
+    ...(current.primaryOf === null
       ? []
-      : [["primary.changed", { orgId: publicOrg(row.orgId), domain: null }] as const satisfies Announcement])
+      : [["primary.changed", { orgId: publicOrg(current.orgId), domain: null }] as const satisfies Announcement])
   ])
   return true
 }
@@ -137,11 +167,16 @@ const providerOf = (config: Config) => config.provider as HostnameProvider
 
 /**
  * Frees a hostname from the domain holding it, for an organization that just proved it owns the hostname, unless the
- * holder's own ownership record is still in place. Returns why it can't, or `null` once the hostname is free.
+ * holder's own ownership record is still in place or the holder is deleting the hostname at the provider. Returns why
+ * it can't, or `null` once the hostname is free.
  */
 async function evict(config: Config, writer: Writer, holder: DomainRow): Promise<string | null> {
   if (holder.ownershipToken === null) {
     return "That domain is in use."
+  }
+  const leaseEnded = new Date(Date.now() - releaseLeaseMs)
+  if (holder.releasingAt !== null && holder.releasingAt > leaseEnded) {
+    return releasingError
   }
   const record = ownershipRecord(config.ownershipLabel, holder.hostname, holder.ownershipToken)
   const stillProven = await isRecordFound(config.dns, record)
@@ -152,14 +187,16 @@ async function evict(config: Config, writer: Writer, holder: DomainRow): Promise
     return contestedError(record.name)
   }
   // The provider's hostname stays for the new holder, which registering again returns, so it isn't the evicted
-  // domain's to remove anymore.
+  // domain's to remove anymore. A holder that started deleting it since it was read keeps the hostname.
   const [evicted] = await writer.db.batch([
     {
       type: "update",
       model: domainModel,
       where: [
         { field: "id", value: holder.id },
-        { field: "claimedHostname", value: holder.hostname }
+        { field: "claimedHostname", value: holder.hostname },
+        { field: "releasingAt", value: null, connector: "OR" },
+        { field: "releasingAt", operator: "lte", value: leaseEnded, connector: "OR" }
       ],
       update: {
         claimedHostname: null,
@@ -362,8 +399,21 @@ export async function runCheck(
   let finding = proof === "claimed" ? await serve(config, row) : proof
   if (finding.status === "pending" && now.getTime() - schedule.checkingSince.getTime() >= checkWindowMs) {
     // A domain nobody finished setting up stops holding a hostname at the provider; checking it again registers it.
-    await removeAtProvider(config, { ...row, providerId: finding.providerId })
-    finding = { ...finding, status: "failed", providerId: null, error: expiredError, registered: null }
+    // It's held first, as a removal is. A domain that changed meanwhile isn't saved below either, and what the check
+    // registered is released there.
+    const held =
+      finding.providerId !== null &&
+      (await holdForRelease(writer, row.id, [{ field: "claimedHostname", value: row.hostname }, ...where])) !== null
+    if (held) {
+      await removeAtProvider(config, finding.providerId)
+    }
+    finding = {
+      ...finding,
+      status: "failed",
+      providerId: null,
+      error: expiredError,
+      registered: held ? null : finding.registered
+    }
   }
   const { claimed, registered, ...found } = finding
   const update: Partial<DomainRow> = {

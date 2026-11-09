@@ -25,6 +25,13 @@ export type DomainRow = {
   orgId: string
   hostname: string
   /**
+   * Its place among its organization's domains, from 0 to one below the organization's limit. Unique in the
+   * organization, so adds that run at once can't pass the limit.
+   */
+  slot: number
+  /** Its place among its organization's domains of its kind, unique too, so the subdomain limit holds the same way. */
+  kindSlot: number
+  /**
    * The hostname while this domain holds it: a subdomain from the start, a custom domain once its ownership record is
    * found. Unique, so one domain holds a hostname, while any organization may add it and prove it owns it.
    */
@@ -36,6 +43,11 @@ export type DomainRow = {
   certificate: CertificateStatus
   records: CheckedRecord[] | null
   providerId: string | null
+  /**
+   * When a removal, or a check that found the domain out of time, last started deleting its hostname at the provider.
+   * Until `releaseLeaseMs` after, no other organization can take the hostname over.
+   */
+  releasingAt: Date | null
   /** The organization's id when this is its primary domain, else `null`. Unique, so each has one at most. */
   primaryOf: string | null
   error: string | null
@@ -58,6 +70,8 @@ export const domainsSchema: FeatureSchema = {
     fields: {
       orgId: { type: "string", defaultValue: "" },
       hostname: { type: "string" },
+      slot: { type: "number" },
+      kindSlot: { type: "number" },
       claimedHostname: { type: "string", required: false, unique: true },
       ownershipToken: { type: "string", required: false },
       kind: { type: "string" },
@@ -65,6 +79,7 @@ export const domainsSchema: FeatureSchema = {
       certificate: { type: "string" },
       records: { type: "json", required: false },
       providerId: { type: "string", required: false },
+      releasingAt: { type: "date", required: false },
       primaryOf: { type: "string", required: false, unique: true },
       error: { type: "string", required: false },
       attempts: { type: "number", defaultValue: 0 },
@@ -78,7 +93,9 @@ export const domainsSchema: FeatureSchema = {
     },
     indexes: [
       { fields: ["orgId", "createdAt"], name: "domain_by_org" },
-      { fields: ["orgId", "hostname"], name: "domain_org_hostname", unique: true }
+      { fields: ["orgId", "hostname"], name: "domain_org_hostname", unique: true },
+      { fields: ["orgId", "slot"], name: "domain_org_slot", unique: true },
+      { fields: ["orgId", "kind", "kindSlot"], name: "domain_org_kind_slot", unique: true }
     ]
   }
 }

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "4c2426ba-e569-407b-8ad4-eea22d7a6941",
+  "id": "2db2cf84-13fc-4c17-93c7-e239191db46c",
   "prevId": "6f124219-b4ce-418d-b5a3-dea5ff3305ad",
   "tables": {
     "invoice": {
@@ -893,6 +893,20 @@
           "notNull": true,
           "autoincrement": false
         },
+        "slot": {
+          "name": "slot",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kind_slot": {
+          "name": "kind_slot",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
         "claimed_hostname": {
           "name": "claimed_hostname",
           "type": "text",
@@ -938,6 +952,13 @@
         "provider_id": {
           "name": "provider_id",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "releasing_at": {
+          "name": "releasing_at",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
@@ -1033,6 +1054,16 @@
         "domain_org_hostname": {
           "name": "domain_org_hostname",
           "columns": ["org_id", "hostname"],
+          "isUnique": true
+        },
+        "domain_org_slot": {
+          "name": "domain_org_slot",
+          "columns": ["org_id", "slot"],
+          "isUnique": true
+        },
+        "domain_org_kind_slot": {
+          "name": "domain_org_kind_slot",
+          "columns": ["org_id", "kind", "kind_slot"],
           "isUnique": true
         }
       },

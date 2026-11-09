@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { setup, type UserId } from "../test/app.js"
-import { evictedError, expiredError, lookupError } from "./checks.js"
+import { evictedError, expiredError, lookupError, releaseLeaseMs, releasingError } from "./checks.js"
 import {
   checkWindowMs,
   domains,
@@ -240,6 +240,25 @@ describe("custom domains", () => {
       code: "LIMIT_EXCEEDED"
     })
     await expect(api.add({ kind: "custom", hostname: "b.globex.com" }, as("gus"))).resolves.toBeTruthy()
+  })
+
+  it("keep to the limits when several are added at once", async () => {
+    const { api, as, events, scheduled } = setup({ maxPerOrg: 3 })
+    const outcomes = async (adds: Promise<Domain>[]) =>
+      (await Promise.allSettled(adds)).map((result) => (result.status === "fulfilled" ? "added" : result.reason.code))
+    await expect(
+      outcomes([
+        api.add({ kind: "subdomain", label: "acme" }, as("ada")),
+        api.add({ kind: "subdomain", label: "acme-two" }, as("ada"))
+      ])
+    ).resolves.toEqual(["added", "LIMIT_EXCEEDED"])
+    // All three choose the same free place. One takes it, the next takes the place after it, and the last finds none.
+    await expect(
+      outcomes(["a", "b", "c"].map((name) => api.add({ kind: "custom", hostname: `${name}.acme.com` }, as("ada"))))
+    ).resolves.toEqual(["added", "added", "LIMIT_EXCEEDED"])
+    expect((await api.list(undefined, as("ada"))).domains).toHaveLength(3)
+    expect(events("domain.added")).toHaveLength(3)
+    expect(scheduled()).toHaveLength(2)
   })
 })
 
@@ -721,6 +740,34 @@ describe("scheduled rechecks", () => {
     await expect(api.lookup({ hostname: "links.acme.com" })).resolves.toMatchObject({ orgId: "acme", verified: false })
   })
 
+  it("keep the hostname of a domain out of time from another organization while it's deleted at the provider", async () => {
+    const t = setup()
+    const { api, as, app, provider } = t
+    await addReady(t, "ada", "links.acme.com")
+    provider.dns.unpublish("_verify.links.acme.com", "TXT")
+    provider.dns.unpublish("links.acme.com", "CNAME")
+    const recheck = later(new Date(Date.now()), recheckMs)
+    vi.setSystemTime(recheck)
+    await app.deliverEvents()
+    const remove = provider.remove.bind(provider)
+    let taker: Domain | undefined
+    // Globex proves it owns the hostname as the check that found Acme's domain out of time deletes it.
+    provider.remove = async (id) => {
+      provider.remove = remove
+      taker = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("gus"))
+      t.prove(taker)
+      await expect(api.check({ domainId: taker.id }, as("gus"))).resolves.toMatchObject({ error: releasingError })
+      return remove(id)
+    }
+    vi.setSystemTime(later(recheck, checkWindowMs))
+    await app.deliverEvents()
+    expect((await api.list(undefined, as("ada"))).domains[0]).toMatchObject({ status: "failed", error: expiredError })
+    expect(provider.hostnames.size).toBe(0)
+    vi.setSystemTime(later(new Date(Date.now()), releaseLeaseMs))
+    await expect(api.check({ domainId: taker?.id ?? "" }, as("gus"))).resolves.toMatchObject({ status: "pending" })
+    await expect(api.lookup({ hostname: "links.acme.com" })).resolves.toMatchObject({ orgId: "globex" })
+  })
+
   it("fail a domain still pending after 7 days", async () => {
     const { api, as, app, scheduled } = setup()
     await api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))
@@ -862,12 +909,107 @@ describe("remove", () => {
     await expect(t.api.check({ domainId: added.id }, t.as("ada"))).resolves.toMatchObject({ status: "active" })
   })
 
-  it("keeps the domain when the provider fails", async () => {
+  it("leaves a hostname that passed to another organization after the removal read the domain", async () => {
     const t = setup()
+    const { api, as, provider } = t
+    await addReady(t, "ada", "first.acme.com")
+    await addReady(t, "ada", "links.acme.com")
+    provider.dns.unpublish("_verify.links.acme.com", "TXT")
+    const taker = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("gus"))
+    t.prove(taker)
+    const remove = provider.remove.bind(provider)
+    // Removing all of Acme's domains reads both, then Globex takes links.acme.com over while the first is removed.
+    provider.remove = async (id) => {
+      provider.remove = remove
+      expect(id).toBe("local-first.acme.com")
+      await expect(api.check({ domainId: taker.id }, as("gus"))).resolves.toMatchObject({ status: "active" })
+      return remove(id)
+    }
+    await expect(api.removeAll({ orgId: "acme" })).resolves.toEqual({ removed: 2 })
+    expect([...provider.hostnames.values()].map((entry) => entry.hostname)).toEqual(["links.acme.com"])
+    advance()
+    await expect(api.check({ domainId: taker.id }, as("gus"))).resolves.toMatchObject({ status: "active", error: null })
+  })
+
+  it("keeps the hostname from another organization while it's deleted at the provider", async () => {
+    const t = setup()
+    const { api, as, provider } = t
+    const old = await addReady(t, "ada", "links.acme.com")
+    provider.dns.unpublish("_verify.links.acme.com", "TXT")
+    const taker = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("gus"))
+    t.prove(taker)
+    const remove = provider.remove.bind(provider)
+    provider.remove = async (id) => {
+      provider.remove = remove
+      await expect(api.check({ domainId: taker.id }, as("gus"))).resolves.toMatchObject({
+        status: "pending",
+        error: releasingError
+      })
+      return remove(id)
+    }
+    await expect(api.remove({ domainId: old.id }, as("ada"))).resolves.toEqual({ removed: true })
+    expect(provider.hostnames.size).toBe(0)
+    // Once the domain is gone, Globex takes the hostname and registers it again.
+    advance()
+    await expect(api.check({ domainId: taker.id }, as("gus"))).resolves.toMatchObject({ error: waiting })
+    await expect(api.lookup({ hostname: "links.acme.com" })).resolves.toMatchObject({ orgId: "globex" })
+    expect(provider.hostnames.size).toBe(1)
+  })
+
+  it("keeps the hostname from an organization whose check read the domain just before its removal began", async () => {
+    const t = setup()
+    const { api, as, provider } = t
+    const old = await addReady(t, "ada", "links.acme.com")
+    provider.dns.unpublish("_verify.links.acme.com", "TXT")
+    const taker = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("gus"))
+    t.prove(taker)
+    const { resolve } = provider.dns
+    const remove = provider.remove.bind(provider)
+    let removal: Promise<{ removed: boolean }> | undefined
+    let finishDeleting: (() => void) | undefined
+    let ownershipLookups = 0
+    // Globex's check finds its own record, reads Acme's domain and looks up Acme's record. Meanwhile Acme's removal
+    // starts deleting the hostname at the provider.
+    provider.dns.resolve = async (name, type) => {
+      if (type === "TXT" && name === "_verify.links.acme.com" && ++ownershipLookups === 2) {
+        const deleting = new Promise<void>((started) => {
+          provider.remove = async (id) => {
+            provider.remove = remove
+            started()
+            await new Promise<void>((finish) => {
+              finishDeleting = finish
+            })
+            return remove(id)
+          }
+        })
+        removal = api.remove({ domainId: old.id }, as("ada"))
+        await deleting
+      }
+      return resolve(name, type)
+    }
+    await expect(api.check({ domainId: taker.id }, as("gus"))).resolves.toMatchObject({
+      status: "pending",
+      error: releasingError
+    })
+    finishDeleting?.()
+    await expect(removal).resolves.toEqual({ removed: true })
+    expect(provider.hostnames.size).toBe(0)
+    await expect(api.lookup({ hostname: "links.acme.com" })).resolves.toBeNull()
+  })
+
+  it("keeps the domain when the provider fails, and its hostname from others for a while", async () => {
+    const t = setup()
+    const { api, as, provider } = t
     const added = await addReady(t, "ada", "links.acme.com")
-    t.provider.failNext("remove", new HostnameProviderError("UNAVAILABLE", "Down."))
-    await expect(t.api.remove({ domainId: added.id }, t.as("ada"))).rejects.toMatchObject({ code: "PROVIDER_ERROR" })
-    expect((await t.api.list(undefined, t.as("ada"))).domains).toHaveLength(1)
+    provider.dns.unpublish("_verify.links.acme.com", "TXT")
+    provider.failNext("remove", new HostnameProviderError("UNAVAILABLE", "Down."))
+    await expect(api.remove({ domainId: added.id }, as("ada"))).rejects.toMatchObject({ code: "PROVIDER_ERROR" })
+    expect((await api.list(undefined, as("ada"))).domains).toHaveLength(1)
+    const taker = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("gus"))
+    t.prove(taker)
+    await expect(api.check({ domainId: taker.id }, as("gus"))).resolves.toMatchObject({ error: releasingError })
+    vi.setSystemTime(later(new Date(Date.now()), releaseLeaseMs))
+    await expect(api.check({ domainId: taker.id }, as("gus"))).resolves.toMatchObject({ status: "active" })
   })
 
   it("removes every domain of an organization, from the provider too", async () => {

@@ -169,29 +169,41 @@ function hostnameFor(config: Config, input: AddDomainInput): string {
   return hostname
 }
 
-async function checkLimits(config: Config, db: DatabaseAdapter, orgId: string, kind: DomainKind) {
-  const count = await db.count({ model: domainModel, where: [{ field: "orgId", value: orgId }] })
-  if (count >= config.maxPerOrg) {
+/** The lowest place none of `taken` holds: at most the number taken, so below a limit they're fewer than. */
+function freePlace(taken: readonly number[]): number {
+  const held = new Set(taken)
+  let place = 0
+  while (held.has(place)) {
+    place += 1
+  }
+  return place
+}
+
+/**
+ * Where a new domain goes among its organization's domains, or the error that says the organization has as many as it
+ * can. Each place is unique in the organization and below its limit, so adds that run at once can't pass the limit:
+ * the database refuses a second domain in a place.
+ */
+async function placeOf(config: Config, db: DatabaseAdapter, orgId: string, kind: DomainKind) {
+  const rows = await db.findMany<DomainRow>({
+    model: domainModel,
+    where: [{ field: "orgId", value: orgId }],
+    limit: limits.maxPerOrgCap
+  })
+  if (rows.length >= config.maxPerOrg) {
     throw new DomainsError("LIMIT_EXCEEDED", `An organization can have up to ${config.maxPerOrg} domains.`)
   }
+  const sameKind = rows.filter((row) => row.kind === kind)
   const perKind = kind === "subdomain" ? (config.subdomains?.maxPerOrg ?? 0) : null
-  if (perKind !== null) {
-    const subdomains = await db.count({
-      model: domainModel,
-      where: [
-        { field: "orgId", value: orgId },
-        { field: "kind", value: "subdomain" }
-      ]
-    })
-    if (subdomains >= perKind) {
-      throw new DomainsError(
-        "LIMIT_EXCEEDED",
-        perKind === 1
-          ? "An organization can have one subdomain. Remove it to choose another."
-          : `An organization can have up to ${perKind} subdomains.`
-      )
-    }
+  if (perKind !== null && sameKind.length >= perKind) {
+    throw new DomainsError(
+      "LIMIT_EXCEEDED",
+      perKind === 1
+        ? "An organization can have one subdomain. Remove it to choose another."
+        : `An organization can have up to ${perKind} subdomains.`
+    )
   }
+  return { slot: freePlace(rows.map((row) => row.slot)), kindSlot: freePlace(sameKind.map((row) => row.kindSlot)) }
 }
 
 /**
@@ -218,17 +230,40 @@ async function conflictOf(db: DatabaseAdapter, orgId: string, hostname: string, 
   return null
 }
 
-/** Writes a new domain, answering `CONFLICT` when another add of the hostname got there first. */
-async function insert(db: DatabaseAdapter, row: DomainRow): Promise<DomainRow> {
-  try {
-    const [created] = await db.batch([{ type: "create", model: domainModel, data: row }])
-    return created as DomainRow
-  } catch (caught) {
+/** A domain before it has its places among its organization's domains. */
+type NewDomain = Omit<DomainRow, "slot" | "kindSlot">
+
+/**
+ * Writes a new domain in a free place, with its events, answering `CONFLICT` when another add of the hostname got there
+ * first. When another add took the place first, it looks again, up to three tries.
+ */
+async function insert(config: Config, context: Context, row: NewDomain): Promise<DomainRow> {
+  const { db } = context
+  for (let attempt = 1; ; attempt += 1) {
+    const place = await placeOf(config, db, row.orgId, row.kind)
     const conflict = await conflictOf(db, row.orgId, row.hostname, row.kind)
     if (conflict) {
-      throw new DomainsError("CONFLICT", conflict, { cause: caught })
+      throw new DomainsError("CONFLICT", conflict)
     }
-    throw caught
+    const data: DomainRow = { ...row, ...place }
+    // A create either commits with its events or fails without them, so each try emits them again. A custom domain's
+    // first scheduled check is written with it, so it's never left without one.
+    context.emit("domain.added", { domain: summary(data) })
+    if (data.checkToken !== null && data.nextCheckAt !== null) {
+      context.emit("check.scheduled", { domainId: data.id, token: data.checkToken }, { availableAt: data.nextCheckAt })
+    }
+    try {
+      const [created] = await db.batch([{ type: "create", model: domainModel, data }])
+      return created as DomainRow
+    } catch (caught) {
+      const taken = await conflictOf(db, row.orgId, row.hostname, row.kind)
+      if (taken) {
+        throw new DomainsError("CONFLICT", taken, { cause: caught })
+      }
+      if (attempt >= 3) {
+        throw caught
+      }
+    }
   }
 }
 
@@ -237,18 +272,13 @@ const ownershipToken = () => crypto.randomUUID().replaceAll("-", "")
 
 async function add(config: Config, context: Context, input: AddDomainInput): Promise<Domain> {
   const orgId = await managedOrg(config, context, input)
-  const { db, now } = context
+  const { now } = context
   const hostname = hostnameFor(config, input)
-  await checkLimits(config, db, orgId, input.kind)
-  const conflict = await conflictOf(db, orgId, hostname, input.kind)
-  if (conflict) {
-    throw new DomainsError("CONFLICT", conflict)
-  }
   const id = crypto.randomUUID()
   const createdBy = context.author?.type === "user" ? context.author.userId : null
   const base = { id, orgId, hostname, kind: input.kind, primaryOf: null, attempts: 0, createdAt: now, createdBy }
   if (input.kind === "subdomain") {
-    const row: DomainRow = {
+    const row: NewDomain = {
       ...base,
       claimedHostname: hostname,
       ownershipToken: null,
@@ -256,6 +286,7 @@ async function add(config: Config, context: Context, input: AddDomainInput): Pro
       certificate: "active",
       records: [],
       providerId: null,
+      releasingAt: null,
       error: null,
       checkToken: null,
       checkingSince: null,
@@ -263,15 +294,12 @@ async function add(config: Config, context: Context, input: AddDomainInput): Pro
       lastCheckedAt: null,
       verifiedAt: now
     }
-    // A create either commits with its events or fails without them.
-    context.emit("domain.added", { domain: summary(row) })
-    return toDomain(await claimPrimary(context, await insert(db, row)))
+    return toDomain(await claimPrimary(context, await insert(config, context, row)))
   }
   const provider = config.provider as HostnameProvider
   const ownership = ownershipRecord(config.ownershipLabel, hostname, ownershipToken())
-  const token = crypto.randomUUID()
-  const firstCheck = nextCheckAt(0, now)
-  const row: DomainRow = {
+  // Nothing is checked yet: the ownership record's token is new, so no DNS holds it.
+  const row: NewDomain = {
     ...base,
     claimedHostname: null,
     ownershipToken: ownership.value,
@@ -279,18 +307,15 @@ async function add(config: Config, context: Context, input: AddDomainInput): Pro
     certificate: "pending",
     records: unchecked([...provider.routing(hostname), ownership]),
     providerId: null,
+    releasingAt: null,
     error: proveError(ownership.name),
-    checkToken: token,
+    checkToken: crypto.randomUUID(),
     checkingSince: now,
-    nextCheckAt: firstCheck,
+    nextCheckAt: nextCheckAt(0, now),
     lastCheckedAt: null,
     verifiedAt: null
   }
-  // Nothing is checked yet: the ownership record's token is new, so no DNS holds it. The first scheduled check is
-  // written with the domain, so it's never left without one.
-  context.emit("domain.added", { domain: summary(row) })
-  context.emit("check.scheduled", { domainId: id, token }, { availableAt: firstCheck })
-  return toDomain(await insert(db, row))
+  return toDomain(await insert(config, context, row))
 }
 
 async function check(config: Config, context: Context, input: DomainInput): Promise<Domain> {

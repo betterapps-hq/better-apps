@@ -130,6 +130,8 @@ export const domain = sqliteTable(
     id: text("id").primaryKey(),
     orgId: text("org_id").default("").notNull(),
     hostname: text("hostname").notNull(),
+    slot: integer("slot").notNull(),
+    kindSlot: integer("kind_slot").notNull(),
     claimedHostname: text("claimed_hostname").unique(),
     ownershipToken: text("ownership_token"),
     kind: text("kind").notNull(),
@@ -137,6 +139,7 @@ export const domain = sqliteTable(
     certificate: text("certificate").notNull(),
     records: text("records", { mode: "json" }),
     providerId: text("provider_id"),
+    releasingAt: integer("releasing_at", { mode: "timestamp_ms" }),
     primaryOf: text("primary_of").unique(),
     error: text("error"),
     attempts: integer("attempts").default(0).notNull(),
@@ -150,7 +153,9 @@ export const domain = sqliteTable(
   },
   (table) => [
     index("domain_by_org").on(table.orgId, table.createdAt),
-    uniqueIndex("domain_org_hostname").on(table.orgId, table.hostname)
+    uniqueIndex("domain_org_hostname").on(table.orgId, table.hostname),
+    uniqueIndex("domain_org_slot").on(table.orgId, table.slot),
+    uniqueIndex("domain_org_kind_slot").on(table.orgId, table.kind, table.kindSlot)
   ]
 )
 

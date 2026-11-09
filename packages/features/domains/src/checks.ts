@@ -17,6 +17,13 @@ export const checkCooldownMs = 10_000
 /** How long after an active custom domain's last check it's checked again. */
 export const recheckMs = 24 * 60 * 60_000
 
+/**
+ * How long a domain that starts deleting its hostname at the provider, as its removal does, keeps another organization
+ * from taking the hostname over. Longer than a provider call takes, so the provider never gives a new holder a hostname
+ * that's being deleted.
+ */
+export const releaseLeaseMs = 10 * 60_000
+
 /** When the scheduled check of a pending domain after `attempts` checks is due. */
 export function nextCheckAt(attempts: number, from: Date): Date {
   const minutes = checkScheduleMinutes[Math.min(attempts, checkScheduleMinutes.length - 1)] as number
@@ -65,6 +72,9 @@ export const expiredError = "We stopped checking after 7 days. Fix the records, 
 
 /** The error a domain gets when another organization proved it owns the hostname. */
 export const evictedError = "Another organization proved it owns this domain. Check again to prove you still do."
+
+/** The error a domain gets while the organization holding its hostname deletes the hostname at the provider. */
+export const releasingError = "Another organization is giving up this domain. We'll try again soon."
 
 /** The error a domain gets while another organization's ownership record is still in place. */
 export const contestedError = (record: string) =>

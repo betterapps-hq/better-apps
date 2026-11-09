@@ -70,6 +70,8 @@ only one domain holds it, through the unique `claimedHostname`.
 | `id`              | string                 |                                                                                                                       |
 | `orgId`           | string                 | The organization, or `""` in an app without organizations                                                             |
 | `hostname`        | string                 | Lowercase ASCII, with international names in punycode, no trailing dot                                                |
+| `slot`            | number                 | Its place among its organization's domains, below `maxPerOrg` (see [adding a domain](#adding-a-domain))               |
+| `kindSlot`        | number                 | Its place among its organization's domains of its kind, below `subdomains.maxPerOrg` for subdomains                   |
 | `claimedHostname` | string or null, unique | The hostname while this domain holds it: a subdomain at once, a custom domain once it's proven                        |
 | `ownershipToken`  | string or null         | The value of a custom domain's ownership record, random for each domain. `null` for subdomains                        |
 | `kind`            | string                 | `subdomain` or `custom`                                                                                               |
@@ -77,6 +79,7 @@ only one domain holds it, through the unique `claimedHostname`.
 | `certificate`     | string                 | `pending`, `active`, `stalled` or `failed`                                                                            |
 | `records`         | json                   | The DNS records the customer must add, each with what the last check found                                            |
 | `providerId`      | string or null         | The provider's id for the hostname, once it's registered                                                              |
+| `releasingAt`     | date or null           | When it last started deleting its hostname at the provider (see [removing a domain](#removing-a-domain))              |
 | `primaryOf`       | string or null, unique | The `orgId` when this is the organization's primary domain, so each has at most one                                   |
 | `error`           | string or null         | Why the domain isn't ready, from the provider or the DNS check, for people to read                                    |
 | `attempts`        | number                 | Scheduled checks since checking last started                                                                          |
@@ -89,7 +92,8 @@ only one domain holds it, through the unique `claimedHostname`.
 | `createdBy`       | string or null         | The user who added it                                                                                                 |
 
 An index on `orgId` and `createdAt` lists an organization's domains in the order they were added. A unique index on
-`orgId` and `hostname` keeps an organization from adding a hostname twice.
+`orgId` and `hostname` keeps an organization from adding a hostname twice. Unique indexes on `orgId` and `slot`, and on
+`orgId`, `kind` and `kindSlot`, hold the organization's limits.
 
 A domain is `active` when it's ready for traffic. A subdomain is `active` from the start. A custom domain is `active`
 when it holds its hostname and the provider reports the hostname and its certificate active. It stays `active` while the
@@ -148,6 +152,8 @@ DNS. Each custom domain gets a random token and asks for a TXT record, `<ownersh
   the hostname passes to the organization that just proved it owns it: the old domain becomes `failed`, loses its
   primary place and its provider id, and says another organization proved it owns the domain. The provider's hostname
   stays for the new holder, which registering it again returns.
+- A holder that's deleting the hostname at the provider, as when it's being removed, keeps it until that's done, and the
+  new domain says the other organization is giving up the domain. Its scheduled checks try again.
 - A CNAME left behind after a domain was removed proves nothing, since the CNAME target is the same for every
   organization. Only the TXT record does.
 - The ownership record is needed only to take the hostname. A customer may remove it afterwards, but then another
@@ -202,7 +208,10 @@ the handler answers 500 and they reach `onError` for the app's operators.
 ## Adding a domain
 
 1. The input is checked against the [rules](#hostname-rules), the organization's limits, and the hostnames the
-   organization already added.
+   organization already added. The domain takes the lowest free `slot` among the organization's domains and the lowest
+   free `kindSlot` among those of its kind. Each is unique in the organization, so adds that run at once can't pass
+   `maxPerOrg` or `subdomains.maxPerOrg`: the database refuses a second domain in a place, and the add that lost looks
+   again, up to three tries, finding the next place or the limit.
 2. A subdomain is written `active`, holding its hostname, with its certificate `active`, no records and no checks, with
    `domain.added`. When the organization has no primary domain, it becomes the primary one, with `primary.changed`.
 3. A custom domain is written `pending`, with a new ownership token, its records unchecked and `nextCheckAt` a minute
@@ -309,7 +318,8 @@ The first `app.deliverEvents()` run after that delivers it to domains' own subsc
 A domain still `pending` 7 days after `checkingSince` becomes `failed`, with an error that says checking stopped and to
 fix the records and check again, which `check` does for another 7 days. A failed domain that held a hostname at the
 provider is removed there, so it costs nothing, and keeps its hostname in the app; checking it again registers it again.
-Cloudflare stops validating a hostname after 7 days as well.
+The check holds the domain first, as a [removal](#removing-a-domain) does, so the hostname can't be taken over while
+it's deleted. Cloudflare stops validating a hostname after 7 days as well.
 
 Checks happen only when `app.deliverEvents()` runs, so call it from a scheduled job, such as a Worker's cron trigger
 every minute. A check that throws, such as when the provider can't be reached, leaves its event in the outbox for the
@@ -321,6 +331,13 @@ core's retry. Subscribing to its own event needs the core's outbox table, which 
 the call can be repeated. A hostname the provider no longer has counts as deleted. Then the row goes, with
 `domain.removed`, and `primary.changed` with no domain when it was the primary one. The organization then has no primary
 domain until one is chosen. Removing a domain that's already gone returns `removed: false`, with no events.
+
+Before it deletes the hostname at the provider, `remove` holds the domain: one write sets `releasingAt` and returns the
+domain's provider id as it is then, not as the removal first read it. For 10 minutes after, no other organization can
+take the hostname over, so the provider never gives a new holder the hostname being deleted. A domain whose hostname
+passed to another organization after the removal read it no longer holds the hostname, so its removal leaves the
+provider's hostname to the new holder. A removal that fails at the provider keeps the hostname until those 10 minutes
+are up, and calling it again holds the domain again.
 
 A check that registered the hostname with the provider while the domain was being removed finds no domain to save to. It
 then deletes that hostname at the provider, unless another domain holds the hostname, such as one that took it over or a

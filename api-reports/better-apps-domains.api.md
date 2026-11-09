@@ -156,6 +156,8 @@ export type DomainRow = {
     id: string;
     orgId: string;
     hostname: string;
+    slot: number;
+    kindSlot: number;
     claimedHostname: string | null;
     ownershipToken: string | null;
     kind: DomainKind;
@@ -163,6 +165,7 @@ export type DomainRow = {
     certificate: CertificateStatus;
     records: CheckedRecord[] | null;
     providerId: string | null;
+    releasingAt: Date | null;
     primaryOf: string | null;
     error: string | null;
     attempts: number;
