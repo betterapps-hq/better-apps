@@ -44,24 +44,31 @@ export const app = createBetterApps({
 })
 ```
 
-Call the sweep from a scheduled job, next to event delivery, so uploads that never finish and drafts that are never
-attached are removed, and deleted files' rows go once their upload address has closed. Each page takes up to about ten
-queries, so sweep a few pages a run to stay within D1's queries per invocation, 50 on the Free plan. A backlog, such as
-many drafts expiring at once, drains over the next runs:
+Call the sweep from a scheduled job, so uploads that never finish and drafts that are never attached are removed, and
+deleted files' rows go once their upload address has closed. Give it its own cron trigger, apart from event delivery,
+since each Worker invocation gets its own D1 queries, 50 on the Free plan. A sweep page takes up to about ten. That
+doesn't count its events: when a feature subscribes to them, such as to `file.deleted`, they're delivered in the same
+invocation, a few queries each, and any that don't fit stay in the outbox for `deliverEvents`. A backlog, such as many
+drafts expiring at once, drains over the next runs.
 
 ```ts
+// Each run sweeps a few pages, so it stays within the invocation's queries.
+async function sweepFiles() {
+  for (let page = 0; page < 3; page += 1) {
+    if ((await app.api.attachments.sweep()).done) {
+      return
+    }
+  }
+}
+
 export default {
   fetch: (request, env, ctx) => app.handler(request, ctx),
+  // Two cron triggers, such as "* * * * *" for events and "*/15 * * * *" for the sweep.
   scheduled: (event, env, ctx) =>
     ctx.waitUntil(
-      (async () => {
-        await app.deliverEvents({ waitUntil: (promise) => ctx.waitUntil(promise) })
-        for (let page = 0; page < 3; page += 1) {
-          if ((await app.api.attachments.sweep()).done) {
-            break
-          }
-        }
-      })()
+      event.cron === "*/15 * * * *"
+        ? sweepFiles()
+        : app.deliverEvents({ waitUntil: (promise) => ctx.waitUntil(promise) })
     )
 }
 ```
