@@ -1,6 +1,7 @@
 import type { DatabaseAdapter } from "./database.js"
 import { BetterAppsError } from "./errors.js"
 import type { Actor, Identity } from "./identity.js"
+import type { ErrorContext } from "./outbox.js"
 
 /** A record features attach things to, such as an invoice: its subject type and id. */
 export interface SubjectRef {
@@ -29,6 +30,17 @@ export interface ViewOptions {
   request?: Request | null | undefined
 }
 
+/** What a feature's grants receive besides the subjects. */
+export interface GrantArgs {
+  /** The request whose grants count. */
+  request: Request
+  /**
+   * Reports an error the grants recovered from, such as a lookup that failed and so granted nothing, to the app's
+   * `onError`, named as the feature's. It never throws, and it doesn't wait for the report.
+   */
+  reportError: (error: unknown) => void
+}
+
 /**
  * Access a request carries besides the app's rules, such as a share link a visitor opened, which a feature declares as
  * its `grants`. It only widens checks that pass the request, and only for seeing subjects.
@@ -40,9 +52,15 @@ export interface SubjectGrants {
    */
   canViewMany(
     refs: readonly SubjectRef[],
-    args: { request: Request },
+    args: GrantArgs,
     context: SubjectContext
   ): readonly boolean[] | Promise<readonly boolean[]>
+}
+
+/** A feature's grants, and the feature they're reported as. */
+interface FeatureGrants {
+  feature: string
+  grants: SubjectGrants
 }
 
 /** What subject checks receive besides their arguments, for subject types that read Better Apps' own tables. */
@@ -128,9 +146,26 @@ export interface Subjects {
 /** The app's subject types, from its options and its features, answering access checks. */
 export function createSubjects(
   declared: ReadonlyMap<string, SubjectDefinition>,
-  options: { db: DatabaseAdapter; identity: Identity; grants?: readonly SubjectGrants[] | undefined }
+  options: {
+    db: DatabaseAdapter
+    identity: Identity
+    grants?: readonly FeatureGrants[] | undefined
+    onError?: ((error: unknown, context: ErrorContext) => void) | undefined
+  }
 ): Subjects {
   const grants = options.grants ?? []
+  const reporters = new Map(
+    grants.map(({ feature }) => [
+      feature,
+      (error: unknown) => {
+        try {
+          options.onError?.(error, { feature })
+        } catch {
+          // Reporting never fails a check.
+        }
+      }
+    ])
+  )
   const definitionOf = (subjectType: string): SubjectDefinition => {
     const definition = declared.get(subjectType)
     if (!definition) {
@@ -233,7 +268,11 @@ export function createSubjects(
           const { subjectType, subjectId } = checks[index] as SubjectCheck
           return { subjectType, subjectId }
         })
-        const answers = await Promise.all(grants.map(async (grant) => grant.canViewMany(refs, { request }, context)))
+        const answers = await Promise.all(
+          grants.map(async ({ feature, grants: granted }) =>
+            granted.canViewMany(refs, { request, reportError: reporters.get(feature) ?? (() => undefined) }, context)
+          )
+        )
         for (const [position, index] of indexes.entries()) {
           allowed[index] = answers.some((granted) => granted[position] === true)
         }

@@ -234,7 +234,8 @@ export function createBetterApps<const Features extends readonly BetterAppsFeatu
   const subjects = createSubjects(declareSubjects(options), {
     db,
     identity,
-    grants: features.flatMap((feature) => (feature.grants ? [feature.grants] : []))
+    grants: features.flatMap((feature) => (feature.grants ? [{ feature: feature.id, grants: feature.grants }] : [])),
+    onError: (error, context) => onError(error, context)
   })
   const outbox = createOutbox({ db, features, identity, subjects, onError })
 

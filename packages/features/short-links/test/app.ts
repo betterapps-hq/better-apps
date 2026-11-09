@@ -3,7 +3,13 @@
 // them see the record. A `feed` feature records every short links event it's
 // delivered.
 import { createTestApp, type TestUser } from "@better-apps/testing"
-import { defineFeature, type BetterAppsEvent, type EventHandler, type SubjectDefinition } from "better-apps"
+import {
+  defineFeature,
+  type BetterAppsEvent,
+  type ErrorContext,
+  type EventHandler,
+  type SubjectDefinition
+} from "better-apps"
 import { shortLinkEvents, shortLinks, type ShortLinksOptions } from "../src/index.js"
 
 export const users = [
@@ -67,7 +73,14 @@ export function setup(extra: Partial<ShortLinksOptions> = {}) {
     on: { shortLinks: Object.fromEntries(Object.keys(shortLinkEvents).map((type) => [type, record])) }
   })
   const feature = shortLinks({ ...options, ...extra } as typeof options)
-  const { app, database, identity } = createTestApp({ subjects, features: [feature, feed], users })
+  // What went to the app's onError.
+  const errors: { error: unknown; context: ErrorContext }[] = []
+  const { app, database, identity } = createTestApp({
+    subjects,
+    features: [feature, feed],
+    users,
+    onError: (error, context) => void errors.push({ error, context })
+  })
   const as = (userId: UserId) => ({ actor: identity.actor(userId) })
   const post = (action: string, body: unknown, userId?: UserId) =>
     app.handler(
@@ -87,7 +100,7 @@ export function setup(extra: Partial<ShortLinksOptions> = {}) {
     return { response, kept }
   }
   const events = (type?: string) => delivered.filter((event) => type === undefined || event.type === type)
-  return { app, database, identity, api: app.api.shortLinks, as, post, open, events }
+  return { app, database, identity, api: app.api.shortLinks, as, post, open, events, errors }
 }
 
 /** Expects a call to fail with an error code. */

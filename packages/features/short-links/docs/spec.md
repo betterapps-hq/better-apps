@@ -162,7 +162,7 @@ Whose access a link stands for depends on where it was made:
   pass the request, and `canShare` and `grantView` still allow them. Someone who loses access to a record, or loses the
   right to share it, takes their links' access with them. A maker the identity adapter no longer finds grants nothing,
   and when the lookup or a check fails, such as while the identity service is down, these links grant nothing for that
-  request while other links still count, and the error is logged with `console.error`.
+  request while other links still count, and the error goes to the app's `onError`.
 - An organization's link stands for the organization and outlives the member who made it. A `canShare` or `grantView`
   check per record, such as an invoice's own "shareable" setting, runs when the link is made or turned back on, not on
   each request, so unsetting it doesn't end the access existing links give. The app ends it with

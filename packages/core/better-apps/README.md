@@ -119,7 +119,8 @@ export const app = createBetterApps({
 ## Access grants
 
 A feature can let a request see subjects the app's rules don't let its sender see, such as a record shared through a
-link. It declares `grants`, whose `canViewMany(refs, { request }, context)` says which subjects the request may see.
+link. It declares `grants`, whose `canViewMany(refs, { request, reportError }, context)` says which subjects the request
+may see.
 
 ```ts
 const shares = defineFeature({
@@ -137,6 +138,8 @@ await app.subjects.canView(actor, { subjectType: "invoice", subjectId }, { reque
 - Only the checks the app's rules refuse are asked of grants: each feature's once per request, with that request's
   subjects in one call.
 - A signed-in user and a signed-out visitor are granted alike. `isPublic` stays about the app's rules.
+- Grants that recover from an error, such as a lookup that failed and so granted nothing, pass it to `reportError`. It
+  goes to the app's `onError` as the feature's, and the check goes on.
 
 ## Identity
 

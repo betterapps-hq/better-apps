@@ -8,6 +8,7 @@ import {
   defineSubject,
   type Actor,
   type BetterAppsFeature,
+  type ErrorContext,
   type Identity,
   type SubjectArgs,
   type SubjectDefinition
@@ -31,8 +32,12 @@ const page: SubjectDefinition = {
   publicRead: ({ subjectId }) => subjectId.startsWith("public-")
 }
 
-function setup(subjects: Record<string, SubjectDefinition> = { invoice, page }, features: BetterAppsFeature[] = []) {
-  return createBetterApps({ database: memoryDatabase().database, identity, subjects, features })
+function setup(
+  subjects: Record<string, SubjectDefinition> = { invoice, page },
+  features: BetterAppsFeature[] = [],
+  onError?: (error: unknown, context: ErrorContext) => void
+) {
+  return createBetterApps({ database: memoryDatabase().database, identity, subjects, features, onError })
 }
 
 describe("subjects", () => {
@@ -205,5 +210,23 @@ describe("subjects", () => {
     expect(allowed).toEqual([true, true, false, false])
     // inv-1 passed the app's rules, so only the refused checks that carry the request were asked about.
     expect(asked).toEqual([["inv-2", "draft"]])
+  })
+
+  it("lets grants report an error they recovered from to the app's onError, as their feature's", async () => {
+    const failure = new Error("The share service is down.")
+    const shares = defineFeature({
+      id: "shares",
+      grants: {
+        canViewMany: (refs, { reportError }) => {
+          reportError(failure)
+          return refs.map(() => false)
+        }
+      }
+    })
+    const onError = vi.fn<(error: unknown, context: ErrorContext) => void>()
+    const { subjects } = setup({ invoice, page }, [shares], onError)
+    const request = new Request("https://app.test/")
+    expect(await subjects.canView(ada, { subjectType: "invoice", subjectId: "inv-2" }, { request })).toBe(false)
+    expect(onError).toHaveBeenCalledWith(failure, { feature: "shares" })
   })
 })

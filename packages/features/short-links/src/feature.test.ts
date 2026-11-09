@@ -375,7 +375,7 @@ describe("access through a link", () => {
   })
 
   it("checks each maker once per request, and lets other links grant when the identity lookup fails", async () => {
-    const { app, api, as, identity } = setup()
+    const { app, api, as, identity, errors } = setup()
     const document = { subjectType: "document", subjectId: "doc-1" } as const
     const loose = await api.create({ target: document, grantsView: true }, as("solo"))
     const org = await api.create({ target: inv1, grantsView: true }, as("ada"))
@@ -388,16 +388,15 @@ describe("access through a link", () => {
 
     const down = new Error("The identity service is down.")
     lookups.mockRejectedValue(down)
-    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined)
     // Both checks carry one request, so they're asked of the grant together.
     const shared = request(cookie)
     const checks = [document, inv1].map((ref) => ({ actor: null, ...ref, request: shared }))
     try {
       expect(await app.subjects.canViewMany(checks)).toEqual([false, true])
-      expect(logged).toHaveBeenCalledWith(expect.stringContaining("shortLinks"), down)
+      // The failure goes to the app's onError, rather than links quietly stopping granting.
+      expect(errors).toEqual([{ error: down, context: { feature: "shortLinks" } }])
     } finally {
       lookups.mockRestore()
-      logged.mockRestore()
     }
   })
 

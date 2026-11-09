@@ -4,6 +4,7 @@ import {
   defineRoute,
   type ActionContext,
   type Actor,
+  type GrantArgs,
   type RouteContext,
   type SubjectContext,
   type SubjectGrants,
@@ -648,7 +649,7 @@ function grantsFor(config: Config): SubjectGrants {
   const read = new WeakMap<Request, Promise<LinkRow[]>>()
   const makersChecked = new WeakMap<Request, Map<string, Promise<boolean>>>()
   return {
-    async canViewMany(refs: readonly SubjectRef[], { request }: { request: Request }, context: SubjectContext) {
+    async canViewMany(refs: readonly SubjectRef[], { request, reportError }: GrantArgs, context: SubjectContext) {
       const codes = grantCodes(request, config.cookie.name)
       if (codes.length === 0) {
         return refs.map(() => false)
@@ -681,7 +682,7 @@ function grantsFor(config: Config): SubjectGrants {
         makersChecked.set(request, known)
         const fresh = loose.filter((row) => !known.has(row.id))
         if (fresh.length > 0) {
-          const answers = stillShared(config, context, fresh)
+          const answers = stillShared(config, context, fresh, reportError)
           for (const [index, row] of fresh.entries()) {
             known.set(
               row.id,
@@ -709,14 +710,18 @@ const refOf = (row: LinkRow): SubjectRef => ({ subjectType: row.subjectType ?? "
  * organization's links stand for the organization instead, and outlive the members who made them. When a check fails,
  * such as when the identity service is down, these links grant nothing for the request, and other links still count.
  */
-async function stillShared(config: Config, context: SubjectContext, rows: readonly LinkRow[]): Promise<boolean[]> {
+async function stillShared(
+  config: Config,
+  context: SubjectContext,
+  rows: readonly LinkRow[],
+  reportError: GrantArgs["reportError"]
+): Promise<boolean[]> {
   try {
     const shared = new Set(await sharedByMaker(config, context, rows))
     return rows.map((row) => shared.has(row))
   } catch (error) {
-    // Grants have no onError to report to, so the failure is logged the way the default onError logs, rather than links
-    // quietly stopping granting, such as after an identity key rotation.
-    console.error("Better Apps (shortLinks): links made outside an organization grant nothing for this request.", error)
+    // Reported, so links don't quietly stop granting, such as after an identity key rotation.
+    reportError(error)
     return rows.map(() => false)
   }
 }
