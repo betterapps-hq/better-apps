@@ -145,6 +145,19 @@ describe("the upload route", () => {
     }
   })
 
+  it("finishes a file again only for someone who can still see it", async () => {
+    const { api, as, upload } = setup()
+    invoices.set("inv-closing", { orgId: "acme" })
+    try {
+      const { file } = await upload("bob", { subjectType: "invoice", subjectId: "inv-closing" })
+      invoices.set("inv-closing", { orgId: "globex" })
+      await expect(api.completeUpload({ fileId: file.id }, as("bob"))).rejects.toMatchObject({ code: "NOT_FOUND" })
+      expect((await api.completeUpload({ fileId: file.id })).file.id).toBe(file.id)
+    } finally {
+      invoices.delete("inv-closing")
+    }
+  })
+
   it("finishes a file once, and again returns it as it is", async () => {
     const { api, as, upload } = setup()
     const { file } = await upload("bob", inv1)

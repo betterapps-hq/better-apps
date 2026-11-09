@@ -552,6 +552,8 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
       await run("detach", { ...subject, fileId })
       if (current()) {
         setSubject(key, (files) => ({ ...files, pending: files.pending.filter((id) => id !== fileId) }))
+        // A load still under way may have read the file before it came off, so its answer is dropped and it loads again.
+        bump(key)
       }
     } catch (error) {
       if (current()) {

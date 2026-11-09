@@ -1,7 +1,7 @@
 // Uploads: `createUpload` checks and writes a pending row and says where to send the bytes, the bytes go straight to
 // storage or through the upload route, and `completeUpload` checks what arrived and marks the file ready.
 import type { Actor, SubjectRef, WriteOperation } from "better-apps"
-import { isTrusted, orgOf, requireActor, type Context } from "./access.js"
+import { canSeeFiles, isTrusted, orgOf, requireActor, type Context } from "./access.js"
 import { checkLimits, settingsOf, type Config, type Limits } from "./config.js"
 import { AttachmentsError } from "./errors.js"
 import { cleanContentType, cleanName } from "./files.js"
@@ -176,8 +176,19 @@ async function ownUpload(context: Context, fileId: string): Promise<AttachmentFi
 }
 
 /**
+ * A finished file for whoever finishes it again, or `NOT_FOUND` once they can't see it, such as after losing access to
+ * its record, so finishing again never renews a signed URL. Trusted server code sees every file.
+ */
+async function presentFinished(config: Config, context: Context, file: AttachmentFile): Promise<FileInfo> {
+  if (!isTrusted(context) && !(await canSeeFiles(context, context.actor, [file]))[0]) {
+    throw new AttachmentsError("NOT_FOUND", "That upload doesn't exist, or it expired.")
+  }
+  return present(config, file)
+}
+
+/**
  * Checks what storage holds against the pending row and marks the file ready. A file aimed at a record is attached in
- * the same batch. Finishing a file that's already ready returns it again.
+ * the same batch. Finishing a file that's already ready returns it again, to someone who can still see it.
  */
 export async function completeUpload(config: Config, context: Context): Promise<CompleteUploadResult> {
   const { fileId } = context.input as { fileId: string }
@@ -186,7 +197,7 @@ export async function completeUpload(config: Config, context: Context): Promise<
   }
   const file = await ownUpload(context, fileId)
   if (file.status === "ready") {
-    return { file: await present(config, file), attachment: null }
+    return { file: await presentFinished(config, context, file), attachment: null }
   }
   const stored = await config.storage.head(file.storageKey)
   if (!stored) {
@@ -230,7 +241,7 @@ export async function completeUpload(config: Config, context: Context): Promise<
     const [updated] = await context.db.batch([markReady])
     if (!updated) {
       // Another call finished it meanwhile, or it was deleted or expired, which `ownUpload` reports.
-      return { file: await present(config, await ownUpload(context, file.id)), attachment: null }
+      return { file: await presentFinished(config, context, await ownUpload(context, file.id)), attachment: null }
     }
     announce()
     return { file: await present(config, ready), attachment: null }

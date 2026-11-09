@@ -13,8 +13,10 @@ export function browser(
   const server = setup(extra, { signedUploads })
   const { app, identity } = server
   const requests: string[] = []
-  // Calls to a held action wait until it's let go, so a test can make the server answer late.
+  // Calls to a held action wait until it's let go, so a test can make the server answer late: before the server reads,
+  // or with an answer it already read, which arrives late.
   const held = new Map<string, Promise<void>>()
+  const heldAnswers = new Map<string, Promise<void>>()
   const client = createBetterAppsClient<typeof app>({
     baseURL: "https://app.test",
     fetch: async (url, init) => {
@@ -25,7 +27,9 @@ export function browser(
       for (const [name, value] of Object.entries(userId ? identity.headers(userId) : {})) {
         headers.set(name, value)
       }
-      return app.handler(new Request(url, { ...init, headers }))
+      const response = await app.handler(new Request(url, { ...init, headers }))
+      await heldAnswers.get(action)
+      return response
     }
   })
   const progress: number[] = []
@@ -46,16 +50,16 @@ export function browser(
     request.onProgress(request.body.size)
     return { status: response.status }
   }
-  const hold = (action: string) => {
+  const holder = (waits: Map<string, Promise<void>>) => (action: string) => {
     let release: () => void = () => undefined
-    held.set(
+    waits.set(
       action,
       new Promise<void>((resolve) => {
         release = resolve
       })
     )
     return () => {
-      held.delete(action)
+      waits.delete(action)
       release()
     }
   }
@@ -65,7 +69,8 @@ export function browser(
     attachments: createAttachmentsClient(client, { transport }),
     requests,
     progress,
-    hold,
+    hold: holder(held),
+    holdAnswer: holder(heldAnswers),
     stallUploads: (on: boolean) => {
       stall = on
     }

@@ -142,6 +142,25 @@ describe("attachments client", () => {
     expect(attachments.store.getSnapshot().subjects[key1]?.files.map((entry) => entry.id)).toEqual([file.id])
   })
 
+  it("keeps a file off when a load that read it before it came off lands after", async () => {
+    const { attachments, upload, hold, holdAnswer } = browser()
+    const { file } = await upload("bob", inv1)
+    await attachments.load("invoice", ["inv-1"])
+    const detachHeld = hold("detach")
+    const detaching = attachments.detach(inv1, file.id)
+    await tick()
+    // The load starts while the detach is under way and reads the file before it comes off; its answer arrives after.
+    const answerHeld = holdAnswer("listFiles")
+    const loading = attachments.load("invoice", ["inv-1"])
+    await tick(10)
+    detachHeld()
+    await detaching
+    answerHeld()
+    await loading
+    await tick(10)
+    expect(attachments.store.getSnapshot().subjects[key1]?.files).toEqual([])
+  })
+
   it("reorders at once, and goes back when the server refuses", async () => {
     const { attachments, upload } = browser()
     const first = (await upload("bob", inv1)).file.id
