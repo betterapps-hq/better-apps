@@ -24,3 +24,17 @@ export function formatTime(time: Date) {
     timeZoneName: "short"
   }).format(time)
 }
+
+/** Totals amounts per currency, largest first, so mixed currencies are never added together. */
+export function totalsByCurrency(items: readonly { amount: number; currency: string }[]) {
+  const totals = new Map<string, number>()
+  for (const { amount, currency } of items) {
+    totals.set(currency, (totals.get(currency) ?? 0) + amount)
+  }
+  return [...totals].sort(([, a], [, b]) => b - a).map(([currency, amount]) => ({ currency, amount }))
+}
+
+/** A count of things in words, such as "1 invoice" or "3 invoices". */
+export function plural(count: number, one: string, many: string) {
+  return `${count} ${count === 1 ? one : many}`
+}

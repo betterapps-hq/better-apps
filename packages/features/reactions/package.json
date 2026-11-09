@@ -1,0 +1,92 @@
+{
+  "name": "@better-apps/reactions",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Emoji reactions on any record an app owns, one per person per emoji, with counts, who reacted and live updates.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=24"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.js"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "import": "./dist/react.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "pnpm build",
+    "test": "vp test run",
+    "test:coverage": "vp test run --coverage"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
+  },
+  "peerDependencies": {
+    "@better-apps/react": "workspace:*",
+    "better-apps": "workspace:*",
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@better-apps/react": "workspace:*",
+    "@better-apps/testing": "workspace:*",
+    "@repo/typescript-config": "workspace:*",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "24.19.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitest/coverage-v8": "catalog:",
+    "better-apps": "workspace:*",
+    "drizzle-orm": "0.45.4",
+    "happy-dom": "^21.0.4",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/betterapps-hq/better-apps.git",
+    "directory": "packages/features/reactions"
+  },
+  "homepage": "https://github.com/betterapps-hq/better-apps/tree/main/packages/features/reactions#readme",
+  "bugs": {
+    "url": "https://github.com/betterapps-hq/better-apps/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "keywords": [
+    "better-apps",
+    "reactions",
+    "emoji"
+  ],
+  "peerDependenciesMeta": {
+    "@better-apps/react": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    }
+  }
+}

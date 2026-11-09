@@ -223,6 +223,8 @@ describe("upkeep", () => {
     await api.createThread({ ...onInvoice, body: "Stays" }, as("bob"))
     expect(await api.removeSubject({ subjectType: "invoice", subjectId: "inv-2" })).toEqual({ done: false })
     expect(events("subject.removed")).toHaveLength(0)
+    expect(events("thread.deleted")).toHaveLength(50)
+    expect(events("thread.deleted")[0]?.data).toMatchObject({ subjectId: "inv-2", commentIds: [expect.any(String)] })
     expect(await api.removeSubject({ subjectType: "invoice", subjectId: "inv-2" })).toEqual({ done: true })
     expect(events("subject.removed")[0]?.data).toEqual({ subjectType: "invoice", subjectId: "inv-2" })
     expect(database.sqlite.prepare('SELECT COUNT(*) AS count FROM "commentThread"').get()).toEqual({ count: 1 })
@@ -235,6 +237,12 @@ describe("upkeep", () => {
     const { thread } = await api.createThread({ ...onInvoice, body: "Moving" }, as("bob"))
     expect(await api.moveSubject({ ...onInvoice, toOrgId: "globex" })).toEqual({ done: true })
     expect(events("subject.moved")[0]?.data).toEqual({ ...onInvoice, toOrgId: "globex" })
+    expect(events("thread.moved")[0]?.data).toMatchObject({
+      orgId: "globex",
+      fromOrgId: "acme",
+      thread: { id: thread.id, orgId: "globex" },
+      commentIds: [expect.any(String)]
+    })
     const orgs = database.sqlite
       .prepare('SELECT "orgId" FROM "comment" UNION SELECT "orgId" FROM "commentThread"')
       .all()

@@ -153,6 +153,7 @@ export interface CountGroup {
     count: number;
     // (undocumented)
     group: Row;
+    min?: Row | undefined;
 }
 
 // @public
@@ -184,6 +185,7 @@ export interface DatabaseAdapter {
         model: string;
         where?: readonly Where[] | undefined;
         groupBy: readonly [string, ...string[]];
+        min?: readonly string[] | undefined;
     }): Promise<CountGroup[]>;
     create<T extends Row = Row>(input: {
         model: string;
@@ -501,7 +503,9 @@ export interface SubjectDefinition {
     canView: (args: SubjectArgs, context: SubjectContext) => boolean | Promise<boolean>;
     canViewMany?: ((pairs: readonly SubjectArgs[], context: SubjectContext) => readonly boolean[] | Promise<readonly boolean[]>) | undefined;
     getOrgId?: ((ref: SubjectRef, context: SubjectContext) => string | null | Promise<string | null>) | undefined;
+    getOrgIds?: ((refs: readonly SubjectRef[], context: SubjectContext) => readonly (string | null)[] | Promise<readonly (string | null)[]>) | undefined;
     publicRead?: boolean | ((ref: SubjectRef, context: SubjectContext) => boolean | Promise<boolean>) | undefined;
+    publicReadMany?: ((refs: readonly SubjectRef[], context: SubjectContext) => readonly boolean[] | Promise<readonly boolean[]>) | undefined;
 }
 
 // @public
@@ -517,8 +521,10 @@ export interface Subjects {
     canView(actor: Actor | null, ref: SubjectRef): Promise<boolean>;
     canViewMany(checks: readonly SubjectCheck[]): Promise<boolean[]>;
     getOrgId(ref: SubjectRef, actor?: Actor | null): Promise<string | null>;
+    getOrgIds(refs: readonly SubjectRef[], actor?: Actor | null): Promise<(string | null)[]>;
     has(subjectType: string): boolean;
     isPublic(ref: SubjectRef): Promise<boolean>;
+    isPublicMany(refs: readonly SubjectRef[]): Promise<boolean[]>;
 }
 
 // @public

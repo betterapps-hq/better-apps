@@ -42,6 +42,8 @@ export type Row = Record<string, unknown>
 export interface CountGroup {
   group: Row
   count: number
+  /** The smallest value of each field `countGroups` was asked for in `min`, such as when the group's first row was made. */
+  min?: Row | undefined
 }
 
 /** A write that runs inside a batch. */
@@ -94,11 +96,12 @@ export interface DatabaseAdapter {
     select?: readonly string[] | undefined
   }): Promise<T[]>
   count(input: { model: string; where?: readonly Where[] | undefined }): Promise<number>
-  /** Counts rows per combination of `groupBy` values, in one query. */
+  /** Counts rows per combination of `groupBy` values, in one query, with the smallest value of each `min` field. */
   countGroups(input: {
     model: string
     where?: readonly Where[] | undefined
     groupBy: readonly [string, ...string[]]
+    min?: readonly string[] | undefined
   }): Promise<CountGroup[]>
   /** Updates the first row that matches and returns it, or `null` when none does. */
   update<T extends Row = Row>(input: { model: string; where: readonly Where[]; update: Row }): Promise<T | null>

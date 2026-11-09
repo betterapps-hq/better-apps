@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm"
-import { sqliteTable, text, integer, index } from "drizzle-orm/sqlite-core"
+import { sqliteTable, text, integer, index, uniqueIndex } from "drizzle-orm/sqlite-core"
 
 export const note = sqliteTable(
   "note",
@@ -67,6 +67,53 @@ export const comment = sqliteTable(
     index("comment_by_thread").on(table.threadId, table.createdAt),
     index("comment_by_author").on(table.authorType, table.authorId)
   ]
+)
+
+export const reaction = sqliteTable(
+  "reaction",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id").default("").notNull(),
+    subjectType: text("subject_type").notNull(),
+    subjectId: text("subject_id").notNull(),
+    userId: text("user_id").notNull(),
+    emoji: text("emoji").notNull(),
+    slot: integer("slot").default(0).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull()
+  },
+  (table) => [
+    uniqueIndex("reaction_by_user").on(table.subjectType, table.subjectId, table.orgId, table.userId, table.emoji),
+    uniqueIndex("reaction_slot").on(table.subjectType, table.subjectId, table.orgId, table.userId, table.slot),
+    index("reaction_by_emoji").on(table.subjectType, table.subjectId, table.orgId, table.emoji, table.createdAt),
+    index("reaction_of_user").on(table.userId)
+  ]
+)
+
+export const reactionRemoval = sqliteTable(
+  "reaction_removal",
+  {
+    id: text("id").primaryKey(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull()
+  },
+  (table) => [index("reaction_removal_by_time").on(table.createdAt)]
+)
+
+export const betterAppsEvent = sqliteTable(
+  "better_apps_event",
+  {
+    id: text("id").primaryKey(),
+    feature: text("feature").notNull(),
+    type: text("type").notNull(),
+    data: text("data", { mode: "json" }),
+    actor: text("actor", { mode: "json" }),
+    author: text("author", { mode: "json" }),
+    silent: integer("silent", { mode: "boolean" }).default(false).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    availableAt: integer("available_at", { mode: "timestamp_ms" }).notNull(),
+    attempts: integer("attempts").default(0).notNull(),
+    lastError: text("last_error")
+  },
+  (table) => [index("betterAppsEvent_availableAt_idx").on(table.availableAt)]
 )
 
 export const commentThreadRelations = relations(commentThread, ({ many }) => ({

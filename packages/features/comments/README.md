@@ -75,7 +75,8 @@ as "Former user".
 - One rule decides whether someone can see a thread: its organization must be its subject's, the subject's `canView`
   must pass, and the actor must pass the thread's visibility check. Reads, mentions and live updates all use it.
 - Threads and comments are subject types too, `comments.thread` and `comments.comment` (`commentSubjectTypes`), so other
-  features can attach to them. Whoever can see a thread can see it and its comments.
+  features can attach to them. Whoever can see a thread can see it and its comments, except deleted comments, which
+  nobody can see as records any more.
 - `NOT_FOUND` means the caller can't see it, and `FORBIDDEN` that they can see it but can't do this. Signed-out callers
   get `UNAUTHENTICATED`, except signed-out readers of public subjects, who get text with names and no user ids.
 - Server code that passes neither an actor nor a request is trusted, so it skips access checks. It still needs an author
@@ -162,6 +163,10 @@ function InvoiceComments({ invoiceId }: { invoiceId: string }) {
 
 `thread.created`, `thread.updated`, `comment.created`, `comment.edited` and `comment.deleted` (both with the previous
 body), `comment.mentioned` (one per mention), `thread.resolved`, `thread.reopened`, `thread.anchorUpdated` (with the
-previous anchor), `thread.deleted`, `subject.moved`, `subject.removed` and `user.removed`. They're written to the core's
-outbox in the same batch as the change and delivered at least once. They stay on the server; `toClientEvent` turns one
-into what a viewer's browser may see.
+previous anchor), `thread.deleted`, `thread.moved`, `subject.moved`, `subject.removed` and `user.removed`. They're
+written to the core's outbox in the same batch as the change and delivered at least once. They stay on the server;
+`toClientEvent` turns one into what a viewer's browser may see.
+
+`thread.deleted` and `thread.moved` list the thread's `commentIds`, so features attached to its comments, such as
+reactions, can clean up or move along. `removeSubject` emits `thread.deleted` for each thread it deletes, and
+`moveSubject` emits `thread.moved`, with `fromOrgId`, for each thread it moves.

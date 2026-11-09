@@ -23,6 +23,6 @@ export const auth = betterAuth({
 const [existing] = await db.select({ users: count() }).from(authTables.user)
 if (!existing?.users) {
   for (const person of demoUsers) {
-    await auth.api.signUpEmail({ body: { ...person, password: demoPassword } })
+    await auth.api.signUpEmail({ body: { name: person.name, email: person.email, password: demoPassword } })
   }
 }

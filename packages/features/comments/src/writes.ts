@@ -40,6 +40,16 @@ function eventData(thread: CommentThread) {
   return { subjectType: thread.subjectType, subjectId: thread.subjectId, orgId: thread.orgId, thread }
 }
 
+/** The ids of a thread's comments, for `thread.deleted`. */
+async function commentIdsOf(context: Context, threadId: string): Promise<string[]> {
+  const rows = await context.db.findMany<Comment>({
+    model: commentModel,
+    where: [{ field: "threadId", value: threadId }],
+    select: ["id"]
+  })
+  return rows.map((row) => row.id)
+}
+
 function emitMentions(context: Context, thread: CommentThread, comment: Comment, userIds: readonly string[]): void {
   for (const userId of userIds) {
     context.emit("comment.mentioned", { ...eventData(thread), comment, userId })
@@ -389,6 +399,7 @@ export async function deleteComment(config: Config, context: Context) {
     }
   ]
   const last = thread.commentCount <= 1
+  const commentIds = last ? await commentIdsOf(context, thread.id) : []
   if (last) {
     // The thread goes with its last comment, but only while its count is zero inside the batch, so a reply that lands
     // first keeps it.
@@ -415,7 +426,7 @@ export async function deleteComment(config: Config, context: Context) {
   const threadDeleted = last && results[3] === 1
   if (threadDeleted) {
     // Emitted only once the thread is really gone, so a reply that won the race never sees its thread reported deleted.
-    context.emit("thread.deleted", eventData(remaining))
+    context.emit("thread.deleted", { ...eventData(remaining), commentIds })
   }
   return { comment: deleted, threadDeleted }
 }
@@ -527,7 +538,7 @@ export async function deleteThread(config: Config, context: Context) {
   requireView(access)
   forbid(access.moderate, "Only moderators can delete a thread.")
   await runHook(config.hooks.deleteThread, { actor: context.actor, author, thread, input: original }, inputs.thread)
-  context.emit("thread.deleted", eventData(thread))
+  context.emit("thread.deleted", { ...eventData(thread), commentIds: await commentIdsOf(context, thread.id) })
   await context.db.batch([
     { type: "deleteMany", model: commentModel, where: [{ field: "threadId", value: thread.id }] },
     { type: "deleteMany", model: threadModel, where: [{ field: "id", value: thread.id }] }

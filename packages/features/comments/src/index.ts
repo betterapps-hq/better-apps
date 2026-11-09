@@ -5,7 +5,9 @@ export {
   type CommentEventData,
   type CommentsEventData,
   type StoredAnchor,
-  type ThreadEventData
+  type ThreadDeletedData,
+  type ThreadEventData,
+  type ThreadMovedData
 } from "./events.js"
 export {
   comments,

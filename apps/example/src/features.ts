@@ -1,5 +1,6 @@
 import { elementAnchor } from "@better-apps/anchors"
-import { comments } from "@better-apps/comments"
+import { comments, commentSubjectTypes } from "@better-apps/comments"
+import { reactions } from "@better-apps/reactions"
 import { BetterAppsError, defineAction, defineFeature, type SubjectDefinition } from "better-apps"
 import { z } from "zod"
 
@@ -70,6 +71,7 @@ const notes = defineFeature({
 
 // Loaded when a check runs rather than with this file, so generating the schema never opens the database.
 const invoiceExists = async (id: string) => (await import("./invoices.server")).invoiceExists(id)
+const isOwner = async (userId: string) => (await import("./people.server")).isOwner(userId)
 
 /**
  * The records features attach to. Anyone signed in can see any invoice that exists; a real app would check the
@@ -79,16 +81,26 @@ export const subjects = {
   invoice: { canView: ({ subjectId }) => invoiceExists(subjectId) }
 } satisfies Record<string, SubjectDefinition>
 
-/** Comment threads on invoices, optionally pinned to one of an invoice's details. Anyone who can see one can discuss it. */
+/**
+ * Comment threads on invoices, optionally pinned to one of an invoice's details. Anyone who can see one can discuss it,
+ * and the workspace owner moderates.
+ */
 const invoiceComments = comments({
   subjects: {
     invoice: {
       canComment: ({ subjectId }) => invoiceExists(subjectId),
-      canModerate: ({ actor }) => actor.roles.includes("admin")
+      canModerate: ({ actor }) => isOwner(actor.userId)
     }
   },
   anchors: [elementAnchor()]
 })
 
+/** Emoji reactions on comments, from a short list. Whoever can see a comment can react to it. */
+const commentReactions = reactions({
+  subjects: { [commentSubjectTypes.comment]: {} },
+  emojis: ["👍", "🎉", "❤️", "👀"],
+  maxPerUser: 1
+})
+
 /** The features the app enables. `better-apps.config.ts` reads them to generate their tables. */
-export const features = [notes, invoiceComments] as const
+export const features = [notes, invoiceComments, commentReactions] as const

@@ -17,6 +17,9 @@
     "packages/features/mentions": {
       "entry": ["src/index.ts"]
     },
+    "packages/features/reactions": {
+      "entry": ["src/index.ts", "src/client.ts", "src/react.tsx"]
+    },
     "packages/adapters/database-drizzle": {
       "entry": ["src/index.ts"]
     },

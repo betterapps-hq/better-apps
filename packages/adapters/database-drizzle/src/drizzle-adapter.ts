@@ -16,6 +16,7 @@ import {
   isNull,
   lt,
   lte,
+  min as smallest,
   ne,
   notInArray,
   or,
@@ -424,19 +425,23 @@ export function drizzleAdapter(db: DrizzleDatabase, config: DrizzleAdapterConfig
         )
         return Number(row?.count ?? 0)
       },
-      async countGroups({ table: name, where, groupBy }) {
+      async countGroups({ table: name, where, groupBy, min }) {
         const table = getTable(name)
         const columns = groupBy.map((key) => getColumn(table, name, key))
         // Grouped columns are selected under positional keys, so a column named "count" can't collide.
         const fields = Object.fromEntries(columns.map((column, index) => [`group${index}`, column]))
+        const least = Object.fromEntries(
+          (min ?? []).map((key, index) => [`min${index}`, smallest(getColumn(table, name, key))])
+        )
         const rows = (await database
-          .select({ ...fields, count: count() })
+          .select({ ...fields, ...least, count: count() })
           .from(table)
           .where(whereClause(table, name, where))
           .groupBy(...columns)) as Row[]
         return rows.map((row) => ({
           group: Object.fromEntries(groupBy.map((key, index) => [key, row[`group${index}`]])),
-          count: Number(row.count)
+          count: Number(row.count),
+          ...(min?.length ? { min: Object.fromEntries(min.map((key, index) => [key, row[`min${index}`]])) } : {})
         }))
       },
       async update(write) {

@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from "./routes/__root"
 import { Route as IndexRouteImport } from "./routes/index"
+import { Route as NotesRouteImport } from "./routes/notes"
 import { Route as SignInRouteImport } from "./routes/sign-in"
 import { Route as InvoicesIndexRouteImport } from "./routes/invoices/index"
 import { Route as InvoicesInvoiceIdRouteImport } from "./routes/invoices/$invoiceId"
@@ -19,6 +20,11 @@ import { Route as ApiAuthSplatRouteImport } from "./routes/api/auth/$"
 const IndexRoute = IndexRouteImport.update({
   id: "/",
   path: "/",
+  getParentRoute: () => rootRouteImport,
+} as any)
+const NotesRoute = NotesRouteImport.update({
+  id: "/notes",
+  path: "/notes",
   getParentRoute: () => rootRouteImport,
 } as any)
 const SignInRoute = SignInRouteImport.update({
@@ -49,6 +55,7 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
 
 export interface FileRoutesByFullPath {
   "/": typeof IndexRoute
+  "/notes": typeof NotesRoute
   "/sign-in": typeof SignInRoute
   "/invoices/$invoiceId": typeof InvoicesInvoiceIdRoute
   "/invoices/": typeof InvoicesIndexRoute
@@ -57,6 +64,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   "/": typeof IndexRoute
+  "/notes": typeof NotesRoute
   "/sign-in": typeof SignInRoute
   "/invoices/$invoiceId": typeof InvoicesInvoiceIdRoute
   "/invoices": typeof InvoicesIndexRoute
@@ -66,6 +74,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   "/": typeof IndexRoute
+  "/notes": typeof NotesRoute
   "/sign-in": typeof SignInRoute
   "/invoices/$invoiceId": typeof InvoicesInvoiceIdRoute
   "/invoices/": typeof InvoicesIndexRoute
@@ -76,6 +85,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | "/"
+    | "/notes"
     | "/sign-in"
     | "/invoices/$invoiceId"
     | "/invoices/"
@@ -84,6 +94,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | "/"
+    | "/notes"
     | "/sign-in"
     | "/invoices/$invoiceId"
     | "/invoices"
@@ -92,6 +103,7 @@ export interface FileRouteTypes {
   id:
     | "__root__"
     | "/"
+    | "/notes"
     | "/sign-in"
     | "/invoices/$invoiceId"
     | "/invoices/"
@@ -101,6 +113,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  NotesRoute: typeof NotesRoute
   SignInRoute: typeof SignInRoute
   InvoicesInvoiceIdRoute: typeof InvoicesInvoiceIdRoute
   InvoicesIndexRoute: typeof InvoicesIndexRoute
@@ -115,6 +128,13 @@ declare module "@tanstack/react-router" {
       path: "/"
       fullPath: "/"
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    "/notes": {
+      id: "/notes"
+      path: "/notes"
+      fullPath: "/notes"
+      preLoaderRoute: typeof NotesRouteImport
       parentRoute: typeof rootRouteImport
     }
     "/sign-in": {
@@ -157,6 +177,7 @@ declare module "@tanstack/react-router" {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  NotesRoute: NotesRoute,
   SignInRoute: SignInRoute,
   InvoicesInvoiceIdRoute: InvoicesInvoiceIdRoute,
   InvoicesIndexRoute: InvoicesIndexRoute,

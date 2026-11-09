@@ -266,6 +266,20 @@ describe.each(databases)("drizzleAdapter on $name", ({ connect, dispose, unavail
         { group: { subjectId: "z", pinned: false }, count: 1 }
       ])
     })
+
+    it("reads the smallest value of fields in each group", async () => {
+      await addComment({ id: "m1", subjectId: "m", createdAt: "2026-01-02T00:00:00.000Z" })
+      await addComment({ id: "m2", subjectId: "m", createdAt: "2026-01-01T00:00:00.000Z" })
+      const groups = await adapter.countGroups({
+        model: "comment",
+        where: [{ field: "subjectId", value: "m" }],
+        groupBy: ["subjectId"],
+        min: ["createdAt"]
+      })
+      expect(groups).toEqual([
+        { group: { subjectId: "m" }, count: 2, min: { createdAt: new Date("2026-01-01T00:00:00.000Z") } }
+      ])
+    })
   })
 
   describe("update, updateMany and deleteMany", () => {

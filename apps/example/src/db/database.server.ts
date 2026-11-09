@@ -1,11 +1,13 @@
 import { mkdirSync } from "node:fs"
 import { dirname, resolve } from "node:path"
 import { DatabaseSync, type SQLInputValue } from "node:sqlite"
+import { and, eq } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/sqlite-proxy"
 import { migrate } from "drizzle-orm/sqlite-proxy/migrator"
 import * as authTables from "./auth-schema"
 import * as featureTables from "./better-apps-schema"
 import * as appTables from "./schema"
+import { seedInvoiceLines, seedInvoices } from "./seed"
 
 type Method = "run" | "all" | "values" | "get"
 
@@ -50,60 +52,7 @@ export const db = drizzle(
   { schema: { ...appTables, ...authTables, ...featureTables } }
 )
 
-const seedInvoices: appTables.Invoice[] = [
-  {
-    id: "inv-1001",
-    number: "INV-1001",
-    customer: "Harbor Light Bakery",
-    amount: 128_000,
-    currency: "USD",
-    status: "paid",
-    issuedOn: "2026-08-04",
-    dueOn: "2026-09-03"
-  },
-  {
-    id: "inv-1002",
-    number: "INV-1002",
-    customer: "Juniper Design Studio",
-    amount: 452_550,
-    currency: "USD",
-    status: "overdue",
-    issuedOn: "2026-08-21",
-    dueOn: "2026-09-20"
-  },
-  {
-    id: "inv-1003",
-    number: "INV-1003",
-    customer: "Maple Street Clinic",
-    amount: 87_425,
-    currency: "USD",
-    status: "sent",
-    issuedOn: "2026-10-02",
-    dueOn: "2026-11-01"
-  },
-  {
-    id: "inv-1004",
-    number: "INV-1004",
-    customer: "Orbit Freight",
-    amount: 1_210_000,
-    currency: "EUR",
-    status: "sent",
-    issuedOn: "2026-10-15",
-    dueOn: "2026-11-14"
-  },
-  {
-    id: "inv-1005",
-    number: "INV-1005",
-    customer: "Tidewater Books",
-    amount: 39_900,
-    currency: "USD",
-    status: "draft",
-    issuedOn: "2026-10-27",
-    dueOn: "2026-11-26"
-  }
-]
-
-// Apply the migrations drizzle-kit generated, in one transaction, then add the sample invoices once.
+// Apply the migrations drizzle-kit generated, in one transaction, then add the sample invoices and their lines once.
 await migrate(
   db,
   async (queries) => {
@@ -112,3 +61,11 @@ await migrate(
   { migrationsFolder: resolve("drizzle") }
 )
 await db.insert(appTables.invoice).values(seedInvoices).onConflictDoNothing()
+await db.insert(appTables.invoiceLine).values(seedInvoiceLines).onConflictDoNothing()
+// Invoices added before invoices had customer details get the seed's details once.
+for (const seeded of seedInvoices) {
+  await db
+    .update(appTables.invoice)
+    .set(seeded)
+    .where(and(eq(appTables.invoice.id, seeded.id), eq(appTables.invoice.customerEmail, "")))
+}

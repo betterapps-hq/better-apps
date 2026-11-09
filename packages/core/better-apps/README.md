@@ -99,17 +99,18 @@ export const app = createBetterApps({
 - `canView` says whether a signed-in user can see a subject, and so what features attach to it. `canViewMany` answers
   for many pairs at once, such as with one query; without it, `canView` runs for each pair.
 - `getOrgId` returns the organization that owns a subject. Features store it with what they attach, so ids repeated
-  across organizations never mix. It's required when the identity adapter reports organizations.
+  across organizations never mix. It's required when the identity adapter reports organizations. `getOrgIds` answers for
+  many subjects at once, for lists; without it, `getOrgId` runs for each.
 - `publicRead` lets signed-out visitors see subjects: `true` for all of them, or a check per subject. Nobody, by
-  default.
+  default. `publicReadMany` answers for many subjects at once; without it, `publicRead` runs for each.
 - Each feature adds its own rules on top, such as who can comment. A feature that uses a subject type the app doesn't
   declare stops `createBetterApps` with an error.
 - Features declare subject types for their own records, such as comments' `comments.comment`, so a reaction on a comment
   follows the comment's access.
 - Actions and subscribers check access through `context.subjects`, and server code through `app.subjects`:
-  `canView(actor, { subjectType, subjectId })`, `canViewMany`, `isPublic` and `getOrgId`. `null` as the actor is a
-  signed-out visitor. Checks receive the `db`, `identity` and `subjects` as a second argument, for subject types that
-  read Better Apps' tables.
+  `canView(actor, { subjectType, subjectId })`, `canViewMany`, `isPublic`, `isPublicMany`, `getOrgId` and `getOrgIds`.
+  The lists make one call per subject type. `null` as the actor is a signed-out visitor. Checks receive the `db`,
+  `identity` and `subjects` as a second argument, for subject types that read Better Apps' tables.
 
 ## Identity
 
