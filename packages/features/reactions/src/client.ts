@@ -1,7 +1,14 @@
 // The framework-free browser half of reactions: a store of each record's reactions that any framework binds to, with
 // optimistic toggles and live updates through `applyEvent`. It imports no server code.
 import type { BetterApp, IdentityUser } from "better-apps"
-import { createStore, type BetterAppsClient, type CallOptions, type Serialized, type Store } from "better-apps/client"
+import {
+  BetterAppsClientError,
+  createStore,
+  type BetterAppsClient,
+  type CallOptions,
+  type Serialized,
+  type Store
+} from "better-apps/client"
 import { normalizeEmoji } from "./emoji.js"
 import type {
   ClientReactionEvent,
@@ -312,16 +319,26 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
     return { ...state, reactors: { ...state.reactors, [key]: { ...current, ...value } } }
   }
 
-  /** Adds or removes someone in a loaded list of reactors. */
+  // Each list of reactors' version, raised by every change to who reacted, so a page that was asked for before one is
+  // asked for again rather than putting back someone who left.
+  const reactorVersions = new Map<string, number>()
+
+  /** Adds or removes someone in a list of reactors, including one whose next page is loading. */
   function withReactor(state: ReactionsState, target: ReactionTarget, delta: 1 | -1, userId: string) {
     const key = reactionKey(target.subjectType, target.subjectId, target.emoji)
+    reactorVersions.set(key, (reactorVersions.get(key) ?? 0) + 1)
     const reactors = state.reactors[key]
-    if (reactors?.state !== "ready") {
+    if (reactors?.state !== "ready" && reactors?.state !== "loading") {
       return state
     }
-    const rest = reactors.userIds.filter((id) => id !== userId)
-    // A new reactor is only added once the last page is loaded, since pages are in order of reacting.
-    return setReactors(state, key, { userIds: delta === 1 && reactors.cursor === null ? [...rest, userId] : rest })
+    if (delta === 1) {
+      // A new reactor is only added once the last page is loaded, since pages are in order of reacting, and one already
+      // listed keeps their place.
+      return reactors.userIds.includes(userId) || reactors.cursor !== null
+        ? state
+        : setReactors(state, key, { userIds: [...reactors.userIds, userId] })
+    }
+    return setReactors(state, key, { userIds: reactors.userIds.filter((id) => id !== userId) })
   }
 
   const reactedWith = (target: ReactionTarget) =>
@@ -543,7 +560,16 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
     const apply = scoped()
     apply((state) => setReactors(state, key, { state: "loading", error: null }))
     try {
-      const page = (await run("listReactors", { ...target, cursor })) as ReactorPage
+      let page: ReactorPage
+      // A change to who reacted while a page was on its way may not be in it, so the page is asked for again, a few
+      // times at most on a busy record.
+      for (let attempt = 1; ; attempt += 1) {
+        const asked = reactorVersions.get(key) ?? 0
+        page = (await run("listReactors", { ...target, cursor })) as ReactorPage
+        if ((reactorVersions.get(key) ?? 0) === asked || attempt === 3) {
+          break
+        }
+      }
       apply((state) => {
         const loaded = state.reactors[key]?.userIds ?? []
         const userIds =
@@ -653,8 +679,19 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
       // The viewer's own changes are set rather than counted, so one this tab already applied counts once. Someone
       // else's shows at once, and the record loads again to match the server.
       const { count } = event
+      const base = confirmed.get(key)
+      // An own change the store doesn't have yet, such as from another tab, or a late event for one this tab has since
+      // taken back. It shows at once either way, and the record loads again to learn which.
+      const surprising =
+        event.mine &&
+        base !== undefined &&
+        (base.find((reaction) => reaction.emoji === event.emoji)?.reacted ?? false) !== added &&
+        !(writes.get(key) ?? []).some((write) => write.emoji === event.emoji && write.reacted === added)
       if (event.mine) {
         confirm(key, (reactions) => setMine(reactions, event.emoji, added))
+        if (surprising) {
+          refresh(event.subjectType, event.subjectId)
+        }
       } else {
         // Someone else's change is counted now, and made again on a newer answer by its count, when the event has one.
         confirm(
@@ -723,6 +760,13 @@ function createReactionsClientFor<Types extends ReactionsTypes>(
       generation += 1
       calls.abort()
       calls = new AbortController()
+      // Loads asked for this tick haven't gone out yet, so they never do.
+      for (const batch of queued.values()) {
+        const aborted = new BetterAppsClientError("ABORTED", "The call was cancelled.", { status: 0 })
+        batch.waiters.forEach((waiter) => waiter.reject(aborted))
+      }
+      queued.clear()
+      reactorVersions.clear()
       applied.length = 0
       chains.clear()
       confirmed.clear()

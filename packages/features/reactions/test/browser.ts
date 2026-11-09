@@ -5,7 +5,12 @@ import { createReactionsClient } from "../src/client.js"
 import type { ReactionsOptions } from "../src/index.js"
 import { setup, type UserId } from "./app.js"
 
-export function browser(userId: UserId | null = "bob", extra: Partial<ReactionsOptions> = {}) {
+/** `reactorsPerPage` asks for that many reactors a page, so a test can page through a few. */
+export function browser(
+  userId: UserId | null = "bob",
+  extra: Partial<ReactionsOptions> = {},
+  { reactorsPerPage }: { reactorsPerPage?: number } = {}
+) {
   const server = setup(extra)
   const { app, identity } = server
   const requests: string[] = []
@@ -23,7 +28,11 @@ export function browser(userId: UserId | null = "bob", extra: Partial<ReactionsO
       for (const [name, value] of Object.entries(userId ? identity.headers(userId) : {})) {
         headers.set(name, value)
       }
-      const response = await app.handler(new Request(url, { ...init, headers }))
+      const body =
+        action === "listReactors" && reactorsPerPage !== undefined
+          ? JSON.stringify({ ...(JSON.parse(String(init.body)) as object), limit: reactorsPerPage })
+          : init.body
+      const response = await app.handler(new Request(url, { ...init, headers, body }))
       await heldAnswers.get(action)
       return response
     }

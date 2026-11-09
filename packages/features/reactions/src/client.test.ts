@@ -251,20 +251,72 @@ describe("reactions client", () => {
     expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada", "bob"])
   })
 
-  it("pages through many reactors", async () => {
-    const { reactions, client } = browser("ada")
-    const pages = [
-      { userIds: ["ada"], cursor: "next", users: {} },
-      { userIds: ["ada", "bob"], cursor: null, users: {} }
-    ]
+  it("pages through many reactors, keeping those listed when their live event arrives", async () => {
+    const { api, as, events, identity, reactions } = browser("cy", {}, { reactorsPerPage: 1 })
     const target = { ...inv1, emoji: "👍" }
-    const original = client.$call
-    ;(client as { $call: typeof original }).$call = async (feature, action, input, options) =>
-      action === "listReactors" ? pages.shift() : original(feature, action, input, options)
-    const fresh = createReactionsClient(client)
-    expect(fresh).toBe(reactions)
+    await api.react(target, as("ada"))
+    await api.react(target, as("bob"))
+    const key = reactionKey("invoice", "inv-1", "👍")
     await reactions.loadReactors(target)
-    expect(reactions.store.getSnapshot().reactors[reactionKey("invoice", "inv-1", "👍")]?.cursor).toBeNull()
+    expect(reactions.store.getSnapshot().reactors[key]).toMatchObject({ userIds: ["ada"], state: "ready" })
+    expect(reactions.store.getSnapshot().reactors[key]?.cursor).not.toBeNull()
+    // Ada's live event arrives after the page that already lists her.
+    const event = await api.toClientEvent({
+      event: events("reaction.added")[0] as BetterAppsEvent,
+      viewer: identity.actor("cy")
+    })
+    if (!event) {
+      throw new Error("No event was shown.")
+    }
+    reactions.applyEvent(event)
+    expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada"])
+    await reactions.loadMoreReactors(target)
+    expect(reactions.store.getSnapshot().reactors[key]?.userIds).toEqual(["ada", "bob"])
+  })
+
+  it("asks again for a page of reactors that someone left while it was on its way", async () => {
+    const { api, as, events, holdAnswer, identity, reactions, requests } = browser("cy")
+    const target = { ...inv1, emoji: "👍" }
+    await api.react(target, as("ada"))
+    await api.react(target, as("bob"))
+    const release = holdAnswer("listReactors")
+    const loading = reactions.loadReactors(target)
+    // The server has read the page, with Bob, before he takes his reaction back.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await api.unreact(target, as("bob"))
+    const event = await api.toClientEvent({
+      event: events("reaction.removed").at(-1) as BetterAppsEvent,
+      viewer: identity.actor("cy")
+    })
+    if (!event) {
+      throw new Error("No event was shown.")
+    }
+    reactions.applyEvent(event)
+    release()
+    await loading
+    expect(reactions.store.getSnapshot().reactors[reactionKey("invoice", "inv-1", "👍")]?.userIds).toEqual(["ada"])
+    expect(requests.filter((name) => name === "listReactors")).toHaveLength(2)
+  })
+
+  it("loads a record again when a late event for the viewer's own reaction disagrees", async () => {
+    const { api, events, identity, reactions, requests } = browser()
+    const target = { ...inv1, emoji: "👍" }
+    await reactions.load("invoice", ["inv-1"])
+    await reactions.react(target)
+    await reactions.unreact(target)
+    // The event for the reaction since taken back arrives last.
+    const event = await api.toClientEvent({
+      event: events("reaction.added").at(-1) as BetterAppsEvent,
+      viewer: identity.actor("bob")
+    })
+    if (!event) {
+      throw new Error("No event was shown.")
+    }
+    const loads = requests.filter((name) => name === "listReactions").length
+    reactions.applyEvent(event)
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(reactions.store.getSnapshot().subjects[key1]?.reactions).toEqual([])
+    expect(requests.filter((name) => name === "listReactions")).toHaveLength(loads + 1)
   })
 
   it("marks reactors that failed to load", async () => {
@@ -340,5 +392,15 @@ describe("reactions client", () => {
     stop()
     reactions.reset()
     expect(resets).toEqual([1])
+  })
+
+  it("never sends a load asked for just before a reset", async () => {
+    const { reactions, requests } = browser()
+    const loading = reactions.load("invoice", ["inv-1"])
+    reactions.reset()
+    await expect(loading).rejects.toMatchObject({ code: "ABORTED" })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(requests).not.toContain("listReactions")
+    expect(reactions.store.getSnapshot().subjects).toEqual({})
   })
 })
