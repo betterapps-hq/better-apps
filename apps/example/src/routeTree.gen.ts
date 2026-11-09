@@ -14,6 +14,7 @@ import { Route as NotesRouteImport } from "./routes/notes"
 import { Route as SignInRouteImport } from "./routes/sign-in"
 import { Route as InvoicesIndexRouteImport } from "./routes/invoices/index"
 import { Route as InvoicesInvoiceIdRouteImport } from "./routes/invoices/$invoiceId"
+import { Route as SSplatRouteImport } from "./routes/s/$"
 import { Route as SettingsDomainsRouteImport } from "./routes/settings/domains"
 import { Route as ApiAppsSplatRouteImport } from "./routes/api/apps/$"
 import { Route as ApiAuthSplatRouteImport } from "./routes/api/auth/$"
@@ -43,6 +44,11 @@ const InvoicesInvoiceIdRoute = InvoicesInvoiceIdRouteImport.update({
   path: "/invoices/$invoiceId",
   getParentRoute: () => rootRouteImport,
 } as any)
+const SSplatRoute = SSplatRouteImport.update({
+  id: "/s/$",
+  path: "/s/$",
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsDomainsRoute = SettingsDomainsRouteImport.update({
   id: "/settings/domains",
   path: "/settings/domains",
@@ -64,6 +70,7 @@ export interface FileRoutesByFullPath {
   "/notes": typeof NotesRoute
   "/sign-in": typeof SignInRoute
   "/invoices/$invoiceId": typeof InvoicesInvoiceIdRoute
+  "/s/$": typeof SSplatRoute
   "/settings/domains": typeof SettingsDomainsRoute
   "/invoices/": typeof InvoicesIndexRoute
   "/api/apps/$": typeof ApiAppsSplatRoute
@@ -74,6 +81,7 @@ export interface FileRoutesByTo {
   "/notes": typeof NotesRoute
   "/sign-in": typeof SignInRoute
   "/invoices/$invoiceId": typeof InvoicesInvoiceIdRoute
+  "/s/$": typeof SSplatRoute
   "/settings/domains": typeof SettingsDomainsRoute
   "/invoices": typeof InvoicesIndexRoute
   "/api/apps/$": typeof ApiAppsSplatRoute
@@ -85,6 +93,7 @@ export interface FileRoutesById {
   "/notes": typeof NotesRoute
   "/sign-in": typeof SignInRoute
   "/invoices/$invoiceId": typeof InvoicesInvoiceIdRoute
+  "/s/$": typeof SSplatRoute
   "/settings/domains": typeof SettingsDomainsRoute
   "/invoices/": typeof InvoicesIndexRoute
   "/api/apps/$": typeof ApiAppsSplatRoute
@@ -97,6 +106,7 @@ export interface FileRouteTypes {
     | "/notes"
     | "/sign-in"
     | "/invoices/$invoiceId"
+    | "/s/$"
     | "/settings/domains"
     | "/invoices/"
     | "/api/apps/$"
@@ -107,6 +117,7 @@ export interface FileRouteTypes {
     | "/notes"
     | "/sign-in"
     | "/invoices/$invoiceId"
+    | "/s/$"
     | "/settings/domains"
     | "/invoices"
     | "/api/apps/$"
@@ -117,6 +128,7 @@ export interface FileRouteTypes {
     | "/notes"
     | "/sign-in"
     | "/invoices/$invoiceId"
+    | "/s/$"
     | "/settings/domains"
     | "/invoices/"
     | "/api/apps/$"
@@ -128,6 +140,7 @@ export interface RootRouteChildren {
   NotesRoute: typeof NotesRoute
   SignInRoute: typeof SignInRoute
   InvoicesInvoiceIdRoute: typeof InvoicesInvoiceIdRoute
+  SSplatRoute: typeof SSplatRoute
   SettingsDomainsRoute: typeof SettingsDomainsRoute
   InvoicesIndexRoute: typeof InvoicesIndexRoute
   ApiAppsSplatRoute: typeof ApiAppsSplatRoute
@@ -171,6 +184,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof InvoicesInvoiceIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    "/s/$": {
+      id: "/s/$"
+      path: "/s/$"
+      fullPath: "/s/$"
+      preLoaderRoute: typeof SSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     "/settings/domains": {
       id: "/settings/domains"
       path: "/settings/domains"
@@ -200,6 +220,7 @@ const rootRouteChildren: RootRouteChildren = {
   NotesRoute: NotesRoute,
   SignInRoute: SignInRoute,
   InvoicesInvoiceIdRoute: InvoicesInvoiceIdRoute,
+  SSplatRoute: SSplatRoute,
   SettingsDomainsRoute: SettingsDomainsRoute,
   InvoicesIndexRoute: InvoicesIndexRoute,
   ApiAppsSplatRoute: ApiAppsSplatRoute,

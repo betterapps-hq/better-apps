@@ -2,6 +2,7 @@ import { useThreadCounts } from "@better-apps/comments/react"
 import {
   Button,
   Card,
+  CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
@@ -29,6 +30,7 @@ import {
 } from "@tanstack/react-table"
 import { MessageSquareIcon, SearchIcon, SearchXIcon, XIcon } from "lucide-react"
 import { useState } from "react"
+import { SignInPrompt } from "../../app-shell"
 import { loadCommentCounts } from "../../comments.functions"
 import { StatusLabel, statusLabels } from "../../components"
 import {
@@ -63,6 +65,9 @@ export const Route = createFileRoute("/invoices/")({
   }),
   loader: async ({ context }) => {
     const invoices = await listInvoices()
+    if (!invoices) {
+      return null
+    }
     // Counts the open threads for the server render. If that fails, the table loads them itself.
     const counts = await loadCommentCounts({ data: { invoiceIds: invoices.map((invoice) => invoice.id) } }).catch(
       () => null
@@ -147,9 +152,29 @@ const columns: ColumnDef<Invoice>[] = [
 ]
 
 function Invoices() {
+  const invoices = Route.useLoaderData()
+  if (!invoices) {
+    return (
+      <>
+        <div className="page-head">
+          <div>
+            <h1>Invoices</h1>
+          </div>
+        </div>
+        <Card>
+          <CardContent>
+            <SignInPrompt>to see your invoices.</SignInPrompt>
+          </CardContent>
+        </Card>
+      </>
+    )
+  }
+  return <InvoiceList invoices={invoices} />
+}
+
+function InvoiceList({ invoices }: { invoices: Invoice[] }) {
   // TanStack Table keeps one table object and changes it in place, which the React Compiler can't see.
   "use no memo"
-  const invoices = Route.useLoaderData()
   const { q = "", status } = Route.useSearch()
   const navigate = useNavigate({ from: Route.fullPath })
   const [sorting, setSorting] = useState<SortingState>([{ id: "issuedOn", desc: true }])

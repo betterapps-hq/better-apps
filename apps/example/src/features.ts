@@ -9,6 +9,7 @@ import {
   type DomainsEventData
 } from "@better-apps/domains"
 import { reactions } from "@better-apps/reactions"
+import { shortLinks } from "@better-apps/short-links"
 import { BetterAppsError, defineAction, defineFeature, type SubjectDefinition } from "better-apps"
 import { z } from "zod"
 
@@ -114,6 +115,14 @@ const commentReactions = reactions({
 })
 
 /**
+ * Short links to invoices, at `/s/{code}`. Whoever can see an invoice can share it, and a link can let anyone who has it
+ * see the invoice without signing in.
+ */
+const invoiceLinks = shortLinks({
+  subjects: { invoice: { url: ({ subjectId }) => `/invoices/${subjectId}`, grantView: true } }
+})
+
+/**
  * Custom domains on a provider kept in memory, with its own DNS, so the example never calls Cloudflare. The provider
  * forgets its hostnames on restart, which the next check registers again.
  */
@@ -155,4 +164,11 @@ const workspaceDomains = domains({
 })
 
 /** The features the app enables. `better-apps.config.ts` reads them to generate their tables. */
-export const features = [notes, invoiceComments, commentReactions, workspaceDomains, demoCustomer] as const
+export const features = [
+  notes,
+  invoiceComments,
+  commentReactions,
+  invoiceLinks,
+  workspaceDomains,
+  demoCustomer
+] as const
