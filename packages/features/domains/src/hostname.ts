@@ -141,8 +141,15 @@ export function isWithin(hostname: string, zone: string): boolean {
   return hostname === zone || hostname.endsWith(`.${zone}`)
 }
 
-/** Why a normalized hostname can't be a custom domain, or `null` when it can. */
-export function customHostnameProblem(hostname: string, subdomainZone: string | null): HostnameProblem {
+/**
+ * Why a normalized hostname can't be a custom domain, or `null` when it can. `ownZone` is the zone the provider serves
+ * the app from, when it says.
+ */
+export function customHostnameProblem(
+  hostname: string,
+  subdomainZone: string | null,
+  ownZone: string | null = null
+): HostnameProblem {
   if (hostname.length > maxHostnameLength) {
     return "That domain is too long."
   }
@@ -161,6 +168,9 @@ export function customHostnameProblem(hostname: string, subdomainZone: string | 
   }
   if (subdomainZone !== null && isWithin(hostname, subdomainZone)) {
     return `That's a subdomain of ${subdomainZone}. Add it as a subdomain instead.`
+  }
+  if (ownZone !== null && isWithin(hostname, ownZone)) {
+    return "That's this app's own domain."
   }
   return null
 }

@@ -2,7 +2,14 @@
 // every domains event it's delivered.
 import { createTestApp, type TestUser } from "@better-apps/testing"
 import { defineFeature, type BetterAppsEvent, type EventHandler } from "better-apps"
-import { domainEvents, domains, localHostnames, type DomainsOptions, type LocalHostnamesOptions } from "../src/index.js"
+import {
+  domainEvents,
+  domains,
+  localHostnames,
+  type Domain,
+  type DomainsOptions,
+  type LocalHostnamesOptions
+} from "../src/index.js"
 
 export const users = [
   { id: "ada", name: "Ada Lovelace", orgId: "acme", roles: ["owner"] },
@@ -44,11 +51,41 @@ export function setup(extra: Partial<DomainsOptions> = {}, local: LocalHostnames
       })
     )
   const events = (type?: string) => delivered.filter((event) => type === undefined || event.type === type)
-  /** The outbox's scheduled checks, with when each is due. */
+  /** The outbox's scheduled checks. */
   const scheduled = () =>
     database.sqlite
       .prepare("SELECT data FROM betterAppsEvent WHERE type = 'check.scheduled'")
       .all()
-      .map((row) => JSON.parse(String((row as { data: string }).data)) as { domainId: string; token: string })
-  return { app, database, identity, provider, api: app.api.domains, as, post, events, scheduled }
+      .map(
+        (row) =>
+          JSON.parse(String((row as { data: string }).data)) as { domainId: string; token: string; dueAt: string }
+      )
+  const recordOf = (domain: Domain, purpose: string) => {
+    const found = domain.records.find((entry) => entry.purpose === purpose)
+    if (!found) {
+      throw new Error(`${domain.hostname} asks for no ${purpose} record.`)
+    }
+    return found
+  }
+  /** Adds a domain's ownership TXT record to the DNS, as its owner would. */
+  const prove = (domain: Domain) => {
+    const { name, value } = recordOf(domain, "ownership")
+    provider.dns.publish(name, "TXT", value)
+  }
+  /** Points a hostname at the provider's target. */
+  const route = (hostname: string) => provider.dns.publish(hostname, "CNAME", provider.target)
+  return {
+    app,
+    database,
+    identity,
+    provider,
+    api: app.api.domains,
+    as,
+    post,
+    events,
+    scheduled,
+    recordOf,
+    prove,
+    route
+  }
 }

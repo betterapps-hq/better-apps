@@ -72,15 +72,21 @@ export function dnsOverHttps(options: DnsOverHttpsOptions = {}): DnsResolver {
 
 const sameName = (a: string, b: string) => a.toLowerCase().replace(/\.$/, "") === b.toLowerCase().replace(/\.$/, "")
 
+// IPv6 addresses compare without regard to case; resolvers answer them in their shortest form.
+const sameAddress = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
+
 /**
- * Whether a customer added a record: a TXT record when any of the name's values is the token; a CNAME when the name
- * points at the target, or, where the customer's DNS flattens CNAMEs, when the name's addresses include one of the
- * target's. `null` when a lookup failed.
+ * Whether a customer added a record: a TXT record when any of the name's values is the token; an A or AAAA record when
+ * the name has the address; a CNAME when the name points at the target, or, where the customer's DNS flattens CNAMEs,
+ * when the name's addresses include one of the target's. `null` when a lookup failed.
  */
 export async function isRecordFound(dns: DnsResolver, record: DnsRecord): Promise<boolean | null> {
   try {
     if (record.type === "TXT") {
       return (await dns.resolve(record.name, "TXT")).some((value) => value === record.value)
+    }
+    if (record.type !== "CNAME") {
+      return (await dns.resolve(record.name, record.type)).some((address) => sameAddress(address, record.value))
     }
     const cnames = await dns.resolve(record.name, "CNAME")
     if (cnames.some((target) => sameName(target, record.value))) {

@@ -1,6 +1,13 @@
 import { elementAnchor } from "@better-apps/anchors"
 import { comments, commentSubjectTypes } from "@better-apps/comments"
-import { domains, localHostnames } from "@better-apps/domains"
+import {
+  domainModel,
+  domains,
+  localHostnames,
+  type DnsRecord,
+  type DomainRow,
+  type DomainsEventData
+} from "@better-apps/domains"
 import { reactions } from "@better-apps/reactions"
 import { BetterAppsError, defineAction, defineFeature, type SubjectDefinition } from "better-apps"
 import { z } from "zod"
@@ -107,10 +114,34 @@ const commentReactions = reactions({
 })
 
 /**
- * Custom domains on a provider kept in memory, so the example never calls Cloudflare. A domain's first check after it's
- * added finds its records in place, and the provider forgets its hostnames on restart, which the next check adds again.
+ * Custom domains on a provider kept in memory, with its own DNS, so the example never calls Cloudflare. The provider
+ * forgets its hostnames on restart, which the next check registers again.
  */
 const hostnames = localHostnames({ target: "customers.better-invoices.localhost" })
+
+/** Adds records to the local DNS, as a customer would where they manage their domain. */
+export function publishDemoRecords(records: readonly DnsRecord[]) {
+  for (const record of records) {
+    hostnames.dns.publish(record.name, record.type, record.value)
+  }
+}
+
+/**
+ * Plays the customer in the demo: a custom domain's records go into the local DNS as soon as it's added, so its next
+ * check proves the workspace owns it, and the one after finds it ready.
+ */
+const demoCustomer = defineFeature({
+  id: "demo-customer",
+  on: {
+    domains: {
+      "domain.added": async (event, { db }) => {
+        const { domain } = event.data as DomainsEventData["domain.added"]
+        const row = await db.findOne<DomainRow>({ model: domainModel, where: [{ field: "id", value: domain.id }] })
+        publishDemoRecords(row?.records ?? [])
+      }
+    }
+  }
+})
 
 /**
  * The workspace's domains: a subdomain of `better-invoices.localhost` and custom domains. Better Auth here has no
@@ -124,4 +155,4 @@ const workspaceDomains = domains({
 })
 
 /** The features the app enables. `better-apps.config.ts` reads them to generate their tables. */
-export const features = [notes, invoiceComments, commentReactions, workspaceDomains] as const
+export const features = [notes, invoiceComments, commentReactions, workspaceDomains, demoCustomer] as const

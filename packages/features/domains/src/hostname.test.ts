@@ -55,6 +55,8 @@ describe("customHostnameProblem", () => {
       "That's a subdomain of yourapp.com. Add it as a subdomain instead."
     )
     expect(customHostnameProblem("links.acme.com", "yourapp.com")).toBeNull()
+    expect(customHostnameProblem("customers.yourapp.com", null, "yourapp.com")).toBe("That's this app's own domain.")
+    expect(customHostnameProblem("links.acme.com", "acme.io", "yourapp.com")).toBeNull()
   })
 })
 

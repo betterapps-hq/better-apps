@@ -37,8 +37,7 @@ export interface DnsRecord {
     // (undocumented)
     purpose: RecordPurpose;
     // (undocumented)
-    type: "CNAME" | "TXT";
-    // (undocumented)
+    type: "CNAME" | "TXT" | "A" | "AAAA";
     value: string;
 }
 
@@ -121,7 +120,7 @@ export type NewDomain = {
 };
 
 // @public
-export type RecordPurpose = "routing" | "ownership" | "certificate";
+export type RecordPurpose = "routing" | "ownership" | "prevalidation" | "certificate";
 
 // @public
 export function useDomains(): {

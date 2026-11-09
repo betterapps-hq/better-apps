@@ -85,6 +85,14 @@ describe("isRecordFound", () => {
     await expect(isRecordFound(table({}), routing)).resolves.toBe(false)
   })
 
+  it("matches an A or AAAA record by address", async () => {
+    const apex = { type: "A", name: "acme.com", value: "192.0.2.1", purpose: "routing" } as const
+    await expect(isRecordFound(table({ "A acme.com": ["192.0.2.9", "192.0.2.1"] }), apex)).resolves.toBe(true)
+    await expect(isRecordFound(table({ "A acme.com": ["192.0.2.9"] }), apex)).resolves.toBe(false)
+    const six = { type: "AAAA", name: "acme.com", value: "2001:DB8::1", purpose: "routing" } as const
+    await expect(isRecordFound(table({ "AAAA acme.com": ["2001:db8::1"] }), six)).resolves.toBe(true)
+  })
+
   it("matches a TXT value exactly", async () => {
     const record = { type: "TXT", name: "_cf.links.acme.com", value: "token", purpose: "ownership" } as const
     await expect(isRecordFound(table({ "TXT _cf.links.acme.com": ["other", "token"] }), record)).resolves.toBe(true)

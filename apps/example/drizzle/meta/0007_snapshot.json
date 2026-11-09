@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "0a9ff8bb-e348-452e-8d86-9434d788bbfd",
+  "id": "97c55539-c4d8-4543-a06b-9bca540eaca0",
   "prevId": "6adede89-c7ec-496a-bef2-5ef495ea0f5e",
   "tables": {
     "invoice": {
@@ -893,6 +893,20 @@
           "notNull": true,
           "autoincrement": false
         },
+        "claimed_hostname": {
+          "name": "claimed_hostname",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "ownership_token": {
+          "name": "ownership_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "kind": {
           "name": "kind",
           "type": "text",
@@ -1001,9 +1015,9 @@
         }
       },
       "indexes": {
-        "domain_hostname_unique": {
-          "name": "domain_hostname_unique",
-          "columns": ["hostname"],
+        "domain_claimed_hostname_unique": {
+          "name": "domain_claimed_hostname_unique",
+          "columns": ["claimed_hostname"],
           "isUnique": true
         },
         "domain_primary_of_unique": {
@@ -1015,6 +1029,11 @@
           "name": "domain_by_org",
           "columns": ["org_id", "created_at"],
           "isUnique": false
+        },
+        "domain_org_hostname": {
+          "name": "domain_org_hostname",
+          "columns": ["org_id", "hostname"],
+          "isUnique": true
         }
       },
       "foreignKeys": {},

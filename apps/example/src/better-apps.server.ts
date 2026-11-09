@@ -5,7 +5,7 @@ import { createBetterApps } from "better-apps"
 import { auth } from "./auth.server"
 import { db } from "./db/database.server"
 import { seedComments } from "./db/seed-comments.server"
-import { features, subjects } from "./features"
+import { features, publishDemoRecords, subjects } from "./features"
 
 /** Who requests act for: the person signed in with Better Auth. */
 export const identity = betterAuthIdentity(auth)
@@ -33,3 +33,8 @@ scope[timer].unref()
 
 // Adds the sample conversations on the first start, through the features, as the demo people.
 await seedComments(app)
+
+// The local DNS forgets the demo's records on restart, so the custom domains' records go back in.
+for (const domain of (await app.api.domains.list({ orgId: null })).domains) {
+  publishDemoRecords(domain.records)
+}

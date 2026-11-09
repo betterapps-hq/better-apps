@@ -47,7 +47,8 @@ describe("domains client", () => {
       ["acme.yourapp.com", "active", true],
       ["links.acme.com", "pending", false]
     ])
-    // Adding checked it a moment ago, so checking again waits, and the domain isn't left busy.
+    await domains.check(custom.id)
+    // It was checked a moment ago, so checking again waits, and the domain isn't left busy.
     await expect(domains.check(custom.id)).rejects.toMatchObject({ code: "RATE_LIMITED" })
     expect(domains.store.getSnapshot().calls).toEqual({})
     await domains.setPrimary(subdomain.id)
@@ -62,9 +63,12 @@ describe("domains client", () => {
   it("shows what a check found", async () => {
     vi.useFakeTimers({ toFake: ["Date"] })
     try {
-      const { domains } = browser()
+      const { domains, prove, route } = browser()
       await domains.load()
       const custom = await domains.add({ kind: "custom", hostname: "links.acme.com" })
+      prove(custom)
+      route(custom.hostname)
+      await domains.check(custom.id)
       vi.setSystemTime(Date.now() + 11_000)
       await expect(domains.check(custom.id)).resolves.toMatchObject({ status: "active", primary: true })
       expect(domains.store.getSnapshot().list?.domains).toMatchObject([{ id: custom.id, status: "active" }])

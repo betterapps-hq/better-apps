@@ -1,4 +1,4 @@
-export { checkCooldownMs, checkScheduleMinutes, checkWindowMs } from "./checks.js"
+export { checkCooldownMs, checkScheduleMinutes, checkWindowMs, recheckMs } from "./checks.js"
 export { dnsOverHttps, type DnsOverHttpsOptions, type DnsRecordType, type DnsResolver } from "./dns.js"
 export { DomainsError, type DomainsErrorCode } from "./errors.js"
 export { domainEvents, type DomainsEventData, type DomainSummary } from "./events.js"

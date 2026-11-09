@@ -7,7 +7,10 @@ export const domainModel = "domain"
 /** What kind of domain: a subdomain of the app's zone, or a domain the organization owns. */
 export type DomainKind = "subdomain" | "custom"
 
-/** Whether a domain is ready for traffic: `pending` until it is, `failed` when the provider blocks it or time ran out. */
+/**
+ * Whether a domain is ready for traffic: `pending` until it is, `failed` when the provider blocks it, time ran out, or
+ * another organization proved it owns the hostname.
+ */
 export type DomainStatus = "pending" | "active" | "failed"
 
 /** Where the domain's certificate stands. */
@@ -24,6 +27,13 @@ export type DomainRow = {
   /** The organization, or `""` in an app without organizations. */
   orgId: string
   hostname: string
+  /**
+   * The hostname while this domain holds it: a subdomain from the start, a custom domain once its ownership record is
+   * found. Unique, so one domain holds a hostname, while any organization may add it and prove it owns it.
+   */
+  claimedHostname: string | null
+  /** The value of a custom domain's ownership record. `null` for subdomains. */
+  ownershipToken: string | null
   kind: DomainKind
   status: DomainStatus
   certificate: CertificateStatus
@@ -34,8 +44,9 @@ export type DomainRow = {
   error: string | null
   /** Scheduled checks since checking last started. */
   attempts: number
-  /** The current schedule of checks; an event carrying another token stops. */
+  /** The current schedule of checks, or `null` when none runs; an event carrying another token stops. */
   checkToken: string | null
+  /** When checking last started, while the domain is pending. */
   checkingSince: Date | null
   nextCheckAt: Date | null
   lastCheckedAt: Date | null
@@ -44,12 +55,14 @@ export type DomainRow = {
   createdBy: string | null
 }
 
-/** The domains table: one row per hostname, which is unique across the app. */
+/** The domains table: one row per hostname an organization added, of which one domain holds the hostname. */
 export const domainsSchema: FeatureSchema = {
   [domainModel]: {
     fields: {
       orgId: { type: "string", defaultValue: "" },
-      hostname: { type: "string", unique: true },
+      hostname: { type: "string" },
+      claimedHostname: { type: "string", required: false, unique: true },
+      ownershipToken: { type: "string", required: false },
       kind: { type: "string" },
       status: { type: "string" },
       certificate: { type: "string" },
@@ -66,6 +79,9 @@ export const domainsSchema: FeatureSchema = {
       createdAt: { type: "date" },
       createdBy: { type: "string", required: false }
     },
-    indexes: [{ fields: ["orgId", "createdAt"], name: "domain_by_org" }]
+    indexes: [
+      { fields: ["orgId", "createdAt"], name: "domain_by_org" },
+      { fields: ["orgId", "hostname"], name: "domain_org_hostname", unique: true }
+    ]
   }
 }

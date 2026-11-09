@@ -15,6 +15,7 @@ domains({
     provider: cloudflareHostnames({
       apiToken: env.CLOUDFLARE_API_TOKEN,
       zoneId: env.CLOUDFLARE_ZONE_ID,
+      zone: "yourapp.com",
       target: "customers.yourapp.com"
     })
   }
@@ -28,11 +29,15 @@ Certificates: Edit** on the zone. The Worker and the zone must be in the same Cl
 
 ## Behavior
 
-- `create` adds a custom hostname with `ssl: { method: "http", type: "dv" }`, so a customer needs only the CNAME record
-  to `target`. Pass `certificateValidation: "txt"` to validate certificates by TXT record instead. A hostname the zone
-  already has is looked up and returned, so a repeated `create` is safe.
-- The records it returns are the CNAME to `target` first, then the `_cf-custom-hostname` ownership TXT until the
-  hostname is active, then any certificate TXT records until the certificate is active.
+- `routing` asks for a CNAME from the hostname to `target`. `zone` is the SaaS zone's name, which `target` is in;
+  domains refuses it and hostnames in it as custom domains.
+- `create` adds a custom hostname with `ssl: { method: "http", type: "dv" }`, so Cloudflare validates the hostname and
+  its certificate once the CNAME is in place. Pass `certificateValidation: "txt"` to validate certificates by TXT record
+  instead. A hostname the zone already has is looked up and returned, so a repeated `create` is safe, and an
+  organization that takes a hostname over from another gets the same custom hostname.
+- The records it returns besides the CNAME are Cloudflare's `_cf-custom-hostname` TXT, as `prevalidation`, until the
+  hostname is active, which lets it verify before traffic moves, then any certificate TXT records until the certificate
+  is active.
 - Cloudflare's hostname statuses map to `active` (`active`, `active_redeploying` and the test ones), `blocked`
   (`blocked`, `pending_blocked`, `test_blocked`, `test_failed`), `moved` (`moved`, `deleted`, `pending_deletion`) and
   `pending` for the rest. Certificates are `active` when `active` or `pending_expiration`, `failed` when timed out,

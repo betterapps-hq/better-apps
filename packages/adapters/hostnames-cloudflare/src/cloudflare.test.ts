@@ -89,7 +89,12 @@ function fakeCloudflare() {
     return envelope({ id: existing.id })
   }) as typeof globalThis.fetch
   const client = new Cloudflare({ apiToken: "test-token", fetch, maxRetries: 0 })
-  const provider = cloudflareHostnames({ client, zoneId: "zone-1", target: "customers.yourapp.com" })
+  const provider = cloudflareHostnames({
+    client,
+    zoneId: "zone-1",
+    zone: "yourapp.com",
+    target: "customers.yourapp.com"
+  })
   return {
     hostnames,
     requests,
@@ -116,11 +121,26 @@ describe("cloudflareHostnames", () => {
       status: "pending",
       certificate: "pending",
       records: [
-        { type: "CNAME", name: "links.acme.com", value: "customers.yourapp.com", purpose: "routing" },
-        { type: "TXT", name: "_cf-custom-hostname.links.acme.com", value: "owner-token", purpose: "ownership" }
+        { type: "TXT", name: "_cf-custom-hostname.links.acme.com", value: "owner-token", purpose: "prevalidation" }
       ],
       errors: ["custom hostname does not CNAME to this zone."]
     })
+  })
+
+  it("routes hostnames with a CNAME to the target, and names its zone", () => {
+    const { provider } = fakeCloudflare()
+    expect(provider.zone).toBe("yourapp.com")
+    expect(provider.routing("links.acme.com")).toEqual([
+      { type: "CNAME", name: "links.acme.com", value: "customers.yourapp.com", purpose: "routing" }
+    ])
+    expect(() =>
+      cloudflareHostnames({
+        apiToken: "test-token",
+        zoneId: "zone-1",
+        zone: "yourapp.com",
+        target: "customers.other.com"
+      })
+    ).toThrow(`The target "customers.other.com" isn't in the zone "yourapp.com".`)
   })
 
   it("returns the hostname Cloudflare already has", async () => {
@@ -147,17 +167,14 @@ describe("cloudflareHostnames", () => {
     await expect(provider.get(id)).resolves.toMatchObject({
       status: "active",
       certificate: "pending",
-      records: [
-        { purpose: "routing" },
-        { type: "TXT", name: "_acme-challenge.links.acme.com", value: "dcv", purpose: "certificate" }
-      ],
+      records: [{ type: "TXT", name: "_acme-challenge.links.acme.com", value: "dcv", purpose: "certificate" }],
       errors: ["CAA record prevents issuance."]
     })
     hostnames.set(id, { ...entry, status: "active_redeploying", ssl: { ...entry.ssl, status: "active" } })
     await expect(provider.get(id)).resolves.toMatchObject({
       status: "active",
       certificate: "active",
-      records: [{ purpose: "routing" }]
+      records: []
     })
   })
 
@@ -201,6 +218,7 @@ describe("cloudflareHostnames", () => {
     const provider = cloudflareHostnames({
       client,
       zoneId: "zone-1",
+      zone: "yourapp.com",
       target: "customers.yourapp.com",
       certificateValidation: "txt"
     })
@@ -246,13 +264,18 @@ describe("cloudflareHostnames", () => {
         throw new TypeError("fetch failed")
       }) as typeof fetch
     })
-    const provider = cloudflareHostnames({ client, zoneId: "zone-1", target: "customers.yourapp.com" })
+    const provider = cloudflareHostnames({
+      client,
+      zoneId: "zone-1",
+      zone: "yourapp.com",
+      target: "customers.yourapp.com"
+    })
     await expect(provider.get("ch-1")).rejects.toMatchObject({ code: "UNAVAILABLE" })
   })
 
   it("makes its own client from an API token", () => {
     expect(() =>
-      cloudflareHostnames({ apiToken: "token", zoneId: "zone-1", target: "customers.yourapp.com" })
+      cloudflareHostnames({ apiToken: "token", zoneId: "zone-1", zone: "yourapp.com", target: "customers.yourapp.com" })
     ).not.toThrow()
   })
 })

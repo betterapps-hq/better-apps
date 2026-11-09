@@ -44,6 +44,7 @@ export const checkWindowMs: number;
 
 // @public
 export interface CustomDomainOptions {
+    ownershipLabel?: string | undefined;
     provider: HostnameProvider;
 }
 
@@ -66,8 +67,7 @@ export interface DnsRecord {
     // (undocumented)
     purpose: RecordPurpose;
     // (undocumented)
-    type: "CNAME" | "TXT";
-    // (undocumented)
+    type: "CNAME" | "TXT" | "A" | "AAAA";
     value: string;
 }
 
@@ -125,6 +125,7 @@ export const domainEvents: {
     "check.scheduled": EventDefinition<    {
     domainId: string;
     token: string;
+    dueAt: string;
     }>;
 };
 
@@ -156,6 +157,8 @@ export type DomainRow = {
     id: string;
     orgId: string;
     hostname: string;
+    claimedHostname: string | null;
+    ownershipToken: string | null;
     kind: DomainKind;
     status: DomainStatus;
     certificate: CertificateStatus;
@@ -198,6 +201,7 @@ export function domains<const Options extends DomainsOptions>(options: Options):
         "check.scheduled": EventDefinition<    {
         domainId: string;
         token: string;
+        dueAt: string;
         }>;
     };
     readonly on: {
@@ -253,6 +257,13 @@ export function domains<const Options extends DomainsOptions>(options: Options):
         getPrimary: ActionDefinition<z.ZodObject<{
         orgId: z.ZodNullable<z.ZodString>;
         }, z.core.$strip>, Domain | null> & {
+            serverOnly?: true | undefined;
+        };
+        removeAll: ActionDefinition<z.ZodObject<{
+        orgId: z.ZodNullable<z.ZodString>;
+        }, z.core.$strip>, {
+        removed: number;
+        }> & {
             serverOnly?: true | undefined;
         };
     };
@@ -334,6 +345,8 @@ export interface HostnameProvider {
     get(id: string): Promise<ProviderHostname | null>;
     refresh(id: string): Promise<ProviderHostname>;
     remove(id: string): Promise<void>;
+    routing(hostname: string): DnsRecord[];
+    readonly zone?: string | undefined;
 }
 
 // @public
@@ -358,15 +371,16 @@ export const limits: {
 
 // @public
 export interface LocalHostnames extends HostnameProvider {
-    activate(hostname: string): void;
     block(hostname: string): void;
     dns: DnsResolver & {
         publish(name: string, type: DnsRecordType, value: string): void;
         unpublish(name: string, type: DnsRecordType): void;
     };
-    failNext(method: keyof HostnameProvider, error: Error): void;
+    failNext(method: "create" | "get" | "refresh" | "remove", error: Error): void;
+    holdCertificate(hostname: string, status: "pending" | "failed"): void;
     readonly hostnames: ReadonlyMap<string, ProviderHostname>;
-    move(hostname: string): void;
+    readonly target: string;
+    readonly zone: string;
 }
 
 // @public
@@ -375,7 +389,7 @@ export function localHostnames(options?: LocalHostnamesOptions): LocalHostnames;
 // @public
 export interface LocalHostnamesOptions {
     target?: string | undefined;
-    verifyAfter?: number | undefined;
+    zone?: string | undefined;
 }
 
 // @public
@@ -404,7 +418,10 @@ export interface ProviderHostname {
 }
 
 // @public
-export type RecordPurpose = "routing" | "ownership" | "certificate";
+export const recheckMs: number;
+
+// @public
+export type RecordPurpose = "routing" | "ownership" | "prevalidation" | "certificate";
 
 // @public
 export interface SetPrimaryInput {

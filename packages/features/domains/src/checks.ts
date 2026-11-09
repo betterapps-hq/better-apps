@@ -2,10 +2,10 @@
 // here; the decisions they feed are plain functions.
 import { isRecordFound, type DnsResolver } from "./dns.js"
 import { DomainsError } from "./errors.js"
-import { HostnameProviderError, type HostnameProvider, type ProviderHostname } from "./provider.js"
-import type { CertificateStatus, CheckedRecord, DomainRow, DomainStatus } from "./schema.js"
+import { HostnameProviderError, type DnsRecord, type HostnameProvider, type ProviderHostname } from "./provider.js"
+import type { CheckedRecord, DomainRow, DomainStatus } from "./schema.js"
 
-/** Minutes from each scheduled check to the next, by how many have run; the last one repeats. */
+/** Minutes from each scheduled check of a pending domain to the next, by how many have run; the last one repeats. */
 export const checkScheduleMinutes: readonly number[] = [1, 2, 5, 10, 15, 30, 60, 120, 240]
 
 /** How long a pending domain is checked on a schedule before it fails, as the provider stops validating it too. */
@@ -14,19 +14,13 @@ export const checkWindowMs = 7 * 24 * 60 * 60_000
 /** How soon after a domain's last check `check` may check it again. */
 export const checkCooldownMs = 10_000
 
-/** When the scheduled check after `attempts` checks is due. */
+/** How long after an active custom domain's last check it's checked again. */
+export const recheckMs = 24 * 60 * 60_000
+
+/** When the scheduled check of a pending domain after `attempts` checks is due. */
 export function nextCheckAt(attempts: number, from: Date): Date {
   const minutes = checkScheduleMinutes[Math.min(attempts, checkScheduleMinutes.length - 1)] as number
   return new Date(from.getTime() + minutes * 60_000)
-}
-
-/** What a check found, to save on the domain. */
-export interface Inspection {
-  providerId: string | null
-  status: DomainStatus
-  certificate: CertificateStatus
-  records: CheckedRecord[]
-  error: string | null
 }
 
 const providerCodes = {
@@ -50,73 +44,103 @@ export async function fromProvider<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
-/** Why a domain isn't ready yet, in words for the person who added it, or `null` when it is. */
-function describe(state: ProviderHostname, records: readonly CheckedRecord[], status: DomainStatus): string | null {
+/** The TXT record that proves an organization owns a hostname, with its domain's own token. */
+export function ownershipRecord(label: string, hostname: string, token: string): DnsRecord {
+  return { type: "TXT", name: `${label}.${hostname}`, value: token, purpose: "ownership" }
+}
+
+/** Looks up records with `dns`, saying of each whether the customer added it. */
+export async function lookUp(dns: DnsResolver, records: readonly DnsRecord[]): Promise<CheckedRecord[]> {
+  return Promise.all(records.map(async (record) => ({ ...record, found: await isRecordFound(dns, record) })))
+}
+
+/** Records before their first check. */
+export const unchecked = (records: readonly DnsRecord[]): CheckedRecord[] =>
+  records.map((record) => ({ ...record, found: null }))
+
+export const lookupError = "We couldn't look up this domain's DNS records. We'll try again soon."
+
+/** The error a domain gets when its schedule of checks ran out. */
+export const expiredError = "We stopped checking after 7 days. Fix the records, then check again."
+
+/** The error a domain gets when another organization proved it owns the hostname. */
+export const evictedError = "Another organization proved it owns this domain. Check again to prove you still do."
+
+/** The error a domain gets while another organization's ownership record is still in place. */
+export const contestedError = (record: string) =>
+  `Another organization's TXT record for ${record} is still in place. Remove it, then check again.`
+
+/** What a custom domain needs before anything else: its ownership record, named by `name`. */
+export const proveError = (name: string) => `Add the TXT record for ${name} to prove you own the domain.`
+
+/** Why a custom domain whose ownership record wasn't found isn't ready, in words for the person who added it. */
+export function ownershipError(records: readonly CheckedRecord[]): string {
+  const ownership = records.find((record) => record.purpose === "ownership")
+  if (!ownership || ownership.found === null) {
+    return lookupError
+  }
+  return proveError(ownership.name)
+}
+
+function routingAdvice(record: CheckedRecord): string {
+  return record.type === "CNAME"
+    ? `Add a CNAME record for ${record.name} that points to ${record.value}.`
+    : `Add an ${record.type} record for ${record.name} with the address ${record.value}.`
+}
+
+/**
+ * Why a custom domain the organization holds isn't ready yet, in words for the person who added it, or `null` when it
+ * is. The provider serving the hostname proves its traffic arrives, even where DNS hides the routing record, such as a
+ * CNAME the customer's own Cloudflare zone proxies.
+ */
+export function describe(
+  state: ProviderHostname,
+  records: readonly CheckedRecord[],
+  status: DomainStatus
+): string | null {
   if (status === "active") {
     return null
   }
   if (status === "failed") {
     return state.errors[0] ?? "The provider won't serve this domain."
   }
-  const routing = records.find((record) => record.purpose === "routing")
-  if (routing?.found === null) {
-    return "We couldn't look up this domain's DNS records. We'll try again soon."
+  if (state.status === "active") {
+    return state.certificate === "failed"
+      ? (state.errors[0] ?? "The certificate couldn't be issued. We asked for it again.")
+      : "The domain is verified. Its certificate is being issued, which can take a few minutes."
   }
-  if (routing && !routing.found) {
-    return `Add a CNAME record for ${routing.name} that points to ${routing.value}.`
+  const routing = records.filter((record) => record.purpose === "routing")
+  if (routing.some((record) => record.found === null)) {
+    return lookupError
   }
-  // The provider's own errors are left out here: once the CNAME is found, ones such as "does not CNAME to this zone"
-  // are older than the check.
-  if (state.status !== "active") {
-    return "The CNAME record is in place. Waiting for the provider to verify the domain."
+  const missing = routing.find((record) => record.found === false)
+  if (missing) {
+    return routingAdvice(missing)
   }
-  if (state.certificate === "failed") {
-    return state.errors[0] ?? "The certificate couldn't be issued. We asked for it again."
-  }
-  return "The domain is verified. Its certificate is being issued, which can take a few minutes."
+  // The provider's own errors are left out here: once the routing records are found, ones such as "does not CNAME to
+  // this zone" are older than the check.
+  return "The records are in place. Waiting for the provider to verify the domain."
 }
 
-/** A domain is ready once the provider serves the hostname with its certificate and the CNAME record is found. */
-function statusOf(state: ProviderHostname, routed: boolean): DomainStatus {
+/** A domain the organization holds is ready once the provider serves the hostname with its certificate. */
+export function statusOf(state: ProviderHostname): DomainStatus {
   if (state.status === "blocked") {
     return "failed"
   }
-  return state.status === "active" && state.certificate === "active" && routed ? "active" : "pending"
-}
-
-/** Looks up a provider hostname's records and says where the domain stands. */
-export async function evaluate(dns: DnsResolver, state: ProviderHostname): Promise<Inspection> {
-  const records = await Promise.all(
-    state.records.map(async (record): Promise<CheckedRecord> => ({
-      ...record,
-      found: await isRecordFound(dns, record)
-    }))
-  )
-  const routed = records.some((record) => record.purpose === "routing" && record.found === true)
-  const status = statusOf(state, routed)
-  return {
-    providerId: state.id,
-    status,
-    certificate: state.certificate,
-    records,
-    error: describe(state, records, status)
-  }
+  return state.status === "active" && state.certificate === "active" ? "active" : "pending"
 }
 
 /**
- * Checks a custom domain: reads it from the provider, creating it when the provider doesn't have it, and restarts the
- * provider's validation when it moved or its certificate failed, then looks up its records.
+ * Reads a custom domain from its provider, registering it when the domain has no provider id yet or the provider lost
+ * it, and restarts the provider's validation when it moved or its certificate failed.
  */
-export async function inspect(provider: HostnameProvider, dns: DnsResolver, row: DomainRow): Promise<Inspection> {
+export async function inspect(provider: HostnameProvider, row: DomainRow): Promise<ProviderHostname> {
   return fromProvider(async () => {
     let state = row.providerId === null ? null : await provider.get(row.providerId)
     state ??= await provider.create(row.hostname)
     if (state.status === "moved" || state.certificate === "failed") {
       state = await provider.refresh(state.id)
     }
-    return evaluate(dns, state)
+    return state
   })
 }
-
-/** The error a domain gets when its schedule of checks ran out. */
-export const expiredError = "We stopped checking after 7 days. Fix the records, then check again."

@@ -18,6 +18,11 @@ export interface SubdomainOptions {
 export interface CustomDomainOptions {
   /** The `hostnames` slot, such as `cloudflareHostnames()` or `localHostnames()`. */
   provider: HostnameProvider
+  /**
+   * The first label of the TXT record that proves an organization owns a domain, such as `_verify` for
+   * `_verify.links.acme.com`. `_verify` by default; name it after the app, such as `_acme-verify`.
+   */
+  ownershipLabel?: string | undefined
 }
 
 /** What `canManage` receives. */

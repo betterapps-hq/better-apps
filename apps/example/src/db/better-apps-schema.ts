@@ -103,7 +103,9 @@ export const domain = sqliteTable(
   {
     id: text("id").primaryKey(),
     orgId: text("org_id").default("").notNull(),
-    hostname: text("hostname").notNull().unique(),
+    hostname: text("hostname").notNull(),
+    claimedHostname: text("claimed_hostname").unique(),
+    ownershipToken: text("ownership_token"),
     kind: text("kind").notNull(),
     status: text("status").notNull(),
     certificate: text("certificate").notNull(),
@@ -120,7 +122,10 @@ export const domain = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     createdBy: text("created_by")
   },
-  (table) => [index("domain_by_org").on(table.orgId, table.createdAt)]
+  (table) => [
+    index("domain_by_org").on(table.orgId, table.createdAt),
+    uniqueIndex("domain_org_hostname").on(table.orgId, table.hostname)
+  ]
 )
 
 export const betterAppsEvent = sqliteTable(

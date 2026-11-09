@@ -4,63 +4,28 @@ import {
   type ActionContext,
   type Actor,
   type DatabaseAdapter,
-  type EventContext,
   type WriteOperation
 } from "better-apps"
 import { z } from "zod"
-import {
-  checkCooldownMs,
-  checkWindowMs,
-  evaluate,
-  expiredError,
-  fromProvider,
-  inspect,
-  nextCheckAt,
-  type Inspection
-} from "./checks.js"
-import { dnsOverHttps, type DnsResolver } from "./dns.js"
+import { announce, claimPrimary, removeDomain, runCheck, scheduledCheck, type ScheduledCheck } from "./checking.js"
+import { checkCooldownMs, nextCheckAt, ownershipRecord, proveError, unchecked } from "./checks.js"
+import { limits, resolve, type Config } from "./config.js"
 import { DomainsError } from "./errors.js"
-import { domainEvents, type DomainSummary } from "./events.js"
+import { domainEvents } from "./events.js"
 import {
   customHostnameProblem,
-  defaultReservedSubdomains,
-  isZone,
   labelProblem,
   maxHostnameLength,
   normalizeHostname,
   normalizeLabel
 } from "./hostname.js"
-import type { AddDomainInput, DomainInput, DomainsOptions, ManageArgs, SetPrimaryInput } from "./options.js"
+import type { AddDomainInput, DomainInput, DomainsOptions, SetPrimaryInput } from "./options.js"
 import type { HostnameProvider } from "./provider.js"
-import {
-  domainModel,
-  domainsSchema,
-  type CertificateStatus,
-  type CheckedRecord,
-  type DomainKind,
-  type DomainRow,
-  type DomainStatus
-} from "./schema.js"
+import { publicOrg, summary, toDomain, type Domain } from "./rows.js"
+import { domainModel, domainsSchema, type DomainKind, type DomainRow, type DomainStatus } from "./schema.js"
 
-/** A domain as actions return it. */
-export interface Domain {
-  id: string
-  hostname: string
-  kind: DomainKind
-  status: DomainStatus
-  certificate: CertificateStatus
-  /** Whether it's the organization's primary domain. */
-  primary: boolean
-  /** The DNS records the customer adds, with what the last check found. None for subdomains. */
-  records: CheckedRecord[]
-  /** Why it isn't ready, in words to show, or `null`. */
-  error: string | null
-  createdAt: Date
-  lastCheckedAt: Date | null
-  /** When the next scheduled check is due, or `null` when none is. */
-  nextCheckAt: Date | null
-  verifiedAt: Date | null
-}
+export { limits } from "./config.js"
+export type { Domain } from "./rows.js"
 
 /** What `list` returns: an organization's domains and everything a settings screen needs to manage them. */
 export interface DomainList {
@@ -89,96 +54,7 @@ export interface HostnameMatch {
   primary: boolean
 }
 
-/** Size limits. */
-export const limits = {
-  maxPerOrg: 10,
-  maxPerOrgCap: 100,
-  subdomainsPerOrg: 1,
-  minLabelLength: 3
-} as const
-
-/** How domains are set up, resolved once when the feature is created. */
-interface Config {
-  subdomains: { zone: string; reserved: ReadonlySet<string>; minLength: number; maxPerOrg: number } | null
-  provider: HostnameProvider | null
-  dns: DnsResolver
-  canManage: (args: ManageArgs) => boolean | Promise<boolean>
-  maxPerOrg: number
-}
-
 type Context = ActionContext<unknown>
-
-const defaultCanManage = ({ actor }: ManageArgs) => actor.roles.includes("owner") || actor.roles.includes("admin")
-
-function wholeNumber(value: number | undefined, fallback: number, min: number, max: number, name: string): number {
-  const resolved = value ?? fallback
-  if (!Number.isInteger(resolved) || resolved < min || resolved > max) {
-    throw new Error(`\`${name}\` is a whole number from ${min} to ${max}.`)
-  }
-  return resolved
-}
-
-function resolve(options: DomainsOptions): Config {
-  if (!options.subdomains && !options.custom) {
-    throw new Error("Set up `subdomains`, `custom` or both for organizations to have domains.")
-  }
-  const { subdomains } = options
-  if (subdomains && !isZone(subdomains.zone)) {
-    throw new Error(
-      `"${subdomains.zone}" isn't a zone subdomains can go under. Use a lowercase name such as yourapp.com.`
-    )
-  }
-  return {
-    subdomains: subdomains
-      ? {
-          zone: subdomains.zone,
-          reserved: new Set((subdomains.reserved ?? defaultReservedSubdomains).map(normalizeLabel)),
-          minLength: wholeNumber(subdomains.minLength, limits.minLabelLength, 1, 63, "subdomains.minLength"),
-          maxPerOrg: wholeNumber(
-            subdomains.maxPerOrg,
-            limits.subdomainsPerOrg,
-            1,
-            limits.maxPerOrgCap,
-            "subdomains.maxPerOrg"
-          )
-        }
-      : null,
-    provider: options.custom?.provider ?? null,
-    dns: options.dns ?? dnsOverHttps(),
-    canManage: options.canManage ?? defaultCanManage,
-    maxPerOrg: wholeNumber(options.maxPerOrg, limits.maxPerOrg, 1, limits.maxPerOrgCap, "maxPerOrg")
-  }
-}
-
-const publicOrg = (orgId: string) => (orgId === "" ? null : orgId)
-
-function toDomain(row: DomainRow): Domain {
-  return {
-    id: row.id,
-    hostname: row.hostname,
-    kind: row.kind,
-    status: row.status,
-    certificate: row.certificate,
-    primary: row.primaryOf !== null,
-    records: row.records ?? [],
-    error: row.error,
-    createdAt: row.createdAt,
-    lastCheckedAt: row.lastCheckedAt,
-    nextCheckAt: row.nextCheckAt,
-    verifiedAt: row.verifiedAt
-  }
-}
-
-function summary(row: DomainRow): DomainSummary {
-  return {
-    id: row.id,
-    orgId: publicOrg(row.orgId),
-    hostname: row.hostname,
-    kind: row.kind,
-    status: row.status,
-    primary: row.primaryOf !== null
-  }
-}
 
 /**
  * Server code that passes neither an actor nor a request is trusted: it names the organization in the input and skips
@@ -231,84 +107,6 @@ async function requireDomain(db: DatabaseAdapter, orgId: string, domainId: strin
   return row
 }
 
-type Writer = Pick<Context, "db" | "emit">
-
-/**
- * Makes an active domain its organization's primary one when the organization has none. Another domain becoming primary
- * at the same moment wins, through the unique `primaryOf`.
- */
-async function claimPrimary(writer: Writer, row: DomainRow): Promise<DomainRow> {
-  if (row.status !== "active" || row.primaryOf !== null) {
-    return row
-  }
-  const { db } = writer
-  const current = await db.findOne<DomainRow>({ model: domainModel, where: [{ field: "primaryOf", value: row.orgId }] })
-  if (current) {
-    return row
-  }
-  const primary = { ...row, primaryOf: row.orgId }
-  writer.emit("primary.changed", { orgId: publicOrg(row.orgId), domain: summary(primary) })
-  try {
-    const [updated] = await db.batch([
-      { type: "update", model: domainModel, where: [{ field: "id", value: row.id }], update: { primaryOf: row.orgId } }
-    ])
-    return (updated as DomainRow | null) ?? row
-  } catch {
-    return row
-  }
-}
-
-/** The writes and events that remove a domain, with `primary.changed` when it was the primary one. */
-function removal(writer: Writer, row: DomainRow): WriteOperation[] {
-  writer.emit("domain.removed", { domain: summary(row) })
-  if (row.primaryOf !== null) {
-    writer.emit("primary.changed", { orgId: publicOrg(row.orgId), domain: null })
-  }
-  return [{ type: "deleteMany", model: domainModel, where: [{ field: "id", value: row.id }] }]
-}
-
-async function removeAtProvider(config: Config, row: DomainRow): Promise<void> {
-  if (row.kind === "custom" && row.providerId !== null && config.provider) {
-    const { provider } = config
-    const { providerId } = row
-    await fromProvider(() => provider.remove(providerId))
-  }
-}
-
-/** The fields a check saves, and the next scheduled check while the domain is pending. */
-function checkedFields(
-  writer: Writer,
-  row: DomainRow,
-  inspection: Inspection,
-  now: Date,
-  schedule: { attempts: number; checkingSince: Date; token: string }
-): Partial<DomainRow> {
-  const expired = inspection.status === "pending" && now.getTime() - schedule.checkingSince.getTime() >= checkWindowMs
-  const status: DomainStatus = expired ? "failed" : inspection.status
-  const pending = status === "pending"
-  const next = { ...row, ...inspection, status }
-  if (status !== row.status) {
-    writer.emit("domain.status.changed", { domain: summary(next), from: row.status })
-    if (status === "active") {
-      writer.emit("domain.verified", { domain: summary(next) })
-    }
-  }
-  if (pending) {
-    writer.emit("check.scheduled", { domainId: row.id, token: schedule.token }, { later: true })
-  }
-  return {
-    ...inspection,
-    status,
-    error: expired ? expiredError : inspection.error,
-    attempts: schedule.attempts,
-    checkingSince: schedule.checkingSince,
-    checkToken: pending ? schedule.token : null,
-    nextCheckAt: pending ? nextCheckAt(schedule.attempts, now) : null,
-    lastCheckedAt: now,
-    verifiedAt: status === "active" && row.status !== "active" ? now : row.verifiedAt
-  }
-}
-
 const orgInput = z.string().max(200).nullable().optional()
 
 const inputs = {
@@ -320,7 +118,7 @@ const inputs = {
   domain: z.object({ domainId: z.string().min(1).max(200), orgId: orgInput }),
   setPrimary: z.object({ domainId: z.string().min(1).max(200).nullable(), orgId: orgInput }),
   lookup: z.object({ hostname: z.string().max(maxHostnameLength + 50) }),
-  getPrimary: z.object({ orgId: z.string().max(200).nullable() })
+  org: z.object({ orgId: z.string().max(200).nullable() })
 }
 
 async function list(config: Config, context: Context, input: { orgId?: string | null | undefined }) {
@@ -364,7 +162,7 @@ function hostnameFor(config: Config, input: AddDomainInput): string {
   if (hostname === null) {
     throw new DomainsError("INVALID_INPUT", "Enter a domain such as links.example.com, without a path or port.")
   }
-  const problem = customHostnameProblem(hostname, config.subdomains?.zone ?? null)
+  const problem = customHostnameProblem(hostname, config.subdomains?.zone ?? null, config.provider.zone ?? null)
   if (problem) {
     throw new DomainsError("INVALID_INPUT", problem)
   }
@@ -396,40 +194,64 @@ async function checkLimits(config: Config, db: DatabaseAdapter, orgId: string, k
   }
 }
 
-/** Frees a hostname another organization holds when that domain failed, or says it's taken. */
-async function claimHostname(config: Config, writer: Writer, orgId: string, hostname: string, kind: DomainKind) {
-  const existing = await writer.db.findOne<DomainRow>({
+/**
+ * Why a hostname can't be added, or `null`: the organization already added it, or another holds the subdomain. A custom
+ * domain another organization added doesn't stop it, since the one that proves it owns the hostname takes it.
+ */
+async function conflictOf(db: DatabaseAdapter, orgId: string, hostname: string, kind: DomainKind) {
+  const own = await db.findOne({
     model: domainModel,
-    where: [{ field: "hostname", value: hostname }]
+    where: [
+      { field: "orgId", value: orgId },
+      { field: "hostname", value: hostname }
+    ]
   })
-  if (!existing) {
-    return
+  if (own) {
+    return "Your organization already added that domain."
   }
-  if (existing.orgId === orgId) {
-    throw new DomainsError("CONFLICT", "Your organization already added that domain.")
+  if (kind === "subdomain") {
+    const holder = await db.findOne({ model: domainModel, where: [{ field: "claimedHostname", value: hostname }] })
+    if (holder) {
+      return "That subdomain is taken."
+    }
   }
-  if (existing.status !== "failed") {
-    throw new DomainsError(
-      "CONFLICT",
-      kind === "subdomain" ? "That subdomain is taken." : "That domain is already in use."
-    )
-  }
-  await removeAtProvider(config, existing)
-  await writer.db.batch(removal(writer, existing))
+  return null
 }
+
+/** Writes a new domain, answering `CONFLICT` when another add of the hostname got there first. */
+async function insert(db: DatabaseAdapter, row: DomainRow): Promise<DomainRow> {
+  try {
+    const [created] = await db.batch([{ type: "create", model: domainModel, data: row }])
+    return created as DomainRow
+  } catch (caught) {
+    const conflict = await conflictOf(db, row.orgId, row.hostname, row.kind)
+    if (conflict) {
+      throw new DomainsError("CONFLICT", conflict, { cause: caught })
+    }
+    throw caught
+  }
+}
+
+/** A custom domain's ownership token: random, so only someone who can add records for the hostname can prove it. */
+const ownershipToken = () => crypto.randomUUID().replaceAll("-", "")
 
 async function add(config: Config, context: Context, input: AddDomainInput): Promise<Domain> {
   const orgId = await managedOrg(config, context, input)
   const { db, now } = context
   const hostname = hostnameFor(config, input)
   await checkLimits(config, db, orgId, input.kind)
-  await claimHostname(config, context, orgId, hostname, input.kind)
+  const conflict = await conflictOf(db, orgId, hostname, input.kind)
+  if (conflict) {
+    throw new DomainsError("CONFLICT", conflict)
+  }
   const id = crypto.randomUUID()
   const createdBy = context.author?.type === "user" ? context.author.userId : null
   const base = { id, orgId, hostname, kind: input.kind, primaryOf: null, attempts: 0, createdAt: now, createdBy }
   if (input.kind === "subdomain") {
     const row: DomainRow = {
       ...base,
+      claimedHostname: hostname,
+      ownershipToken: null,
       status: "active",
       certificate: "active",
       records: [],
@@ -441,60 +263,34 @@ async function add(config: Config, context: Context, input: AddDomainInput): Pro
       lastCheckedAt: null,
       verifiedAt: now
     }
+    // A create either commits with its events or fails without them.
     context.emit("domain.added", { domain: summary(row) })
-    const [created] = await insert(db, () => db.batch([{ type: "create", model: domainModel, data: row }]), hostname)
-    return toDomain(await claimPrimary(context, created as DomainRow))
+    return toDomain(await claimPrimary(context, await insert(db, row)))
   }
   const provider = config.provider as HostnameProvider
+  const ownership = ownershipRecord(config.ownershipLabel, hostname, ownershipToken())
   const token = crypto.randomUUID()
-  // The row claims the hostname before the provider hears of it, so two organizations can't both register it.
-  const row = await insert(
-    db,
-    () =>
-      db.create<DomainRow>({
-        model: domainModel,
-        data: {
-          ...base,
-          status: "pending",
-          certificate: "pending",
-          records: [],
-          providerId: null,
-          error: null,
-          checkToken: token,
-          checkingSince: now,
-          nextCheckAt: nextCheckAt(0, now),
-          lastCheckedAt: null,
-          verifiedAt: null
-        }
-      }),
-    hostname
-  )
-  let inspection: Inspection
-  try {
-    inspection = await fromProvider(async () => evaluate(config.dns, await provider.create(hostname)))
-  } catch (caught) {
-    await db.deleteMany({ model: domainModel, where: [{ field: "id", value: id }] })
-    throw caught
+  const firstCheck = nextCheckAt(0, now)
+  const row: DomainRow = {
+    ...base,
+    claimedHostname: null,
+    ownershipToken: ownership.value,
+    status: "pending",
+    certificate: "pending",
+    records: unchecked([...provider.routing(hostname), ownership]),
+    providerId: null,
+    error: proveError(ownership.name),
+    checkToken: token,
+    checkingSince: now,
+    nextCheckAt: firstCheck,
+    lastCheckedAt: null,
+    verifiedAt: null
   }
-  context.emit("domain.added", { domain: summary({ ...row, ...inspection }) })
-  const update = checkedFields(context, row, inspection, now, { attempts: 0, checkingSince: now, token })
-  const [updated] = await db.batch([
-    { type: "update", model: domainModel, where: [{ field: "id", value: id }], update }
-  ])
-  return toDomain(await claimPrimary(context, (updated as DomainRow | null) ?? { ...row, ...update }))
-}
-
-/** Runs the write that claims a hostname, answering `CONFLICT` when another claim of it got there first. */
-async function insert<Result>(db: DatabaseAdapter, write: () => Promise<Result>, hostname: string): Promise<Result> {
-  try {
-    return await write()
-  } catch (caught) {
-    const taken = await db.findOne({ model: domainModel, where: [{ field: "hostname", value: hostname }] })
-    if (taken) {
-      throw new DomainsError("CONFLICT", "That domain was just taken.", { cause: caught })
-    }
-    throw caught
-  }
+  // Nothing is checked yet: the ownership record's token is new, so no DNS holds it. The first scheduled check is
+  // written with the domain, so it's never left without one.
+  context.emit("domain.added", { domain: summary(row) })
+  context.emit("check.scheduled", { domainId: id, token, dueAt: firstCheck.toISOString() }, { later: true })
+  return toDomain(await insert(db, row))
 }
 
 async function check(config: Config, context: Context, input: DomainInput): Promise<Domain> {
@@ -510,31 +306,40 @@ async function check(config: Config, context: Context, input: DomainInput): Prom
   if (!config.provider) {
     throw new DomainsError("INVALID_INPUT", "This app doesn't offer custom domains anymore.")
   }
-  const inspection = await inspect(config.provider, config.dns, row)
   // Checking now starts the schedule over, so an older schedule's next event stops.
-  const update = checkedFields(context, row, inspection, now, {
-    attempts: 0,
-    checkingSince: now,
-    token: crypto.randomUUID()
-  })
-  const [updated] = await db.batch([
-    { type: "update", model: domainModel, where: [{ field: "id", value: row.id }], update }
-  ])
-  if (!updated) {
-    throw new DomainsError("NOT_FOUND", "That domain was just removed.")
+  const saved = await runCheck(
+    config,
+    context,
+    row,
+    now,
+    { attempts: 0, checkingSince: now, token: crypto.randomUUID() },
+    []
+  )
+  if (saved) {
+    return toDomain(saved)
   }
-  return toDomain(await claimPrimary(context, updated as DomainRow))
+  return toDomain(await requireDomain(db, orgId, row.id))
 }
 
 async function remove(config: Config, context: Context, input: DomainInput): Promise<{ removed: boolean }> {
   const orgId = await managedOrg(config, context, input)
   const row = await findDomain(context.db, orgId, input.domainId)
-  if (!row) {
-    return { removed: false }
+  return { removed: row !== null && (await removeDomain(config, context, row)) }
+}
+
+async function removeAll(config: Config, context: Context, input: { orgId: string | null }) {
+  const rows = await context.db.findMany<DomainRow>({
+    model: domainModel,
+    where: [{ field: "orgId", value: input.orgId ?? "" }],
+    limit: limits.maxPerOrgCap
+  })
+  let removed = 0
+  for (const row of rows) {
+    if (await removeDomain(config, context, row)) {
+      removed += 1
+    }
   }
-  await removeAtProvider(config, row)
-  const [removed] = await context.db.batch(removal(context, row))
-  return { removed: (removed as number) > 0 }
+  return { removed }
 }
 
 async function setPrimary(
@@ -544,18 +349,16 @@ async function setPrimary(
 ): Promise<{ primary: Domain | null }> {
   const orgId = await managedOrg(config, context, input)
   const { db } = context
-  const current = await db.findOne<DomainRow>({ model: domainModel, where: [{ field: "primaryOf", value: orgId }] })
   const clear: WriteOperation = {
     type: "updateMany",
     model: domainModel,
     where: [{ field: "primaryOf", value: orgId }],
     update: { primaryOf: null }
   }
+  const cleared = [["primary.changed", { orgId: publicOrg(orgId), domain: null }] as const]
   if (input.domainId === null) {
-    if (current) {
-      context.emit("primary.changed", { orgId: publicOrg(orgId), domain: null })
-      await db.batch([clear])
-    }
+    const [count] = await db.batch([clear])
+    await announce(context, (count as number) > 0 ? cleared : [])
     return { primary: null }
   }
   const row = await requireDomain(db, orgId, input.domainId)
@@ -565,17 +368,31 @@ async function setPrimary(
   if (row.status !== "active") {
     throw new DomainsError("CONFLICT", "Only a domain that’s ready can be primary.")
   }
-  const primary = { ...row, primaryOf: orgId }
-  context.emit("primary.changed", { orgId: publicOrg(orgId), domain: summary(primary) })
+  let results: unknown[]
   try {
-    await db.batch([
+    results = await db.batch([
       clear,
-      { type: "update", model: domainModel, where: [{ field: "id", value: row.id }], update: { primaryOf: orgId } }
+      {
+        type: "update",
+        model: domainModel,
+        where: [
+          { field: "id", value: row.id },
+          { field: "status", value: "active" }
+        ],
+        update: { primaryOf: orgId }
+      }
     ])
   } catch (caught) {
     throw new DomainsError("CONFLICT", "The primary domain just changed. Try again.", { cause: caught })
   }
-  return { primary: toDomain(primary) }
+  const [count, updated] = results as [number, DomainRow | null]
+  if (!updated) {
+    // The domain was removed or stopped being ready meanwhile, so the batch only cleared the old primary.
+    await announce(context, count > 0 ? cleared : [])
+    throw new DomainsError("CONFLICT", "That domain just changed. Check its status, then try again.")
+  }
+  await announce(context, [["primary.changed", { orgId: publicOrg(orgId), domain: summary(updated) }]])
+  return { primary: toDomain(updated) }
 }
 
 async function lookup(context: Context, input: { hostname: string }): Promise<HostnameMatch | null> {
@@ -585,7 +402,7 @@ async function lookup(context: Context, input: { hostname: string }): Promise<Ho
   }
   const row = await context.db.findOne<DomainRow>({
     model: domainModel,
-    where: [{ field: "hostname", value: hostname }]
+    where: [{ field: "claimedHostname", value: hostname }]
   })
   if (!row) {
     return null
@@ -610,63 +427,9 @@ async function getPrimary(context: Context, input: { orgId: string | null }): Pr
 }
 
 /**
- * A domain's scheduled check, from its `check.scheduled` event: skipped when a newer schedule replaced it, passed on to
- * the next delivery run until it's due, then run, scheduling the next one while the domain is still pending.
- */
-async function scheduledCheck(config: Config, context: EventContext, data: { domainId: string; token: string }) {
-  const { db } = context
-  const row = await db.findOne<DomainRow>({ model: domainModel, where: [{ field: "id", value: data.domainId }] })
-  if (!row || row.checkToken !== data.token || row.status !== "pending" || !config.provider) {
-    return
-  }
-  const now = new Date()
-  if (row.nextCheckAt && row.nextCheckAt.getTime() > now.getTime()) {
-    context.emit("check.scheduled", data, { later: true })
-    return
-  }
-  let inspection: Inspection
-  try {
-    inspection = await inspect(config.provider, config.dns, row)
-  } catch (caught) {
-    // A provider that can't be reached is retried by the outbox. One that refuses the hostname, such as when it has
-    // to create it again, won't change its mind, so the domain fails with its reason.
-    if (!(caught instanceof DomainsError) || caught.code === "PROVIDER_ERROR") {
-      throw caught
-    }
-    inspection = {
-      providerId: row.providerId,
-      status: "failed",
-      certificate: row.certificate,
-      records: row.records ?? [],
-      error: caught.message
-    }
-  }
-  const update = checkedFields(context, row, inspection, now, {
-    attempts: row.attempts + 1,
-    checkingSince: row.checkingSince ?? row.createdAt,
-    token: data.token
-  })
-  // Saved only while this schedule is still the domain's, so a check that raced "check now" doesn't undo it.
-  const [updated] = await db.batch([
-    {
-      type: "update",
-      model: domainModel,
-      where: [
-        { field: "id", value: row.id },
-        { field: "checkToken", value: data.token }
-      ],
-      update
-    }
-  ])
-  if (updated) {
-    await claimPrimary(context, updated as DomainRow)
-  }
-}
-
-/**
- * Subdomains and custom domains for an app's organizations. Each domain's DNS records are shown and checked, pending
- * custom domains are checked again on a schedule that backs off, and `lookup` says which organization a hostname
- * belongs to.
+ * Subdomains and custom domains for an app's organizations. A custom domain is taken by the organization that proves it
+ * owns it with a TXT record, its records are shown and checked, it's checked again on a schedule that backs off while
+ * pending and daily once active, and `lookup` says which organization a hostname belongs to.
  */
 export function domains<const Options extends DomainsOptions>(options: Options) {
   const config = resolve(options)
@@ -677,8 +440,7 @@ export function domains<const Options extends DomainsOptions>(options: Options) 
     // Scheduled checks are domains' own events, delivered by later `app.deliverEvents()` runs.
     on: {
       domains: {
-        "check.scheduled": (event, context) =>
-          scheduledCheck(config, context, event.data as { domainId: string; token: string })
+        "check.scheduled": (event, context) => scheduledCheck(config, context, event.data as ScheduledCheck)
       }
     },
     options,
@@ -709,9 +471,14 @@ export function domains<const Options extends DomainsOptions>(options: Options) 
         handler: (context): Promise<HostnameMatch | null> => lookup(context, context.input)
       }),
       getPrimary: defineAction({
-        input: inputs.getPrimary,
+        input: inputs.org,
         serverOnly: true,
         handler: (context): Promise<Domain | null> => getPrimary(context, context.input)
+      }),
+      removeAll: defineAction({
+        input: inputs.org,
+        serverOnly: true,
+        handler: (context): Promise<{ removed: number }> => removeAll(config, context, context.input)
       })
     }
   })

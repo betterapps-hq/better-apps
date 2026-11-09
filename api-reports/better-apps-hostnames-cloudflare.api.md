@@ -17,6 +17,7 @@ export interface CloudflareHostnamesOptions {
     // (undocumented)
     client?: Cloudflare | undefined;
     target: string;
+    zone: string;
     zoneId: string;
 }
 

@@ -16,7 +16,12 @@ export interface CloudflareHostnamesOptions {
   client?: Cloudflare | undefined
   /** The id of the SaaS zone, the one Cloudflare for SaaS is enabled on. */
   zoneId: string
-  /** The CNAME target customers point their hostname at, such as `customers.yourapp.com`. */
+  /**
+   * The SaaS zone's name, such as `yourapp.com`. Organizations can't add it or hostnames in it, which are the app's
+   * own.
+   */
+  zone: string
+  /** The CNAME target customers point their hostname at, a record in the zone such as `customers.yourapp.com`. */
   target: string
   /**
    * How Cloudflare validates certificates. `http`, the default, needs only the CNAME record. `txt` adds a TXT record
@@ -65,13 +70,16 @@ function certificate(hostname: CustomHostname): ProviderHostname["certificate"] 
   return failedCertificates.has(value) ? "failed" : "pending"
 }
 
-/** Turns Cloudflare's custom hostname into what domains stores: the CNAME first, then any TXT records still needed. */
-function toProviderHostname(hostname: CustomHostname, target: string): ProviderHostname {
-  const records: DnsRecord[] = [{ type: "CNAME", name: hostname.hostname, value: target, purpose: "routing" }]
+/**
+ * Turns Cloudflare's custom hostname into what domains stores, with the TXT records still needed: Cloudflare's own,
+ * which verifies the hostname before traffic moves, and the certificate's.
+ */
+function toProviderHostname(hostname: CustomHostname): ProviderHostname {
+  const records: DnsRecord[] = []
   const hostnameStatus = status(hostname)
   const ownership = hostname.ownership_verification
   if (hostnameStatus !== "active" && ownership?.name && ownership.value) {
-    records.push({ type: "TXT", name: ownership.name, value: ownership.value, purpose: "ownership" })
+    records.push({ type: "TXT", name: ownership.name, value: ownership.value, purpose: "prevalidation" })
   }
   const certificateStatus = certificate(hostname)
   if (certificateStatus !== "active") {
@@ -137,10 +145,14 @@ const isNotFound = (error: unknown) =>
  * once; see the domains spec.
  */
 export function cloudflareHostnames(options: CloudflareHostnamesOptions): HostnameProvider {
+  const { zoneId, zone, target } = options
+  if (target !== zone && !target.endsWith(`.${zone}`)) {
+    throw new Error(
+      `The target "${target}" isn't in the zone "${zone}". Use a record in it, such as customers.${zone}.`
+    )
+  }
   const client = options.client ?? new Cloudflare({ apiToken: options.apiToken })
-  const { zoneId, target } = options
   const ssl = { method: options.certificateValidation ?? "http", type: "dv" } as const
-  const map = (hostname: CustomHostname) => toProviderHostname(hostname, target)
 
   const call = async <Result>(run: () => Promise<Result>): Promise<Result> => {
     try {
@@ -156,15 +168,17 @@ export function cloudflareHostnames(options: CloudflareHostnamesOptions): Hostna
   }
 
   return {
+    zone,
+    routing: (hostname) => [{ type: "CNAME", name: hostname, value: target, purpose: "routing" }],
     async create(hostname) {
       try {
-        return map(await client.customHostnames.create({ zone_id: zoneId, hostname, ssl }))
+        return toProviderHostname(await client.customHostnames.create({ zone_id: zoneId, hostname, ssl }))
       } catch (caught) {
         // Cloudflare already has it, such as from an add that crashed before saving its id: use that one.
         if (caught instanceof APIError && hasCode(caught, errorCodes.duplicate)) {
           const existing = await call(() => find(hostname))
           if (existing) {
-            return map(existing)
+            return toProviderHostname(existing)
           }
         }
         throw translate(caught)
@@ -172,7 +186,7 @@ export function cloudflareHostnames(options: CloudflareHostnamesOptions): Hostna
     },
     async get(id) {
       try {
-        return map(await client.customHostnames.get(id, { zone_id: zoneId }))
+        return toProviderHostname(await client.customHostnames.get(id, { zone_id: zoneId }))
       } catch (caught) {
         if (isNotFound(caught)) {
           return null
@@ -182,7 +196,7 @@ export function cloudflareHostnames(options: CloudflareHostnamesOptions): Hostna
     },
     async refresh(id) {
       // Editing a hostname with the same `ssl` restarts validation of the hostname and its certificate.
-      return call(async () => map(await client.customHostnames.edit(id, { zone_id: zoneId, ssl })))
+      return call(async () => toProviderHostname(await client.customHostnames.edit(id, { zone_id: zoneId, ssl })))
     },
     async remove(id) {
       try {

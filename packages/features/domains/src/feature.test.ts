@@ -1,10 +1,40 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
-import { setup } from "../test/app.js"
-import { expiredError } from "./checks.js"
-import { domains, HostnameProviderError, localHostnames } from "./index.js"
+import { setup, type UserId } from "../test/app.js"
+import { evictedError, expiredError, lookupError } from "./checks.js"
+import {
+  checkWindowMs,
+  domains,
+  HostnameProviderError,
+  localHostnames,
+  recheckMs,
+  type Domain,
+  type HostnameProvider
+} from "./index.js"
 
 const start = new Date(Date.UTC(2026, 10, 9, 9, 0))
 const minutes = (count: number) => new Date(start.getTime() + count * 60_000)
+const later = (from: Date, ms: number) => new Date(from.getTime() + ms)
+
+/** Moves the clock on, past the cooldown between checks of one domain. */
+const advance = (seconds = 10) => vi.setSystemTime(new Date(Date.now() + seconds * 1000))
+
+type App = ReturnType<typeof setup>
+
+const proveError = (hostname: string) => `Add the TXT record for _verify.${hostname} to prove you own the domain.`
+const cnameError = (hostname: string) => `Add a CNAME record for ${hostname} that points to customers.yourapp.com.`
+const waiting = "The records are in place. Waiting for the provider to verify the domain."
+
+/** Adds a custom domain, adds its records, and checks it until it's ready. */
+async function addReady(t: App, userId: UserId, hostname: string): Promise<Domain> {
+  const added = await t.api.add({ kind: "custom", hostname }, t.as(userId))
+  t.prove(added)
+  t.route(hostname)
+  await expect(t.api.check({ domainId: added.id }, t.as(userId))).resolves.toMatchObject({ error: waiting })
+  advance()
+  const ready = await t.api.check({ domainId: added.id }, t.as(userId))
+  expect(ready.status).toBe("active")
+  return ready
+}
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] })
@@ -20,11 +50,14 @@ describe("options", () => {
     expect(() => domains({})).toThrow("Set up `subdomains`, `custom` or both")
   })
 
-  it("refuse a zone that isn't a hostname, and limits out of range", () => {
+  it("refuse a zone that isn't a hostname, limits out of range and an ownership label that isn't one", () => {
     expect(() => domains({ subdomains: { zone: "Your App.com" } })).toThrow("isn't a zone")
     expect(() => domains({ subdomains: { zone: "yourapp.com", minLength: 0 } })).toThrow("subdomains.minLength")
     expect(() => domains({ subdomains: { zone: "yourapp.com" }, maxPerOrg: 101 })).toThrow("maxPerOrg")
     expect(() => domains({ subdomains: { zone: "localhost" } })).not.toThrow()
+    expect(() => domains({ custom: { provider: localHostnames(), ownershipLabel: "verify" } })).toThrow(
+      "isn't a label for the ownership record"
+    )
   })
 
   it("subscribe to their own scheduled checks", () => {
@@ -61,6 +94,16 @@ describe("subdomains", () => {
     })
   })
 
+  it("go to one organization when two add the same label at once", async () => {
+    const { api, as } = setup()
+    const results = await Promise.allSettled([
+      api.add({ kind: "subdomain", label: "acme" }, as("ada")),
+      api.add({ kind: "subdomain", label: "acme" }, as("gus"))
+    ])
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1)
+    expect(results.find((result) => result.status === "rejected")).toMatchObject({ reason: { code: "CONFLICT" } })
+  })
+
   it("follow the label rules", async () => {
     const { api, as } = setup()
     const add = (label: string) => api.add({ kind: "subdomain", label }, as("ada"))
@@ -95,8 +138,7 @@ describe("subdomains", () => {
   })
 
   it("aren't offered without a zone", async () => {
-    const provider = localHostnames()
-    const { api, as } = setup({ subdomains: undefined, custom: { provider }, dns: provider.dns })
+    const { api, as } = setup({ subdomains: undefined })
     await expect(api.add({ kind: "subdomain", label: "acme" }, as("ada"))).rejects.toMatchObject({
       code: "INVALID_INPUT"
     })
@@ -112,31 +154,40 @@ describe("subdomains", () => {
 })
 
 describe("custom domains", () => {
-  it("start pending, with the records to add", async () => {
-    const { api, as, provider, scheduled } = setup({}, { verifyAfter: Infinity })
+  it("start pending, asking the organization to prove it owns them first", async () => {
+    const { api, as, provider, scheduled } = setup()
     const domain = await api.add({ kind: "custom", hostname: "HTTPS://Links.Acme.com/" }, as("ada"))
-    const [registered] = [...provider.hostnames.values()]
     expect(domain).toMatchObject({
       hostname: "links.acme.com",
       kind: "custom",
       status: "pending",
       certificate: "pending",
       primary: false,
-      lastCheckedAt: start,
+      lastCheckedAt: null,
       nextCheckAt: minutes(1),
-      error: "Add a CNAME record for links.acme.com that points to customers.yourapp.com."
+      error: proveError("links.acme.com")
     })
     expect(domain.records).toEqual([
-      { type: "CNAME", name: "links.acme.com", value: "customers.yourapp.com", purpose: "routing", found: false },
+      { type: "CNAME", name: "links.acme.com", value: "customers.yourapp.com", purpose: "routing", found: null },
       {
         type: "TXT",
-        name: "_cf-custom-hostname.links.acme.com",
-        value: `local-token-${registered?.id}`,
+        name: "_verify.links.acme.com",
+        value: expect.stringMatching(/^[0-9a-f]{32}$/),
         purpose: "ownership",
-        found: false
+        found: null
       }
     ])
-    expect(scheduled()).toHaveLength(1)
+    // Nothing reaches the provider until the organization proves it owns the hostname.
+    expect(provider.hostnames.size).toBe(0)
+    expect(scheduled()).toEqual([{ domainId: domain.id, token: expect.any(String), dueAt: minutes(1).toISOString() }])
+    await expect(api.lookup({ hostname: "links.acme.com" })).resolves.toBeNull()
+  })
+
+  it("name the ownership record after the app", async () => {
+    const provider = localHostnames({ target: "customers.yourapp.com" })
+    const { api, as } = setup({ custom: { provider, ownershipLabel: "_acme-verify" }, dns: provider.dns })
+    const domain = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))
+    expect(domain.records[1]?.name).toBe("_acme-verify.links.acme.com")
   })
 
   it("follow the hostname rules", async () => {
@@ -151,6 +202,14 @@ describe("custom domains", () => {
     await expect(add("yourapp.com")).rejects.toMatchObject({ code: "INVALID_INPUT" })
   })
 
+  it("can't be in the provider's own zone", async () => {
+    const { api, as } = setup({ subdomains: undefined })
+    const add = (hostname: string) => api.add({ kind: "custom", hostname }, as("ada"))
+    await expect(add("customers.yourapp.com")).rejects.toMatchObject({ message: "That's this app's own domain." })
+    await expect(add("yourapp.com")).rejects.toMatchObject({ message: "That's this app's own domain." })
+    await expect(add("links.acme.com")).resolves.toMatchObject({ status: "pending" })
+  })
+
   it("aren't offered without a provider", async () => {
     const { api, as } = setup({ custom: undefined })
     await expect(api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))).rejects.toMatchObject({
@@ -158,14 +217,15 @@ describe("custom domains", () => {
     })
   })
 
-  it("can't be added twice", async () => {
+  it("can be added by several organizations, but once by each", async () => {
     const { api, as } = setup()
     await api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))
     await expect(api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))).rejects.toMatchObject({
-      code: "CONFLICT"
+      code: "CONFLICT",
+      message: "Your organization already added that domain."
     })
-    await expect(api.add({ kind: "custom", hostname: "links.acme.com" }, as("gus"))).rejects.toMatchObject({
-      code: "CONFLICT"
+    await expect(api.add({ kind: "custom", hostname: "links.acme.com" }, as("gus"))).resolves.toMatchObject({
+      status: "pending"
     })
   })
 
@@ -178,189 +238,368 @@ describe("custom domains", () => {
     })
     await expect(api.add({ kind: "custom", hostname: "b.globex.com" }, as("gus"))).resolves.toBeTruthy()
   })
-
-  it("are removed again when the provider fails to add them", async () => {
-    const { api, as, provider, post } = setup()
-    provider.failNext("create", new HostnameProviderError("UNAVAILABLE", "Cloudflare is down."))
-    await expect(api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))).rejects.toMatchObject({
-      code: "PROVIDER_ERROR"
-    })
-    expect((await api.list(undefined, as("ada"))).domains).toEqual([])
-    provider.failNext("create", new HostnameProviderError("INVALID_HOSTNAME", "That's the zone."))
-    const response = await post("add", { kind: "custom", hostname: "links.acme.com" }, "ada")
-    expect(response.status).toBe(400)
-    expect(await response.json()).toMatchObject({ error: { code: "INVALID_INPUT", message: "That's the zone." } })
-    provider.failNext("create", new HostnameProviderError("QUOTA_EXCEEDED", "Out of hostnames."))
-    await expect(api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))).rejects.toMatchObject({
-      code: "LIMIT_EXCEEDED"
-    })
-    provider.failNext("create", new HostnameProviderError("UNAVAILABLE", "Down."))
-    const unavailable = await post("add", { kind: "custom", hostname: "links.acme.com" }, "ada")
-    expect(unavailable.status).toBe(502)
-    provider.failNext("create", new Error("Bad token"))
-    const failed = await post("add", { kind: "custom", hostname: "links.acme.com" }, "ada")
-    expect(failed.status).toBe(500)
-  })
-
-  it("take over a hostname another organization failed to verify", async () => {
-    const { api, as, provider, events } = setup()
-    const globex = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("gus"))
-    provider.block("links.acme.com")
-    vi.setSystemTime(minutes(1))
-    await expect(api.check({ domainId: globex.id }, as("gus"))).resolves.toMatchObject({ status: "failed" })
-    const acme = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))
-    expect(acme.status).toBe("pending")
-    expect(events("domain.removed").map((event) => event.data)).toEqual([
-      { domain: expect.objectContaining({ id: globex.id, orgId: "globex" }) }
-    ])
-    expect((await api.list(undefined, as("gus"))).domains).toEqual([])
-    expect([...provider.hostnames.values()].map((entry) => entry.hostname)).toEqual(["links.acme.com"])
-  })
 })
 
-describe("check", () => {
-  it("verifies a domain whose records are in place, and makes it primary", async () => {
-    const { api, as, events, scheduled } = setup()
-    const added = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))
-    vi.setSystemTime(minutes(1))
-    const checked = await api.check({ domainId: added.id }, as("ada"))
-    expect(checked).toMatchObject({
+describe("ownership", () => {
+  it("gives the hostname to the organization that proves it owns it, and registers it then", async () => {
+    const t = setup()
+    const { api, as, provider } = t
+    const squatter = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("gus"))
+    const owner = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))
+    t.prove(owner)
+    const proven = await api.check({ domainId: owner.id }, as("ada"))
+    expect(proven).toMatchObject({ status: "pending", error: cnameError("links.acme.com") })
+    expect(proven.records).toEqual([
+      { type: "CNAME", name: "links.acme.com", value: "customers.yourapp.com", purpose: "routing", found: false },
+      {
+        type: "TXT",
+        name: "_local-hostname.links.acme.com",
+        value: "token-links.acme.com",
+        purpose: "prevalidation",
+        found: false
+      }
+    ])
+    expect(provider.hostnames.size).toBe(1)
+    await expect(api.lookup({ hostname: "links.acme.com" })).resolves.toMatchObject({ orgId: "acme", verified: false })
+    // The other organization finds no record of its own, so it gets nothing.
+    await expect(api.check({ domainId: squatter.id }, as("gus"))).resolves.toMatchObject({
+      status: "pending",
+      error: proveError("links.acme.com")
+    })
+    await expect(api.lookup({ hostname: "links.acme.com" })).resolves.toMatchObject({ orgId: "acme" })
+  })
+
+  it("becomes ready once traffic reaches the provider", async () => {
+    const t = setup()
+    const domain = await addReady(t, "ada", "links.acme.com")
+    expect(domain).toMatchObject({
       status: "active",
       certificate: "active",
       primary: true,
       error: null,
-      verifiedAt: minutes(1),
-      nextCheckAt: null
+      verifiedAt: later(start, 10_000),
+      nextCheckAt: later(start, 10_000 + recheckMs)
     })
-    expect(checked.records.every((record) => record.found)).toBe(true)
-    expect(events().map((event) => event.type)).toEqual([
+    expect(domain.records.map((record) => [record.purpose, record.found])).toEqual([
+      ["routing", true],
+      ["prevalidation", false]
+    ])
+    expect(t.events().map((event) => event.type)).toEqual([
       "domain.added",
       "domain.status.changed",
       "domain.verified",
       "primary.changed"
     ])
-    expect(events("domain.status.changed")[0]?.data).toMatchObject({ from: "pending", domain: { status: "active" } })
-    expect(scheduled()).toHaveLength(1)
+    expect(t.events("domain.status.changed")[0]?.data).toMatchObject({ from: "pending", domain: { status: "active" } })
+    await expect(t.api.lookup({ hostname: "links.acme.com" })).resolves.toMatchObject({ verified: true })
   })
 
+  it("isn't proven by a CNAME another organization left behind", async () => {
+    const t = setup()
+    const { api, as, provider } = t
+    const first = await addReady(t, "ada", "links.acme.com")
+    await api.remove({ domainId: first.id }, as("ada"))
+    provider.dns.unpublish("_verify.links.acme.com", "TXT")
+    const taker = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("gus"))
+    const checked = await api.check({ domainId: taker.id }, as("gus"))
+    expect(checked).toMatchObject({ status: "pending", error: proveError("links.acme.com") })
+    expect(checked.records.map((record) => record.found)).toEqual([true, false])
+    expect(provider.hostnames.size).toBe(0)
+    await expect(api.lookup({ hostname: "links.acme.com" })).resolves.toBeNull()
+  })
+
+  it("passes to an organization that proves it owns a hostname its holder no longer does", async () => {
+    const t = setup()
+    const { api, as, provider, events } = t
+    const old = await addReady(t, "ada", "links.acme.com")
+    const [registered] = [...provider.hostnames.keys()]
+    // The domain changed hands, and Acme's record went with it.
+    provider.dns.unpublish("_verify.links.acme.com", "TXT")
+    const taker = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("gus"))
+    t.prove(taker)
+    await expect(api.check({ domainId: taker.id }, as("gus"))).resolves.toMatchObject({
+      status: "active",
+      primary: true
+    })
+    expect([...provider.hostnames.keys()]).toEqual([registered])
+    const [acme] = (await api.list(undefined, as("ada"))).domains
+    expect(acme).toMatchObject({ status: "failed", primary: false, error: evictedError, nextCheckAt: null })
+    expect(acme?.records.map((record) => record.purpose)).toEqual(["routing", "ownership"])
+    await expect(api.lookup({ hostname: "links.acme.com" })).resolves.toMatchObject({
+      orgId: "globex",
+      verified: true
+    })
+    await expect(api.getPrimary({ orgId: "acme" })).resolves.toBeNull()
+    expect(events("domain.status.changed").map((event) => event.data)).toContainEqual({
+      domain: expect.objectContaining({ id: old.id, status: "failed" }),
+      from: "active"
+    })
+    expect(events("primary.changed").map((event) => event.data)).toContainEqual({ orgId: "acme", domain: null })
+    // The provider's hostname is the new holder's, so removing the old domain leaves it.
+    await api.remove({ domainId: old.id }, as("ada"))
+    expect(provider.hostnames.size).toBe(1)
+  })
+
+  it("stays with its holder while the holder's own record is in place", async () => {
+    const t = setup()
+    const { api, as } = t
+    await addReady(t, "ada", "links.acme.com")
+    const rival = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("gus"))
+    t.prove(rival)
+    const checked = await api.check({ domainId: rival.id }, as("gus"))
+    expect(checked).toMatchObject({
+      status: "pending",
+      error:
+        "Another organization's TXT record for _verify.links.acme.com is still in place. Remove it, then check again."
+    })
+    expect(checked.records.at(-1)?.found).toBe(true)
+    await expect(api.lookup({ hostname: "links.acme.com" })).resolves.toMatchObject({ orgId: "acme", verified: true })
+  })
+
+  it("can't be proven while the DNS can't be read", async () => {
+    const t = setup()
+    const added = await t.api.add({ kind: "custom", hostname: "links.acme.com" }, t.as("ada"))
+    t.prove(added)
+    t.provider.dns.resolve = async () => {
+      throw new Error("DNS is down")
+    }
+    const checked = await t.api.check({ domainId: added.id }, t.as("ada"))
+    expect(checked).toMatchObject({ status: "pending", error: lookupError })
+    expect(checked.records.map((record) => record.found)).toEqual([null, null])
+  })
+})
+
+describe("check", () => {
   it("can't run again within 10 seconds", async () => {
-    const { api, as } = setup({}, { verifyAfter: Infinity })
+    const { api, as } = setup()
     const added = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))
+    await api.check({ domainId: added.id }, as("ada"))
     await expect(api.check({ domainId: added.id }, as("ada"))).rejects.toMatchObject({ code: "RATE_LIMITED" })
-    vi.setSystemTime(new Date(start.getTime() + 10_000))
+    advance()
     await expect(api.check({ domainId: added.id }, as("ada"))).resolves.toMatchObject({ status: "pending" })
   })
 
   it("finds a routing record that flattened DNS answers with addresses", async () => {
-    const { api, as, provider } = setup({}, { verifyAfter: Infinity })
-    const added = await api.add({ kind: "custom", hostname: "acme.com" }, as("ada"))
-    provider.dns.publish("acme.com", "A", "192.0.2.10")
-    provider.dns.publish("customers.yourapp.com", "A", "192.0.2.10")
-    vi.setSystemTime(minutes(1))
-    const checked = await api.check({ domainId: added.id }, as("ada"))
+    const t = setup()
+    const added = await t.api.add({ kind: "custom", hostname: "acme.com" }, t.as("ada"))
+    t.prove(added)
+    t.provider.dns.publish("acme.com", "A", "192.0.2.10")
+    t.provider.dns.publish("customers.yourapp.com", "A", "192.0.2.10")
+    const checked = await t.api.check({ domainId: added.id }, t.as("ada"))
+    expect(checked).toMatchObject({ error: waiting })
     expect(checked.records[0]?.found).toBe(true)
-    expect(checked.error).toBe("The CNAME record is in place. Waiting for the provider to verify the domain.")
+    advance()
+    await expect(t.api.check({ domainId: added.id }, t.as("ada"))).resolves.toMatchObject({ status: "active" })
+  })
+
+  it("trusts the provider serving a domain where DNS hides its CNAME", async () => {
+    const t = setup()
+    const added = await t.api.add({ kind: "custom", hostname: "links.acme.com" }, t.as("ada"))
+    t.prove(added)
+    const proven = await t.api.check({ domainId: added.id }, t.as("ada"))
+    // The customer's DNS proxies the hostname, so lookups see its own addresses instead of the CNAME, and the
+    // provider verified it through its own record.
+    const prevalidation = t.recordOf(proven, "prevalidation")
+    t.provider.dns.publish(prevalidation.name, "TXT", prevalidation.value)
+    advance()
+    const ready = await t.api.check({ domainId: added.id }, t.as("ada"))
+    expect(ready).toMatchObject({ status: "active", error: null })
+    expect(ready.records[0]?.found).toBe(false)
+  })
+
+  it("checks routing records a provider asks for by address", async () => {
+    const local = localHostnames({ target: "customers.yourapp.com" })
+    const provider: HostnameProvider = {
+      ...local,
+      routing: (hostname) => [{ type: "A", name: hostname, value: "192.0.2.1", purpose: "routing" }]
+    }
+    const { api, as } = setup({ custom: { provider }, dns: local.dns })
+    const added = await api.add({ kind: "custom", hostname: "acme.com" }, as("ada"))
+    expect(added.records[0]).toMatchObject({ type: "A", name: "acme.com", value: "192.0.2.1" })
+    local.dns.publish("_verify.acme.com", "TXT", added.records[1]?.value as string)
+    await expect(api.check({ domainId: added.id }, as("ada"))).resolves.toMatchObject({
+      error: "Add an A record for acme.com with the address 192.0.2.1."
+    })
+    local.dns.publish("acme.com", "A", "192.0.2.1")
+    advance()
+    const routed = await api.check({ domainId: added.id }, as("ada"))
+    expect(routed).toMatchObject({ error: waiting })
+    expect(routed.records[0]?.found).toBe(true)
   })
 
   it("says when a CNAME points elsewhere, and when DNS can't be read", async () => {
-    const { api, as, provider } = setup({}, { verifyAfter: Infinity })
-    const added = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))
-    provider.dns.publish("links.acme.com", "CNAME", "other.example.net.")
-    vi.setSystemTime(minutes(1))
-    expect((await api.check({ domainId: added.id }, as("ada"))).records[0]?.found).toBe(false)
-    provider.dns.resolve = async () => {
+    const t = setup()
+    const added = await t.api.add({ kind: "custom", hostname: "links.acme.com" }, t.as("ada"))
+    t.prove(added)
+    t.provider.dns.publish("links.acme.com", "CNAME", "other.example.net.")
+    const checked = await t.api.check({ domainId: added.id }, t.as("ada"))
+    expect(checked).toMatchObject({ error: cnameError("links.acme.com") })
+    expect(checked.records[0]?.found).toBe(false)
+    t.provider.dns.resolve = async () => {
       throw new Error("DNS is down")
     }
-    vi.setSystemTime(minutes(2))
-    const checked = await api.check({ domainId: added.id }, as("ada"))
-    expect(checked.records[0]?.found).toBeNull()
-    expect(checked.error).toBe("We couldn't look up this domain's DNS records. We'll try again soon.")
+    advance()
+    const failed = await t.api.check({ domainId: added.id }, t.as("ada"))
+    expect(failed.records[0]?.found).toBeNull()
+    expect(failed.error).toBe(lookupError)
   })
 
-  it("waits for the certificate once the hostname is verified", async () => {
-    const { api, as, provider } = setup({}, { verifyAfter: Infinity })
-    const added = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))
-    provider.activate("links.acme.com")
-    const entry = [...provider.hostnames.values()][0]
-    ;(provider.hostnames as Map<string, typeof entry>).set(entry?.id as string, {
-      ...(entry as NonNullable<typeof entry>),
-      certificate: "pending"
+  it("waits for the certificate, and asks for it again when it failed", async () => {
+    const t = setup()
+    const added = await t.api.add({ kind: "custom", hostname: "links.acme.com" }, t.as("ada"))
+    t.prove(added)
+    t.route("links.acme.com")
+    await t.api.check({ domainId: added.id }, t.as("ada"))
+    t.provider.holdCertificate("links.acme.com", "pending")
+    advance()
+    await expect(t.api.check({ domainId: added.id }, t.as("ada"))).resolves.toMatchObject({
+      status: "pending",
+      certificate: "pending",
+      error: "The domain is verified. Its certificate is being issued, which can take a few minutes."
     })
-    vi.setSystemTime(minutes(1))
-    expect((await api.check({ domainId: added.id }, as("ada"))).error).toBe(
-      "The domain is verified. Its certificate is being issued, which can take a few minutes."
-    )
+    t.provider.holdCertificate("links.acme.com", "failed")
+    advance()
+    await expect(t.api.check({ domainId: added.id }, t.as("ada"))).resolves.toMatchObject({
+      status: "pending",
+      error: waiting
+    })
   })
 
   it("restarts validation of a hostname that moved", async () => {
-    const { api, as, provider } = setup()
-    const added = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))
-    vi.setSystemTime(minutes(1))
-    await api.check({ domainId: added.id }, as("ada"))
-    provider.move("links.acme.com")
-    vi.setSystemTime(minutes(2))
-    // The move is read, validation restarts and, on the local provider, the next read finds it ready again.
-    const moved = await api.check({ domainId: added.id }, as("ada"))
-    expect(moved).toMatchObject({ status: "pending", primary: true, nextCheckAt: minutes(3) })
-    vi.setSystemTime(minutes(3))
-    await expect(api.check({ domainId: added.id }, as("ada"))).resolves.toMatchObject({ status: "active" })
+    const t = setup()
+    const added = await addReady(t, "ada", "links.acme.com")
+    t.provider.dns.unpublish("links.acme.com", "CNAME")
+    advance()
+    const moved = await t.api.check({ domainId: added.id }, t.as("ada"))
+    expect(moved).toMatchObject({
+      status: "pending",
+      primary: true,
+      error: cnameError("links.acme.com"),
+      nextCheckAt: later(start, 20_000 + 60_000)
+    })
+    t.route("links.acme.com")
+    advance()
+    await expect(t.api.check({ domainId: added.id }, t.as("ada"))).resolves.toMatchObject({ status: "active" })
   })
 
   it("registers a hostname again when the provider lost it", async () => {
-    const { api, as, provider } = setup({}, { verifyAfter: Infinity })
-    const added = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))
-    const [first] = [...provider.hostnames.keys()]
-    await provider.remove(first as string)
-    vi.setSystemTime(minutes(1))
-    await api.check({ domainId: added.id }, as("ada"))
-    expect([...provider.hostnames.values()].map((entry) => entry.hostname)).toEqual(["links.acme.com"])
+    const t = setup()
+    const added = await addReady(t, "ada", "links.acme.com")
+    const [first] = [...t.provider.hostnames.keys()]
+    await t.provider.remove(first as string)
+    advance()
+    await expect(t.api.check({ domainId: added.id }, t.as("ada"))).resolves.toMatchObject({ error: waiting })
+    expect([...t.provider.hostnames.values()].map((entry) => entry.hostname)).toEqual(["links.acme.com"])
   })
 
-  it("fails a blocked hostname", async () => {
-    const { api, as, provider, scheduled, app } = setup({}, { verifyAfter: Infinity })
-    const added = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))
-    provider.block("links.acme.com")
-    vi.setSystemTime(minutes(1))
-    const checked = await api.check({ domainId: added.id }, as("ada"))
-    expect(checked).toMatchObject({ status: "failed", error: "The provider blocked this hostname.", nextCheckAt: null })
-    await app.deliverEvents()
-    expect(scheduled()).toEqual([])
+  it("keeps the hostname the provider already has, as after a check that stopped before saving its id", async () => {
+    const t = setup()
+    const added = await t.api.add({ kind: "custom", hostname: "links.acme.com" }, t.as("ada"))
+    t.prove(added)
+    const early = await t.provider.create("links.acme.com")
+    await t.api.check({ domainId: added.id }, t.as("ada"))
+    expect([...t.provider.hostnames.keys()]).toEqual([early.id])
   })
 
-  it("passes on a provider that can't be reached", async () => {
-    const { api, as, provider } = setup()
-    const added = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))
-    provider.failNext("get", new HostnameProviderError("UNAVAILABLE", "Down."))
-    vi.setSystemTime(minutes(1))
-    await expect(api.check({ domainId: added.id }, as("ada"))).rejects.toMatchObject({ code: "PROVIDER_ERROR" })
+  it("fails a blocked hostname, and its schedule stops", async () => {
+    const t = setup()
+    const added = await t.api.add({ kind: "custom", hostname: "links.acme.com" }, t.as("ada"))
+    t.prove(added)
+    await t.api.check({ domainId: added.id }, t.as("ada"))
+    t.provider.block("links.acme.com")
+    advance()
+    await expect(t.api.check({ domainId: added.id }, t.as("ada"))).resolves.toMatchObject({
+      status: "failed",
+      error: "The provider blocked this hostname.",
+      nextCheckAt: null
+    })
+    vi.setSystemTime(minutes(2))
+    await t.app.deliverEvents()
+    expect(t.scheduled()).toEqual([])
+  })
+
+  it("fails a domain the provider refuses to register again", async () => {
+    const t = setup()
+    const added = await t.api.add({ kind: "custom", hostname: "links.acme.com" }, t.as("ada"))
+    t.prove(added)
+    await t.api.check({ domainId: added.id }, t.as("ada"))
+    await t.provider.remove([...t.provider.hostnames.keys()][0] as string)
+    t.provider.failNext("create", new HostnameProviderError("INVALID_HOSTNAME", "Not allowed."))
+    advance()
+    const response = await t.post("check", { domainId: added.id }, "ada")
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ status: "failed", error: "Not allowed." })
+  })
+
+  it("answers 502 when the provider can't be reached, and 500 for the app's own errors", async () => {
+    const t = setup()
+    const added = await t.api.add({ kind: "custom", hostname: "links.acme.com" }, t.as("ada"))
+    t.prove(added)
+    await t.api.check({ domainId: added.id }, t.as("ada"))
+    advance()
+    t.provider.failNext("get", new HostnameProviderError("UNAVAILABLE", "Down."))
+    expect((await t.post("check", { domainId: added.id }, "ada")).status).toBe(502)
+    t.provider.failNext("get", new Error("Bad token"))
+    expect((await t.post("check", { domainId: added.id }, "ada")).status).toBe(500)
   })
 })
 
 describe("scheduled rechecks", () => {
-  it("back off while a domain is pending, and stop once it's active", async () => {
-    const { api, as, app, provider, scheduled } = setup({}, { verifyAfter: Infinity })
+  it("back off while a domain is pending, and check it daily once it's ready", async () => {
+    const t = setup()
+    const { api, as, app, scheduled } = t
     const added = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))
-    const list = async () => (await api.list(undefined, as("ada"))).domains[0]
+    const domain = async () => (await api.list(undefined, as("ada"))).domains[0]
     // Not due yet: the event waits for the next run.
     await app.deliverEvents()
-    expect(await list()).toMatchObject({ lastCheckedAt: start, nextCheckAt: minutes(1) })
-    expect(scheduled()).toHaveLength(1)
+    expect(await domain()).toMatchObject({ lastCheckedAt: null, nextCheckAt: minutes(1) })
     vi.setSystemTime(minutes(1))
     await app.deliverEvents()
-    expect(await list()).toMatchObject({ lastCheckedAt: minutes(1), nextCheckAt: minutes(3) })
+    expect(await domain()).toMatchObject({ lastCheckedAt: minutes(1), nextCheckAt: minutes(3) })
     vi.setSystemTime(minutes(3))
     await app.deliverEvents()
-    expect(await list()).toMatchObject({ lastCheckedAt: minutes(3), nextCheckAt: minutes(8) })
-    provider.activate("links.acme.com")
+    expect(await domain()).toMatchObject({ lastCheckedAt: minutes(3), nextCheckAt: minutes(8) })
+    t.prove(added)
+    t.route("links.acme.com")
     vi.setSystemTime(minutes(8))
     await app.deliverEvents()
-    expect(await list()).toMatchObject({ status: "active", primary: true, nextCheckAt: null })
-    expect(scheduled()).toEqual([])
-    void added
+    expect(await domain()).toMatchObject({ status: "pending", error: waiting, nextCheckAt: minutes(18) })
+    vi.setSystemTime(minutes(18))
+    await app.deliverEvents()
+    const daily = later(minutes(18), recheckMs)
+    expect(await domain()).toMatchObject({ status: "active", primary: true, nextCheckAt: daily })
+    expect(scheduled()).toEqual([{ domainId: added.id, token: expect.any(String), dueAt: daily.toISOString() }])
+    vi.setSystemTime(daily)
+    await app.deliverEvents()
+    expect(await domain()).toMatchObject({
+      status: "active",
+      lastCheckedAt: daily,
+      nextCheckAt: later(daily, recheckMs)
+    })
+    expect(scheduled()).toHaveLength(1)
+  })
+
+  it("fail a ready domain that stopped pointing at the app for 7 days", async () => {
+    const t = setup()
+    const { api, as, app, provider } = t
+    await addReady(t, "ada", "links.acme.com")
+    const domain = async () => (await api.list(undefined, as("ada"))).domains[0]
+    provider.dns.unpublish("links.acme.com", "CNAME")
+    const recheck = later(new Date(Date.now()), recheckMs)
+    vi.setSystemTime(recheck)
+    await app.deliverEvents()
+    expect(await domain()).toMatchObject({ status: "pending", primary: true, nextCheckAt: later(recheck, 60_000) })
+    await expect(api.lookup({ hostname: "links.acme.com" })).resolves.toMatchObject({ verified: false })
+    vi.setSystemTime(later(recheck, checkWindowMs))
+    await app.deliverEvents()
+    expect(await domain()).toMatchObject({ status: "failed", error: expiredError, nextCheckAt: null })
+    // It stops holding a hostname at the provider, and keeps its hostname in the app.
+    expect(provider.hostnames.size).toBe(0)
+    await expect(api.lookup({ hostname: "links.acme.com" })).resolves.toMatchObject({ orgId: "acme", verified: false })
   })
 
   it("fail a domain still pending after 7 days", async () => {
-    const { api, as, app, scheduled } = setup({}, { verifyAfter: Infinity })
+    const { api, as, app, scheduled } = setup()
     await api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))
     vi.setSystemTime(minutes(7 * 24 * 60))
     await app.deliverEvents()
@@ -370,9 +609,8 @@ describe("scheduled rechecks", () => {
   })
 
   it("stop the older schedule when someone checks now", async () => {
-    const { api, as, app, scheduled } = setup({}, { verifyAfter: Infinity })
+    const { api, as, app, scheduled } = setup()
     const added = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))
-    vi.setSystemTime(minutes(1))
     await api.check({ domainId: added.id }, as("ada"))
     expect(scheduled()).toHaveLength(2)
     vi.setSystemTime(minutes(2))
@@ -381,25 +619,33 @@ describe("scheduled rechecks", () => {
   })
 
   it("leave a check the provider couldn't make in the outbox", async () => {
-    const { api, as, app, provider } = setup({}, { verifyAfter: Infinity })
-    await api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))
-    provider.failNext("get", new HostnameProviderError("UNAVAILABLE", "Down."))
+    const t = setup()
+    const added = await t.api.add({ kind: "custom", hostname: "links.acme.com" }, t.as("ada"))
+    t.prove(added)
+    await t.api.check({ domainId: added.id }, t.as("ada"))
+    t.provider.failNext("get", new HostnameProviderError("UNAVAILABLE", "Down."))
     vi.setSystemTime(minutes(1))
-    expect(await app.deliverEvents()).toMatchObject({ failed: 1 })
+    expect(await t.app.deliverEvents()).toMatchObject({ failed: 1 })
   })
 
-  it("fail a domain the provider refuses to register again", async () => {
-    const { api, as, app, provider } = setup({}, { verifyAfter: Infinity })
-    await api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))
-    await provider.remove([...provider.hostnames.keys()][0] as string)
-    provider.failNext("create", new HostnameProviderError("INVALID_HOSTNAME", "Not allowed."))
+  it("pass on a check delivered again after its domain was checked", async () => {
+    const { api, as, app, database, scheduled } = setup()
+    const added = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))
     vi.setSystemTime(minutes(1))
     await app.deliverEvents()
-    expect((await api.list(undefined, as("ada"))).domains[0]).toMatchObject({ status: "failed", error: "Not allowed." })
+    // As though the run stopped after saving the check but before the outbox heard: the event is still the old one.
+    const [event] = scheduled()
+    database.sqlite
+      .prepare("UPDATE betterAppsEvent SET data = ? WHERE type = 'check.scheduled'")
+      .run(JSON.stringify({ ...event, dueAt: minutes(1).toISOString() }))
+    vi.setSystemTime(minutes(2))
+    await app.deliverEvents()
+    expect((await api.list(undefined, as("ada"))).domains[0]).toMatchObject({ lastCheckedAt: minutes(1) })
+    expect(scheduled()).toEqual([{ domainId: added.id, token: event?.token, dueAt: minutes(3).toISOString() }])
   })
 
   it("stop for a domain that was removed", async () => {
-    const { api, as, app, scheduled } = setup({}, { verifyAfter: Infinity })
+    const { api, as, app, scheduled } = setup()
     const added = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))
     await api.remove({ domainId: added.id }, as("ada"))
     vi.setSystemTime(minutes(1))
@@ -410,35 +656,66 @@ describe("scheduled rechecks", () => {
 
 describe("remove", () => {
   it("removes the domain from the provider, and its primary place", async () => {
-    const { api, as, provider, events } = setup()
-    const added = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))
-    vi.setSystemTime(minutes(1))
-    await api.check({ domainId: added.id }, as("ada"))
-    await expect(api.remove({ domainId: added.id }, as("ada"))).resolves.toEqual({ removed: true })
-    expect(provider.hostnames.size).toBe(0)
-    expect(events("primary.changed").at(-1)?.data).toEqual({ orgId: "acme", domain: null })
-    await expect(api.getPrimary({ orgId: "acme" })).resolves.toBeNull()
-    await expect(api.remove({ domainId: added.id }, as("ada"))).resolves.toEqual({ removed: false })
+    const t = setup()
+    const added = await addReady(t, "ada", "links.acme.com")
+    await expect(t.api.remove({ domainId: added.id }, t.as("ada"))).resolves.toEqual({ removed: true })
+    expect(t.provider.hostnames.size).toBe(0)
+    expect(t.events("domain.removed")).toHaveLength(1)
+    expect(t.events("primary.changed").at(-1)?.data).toEqual({ orgId: "acme", domain: null })
+    await expect(t.api.getPrimary({ orgId: "acme" })).resolves.toBeNull()
+    await expect(t.api.remove({ domainId: added.id }, t.as("ada"))).resolves.toEqual({ removed: false })
+    expect(t.events("domain.removed")).toHaveLength(1)
+  })
+
+  it("tells only one of two removals at once that it removed the domain", async () => {
+    const { api, as, events } = setup()
+    const added = await api.add({ kind: "subdomain", label: "acme" }, as("ada"))
+    const results = await Promise.all([
+      api.remove({ domainId: added.id }, as("ada")),
+      api.remove({ domainId: added.id }, as("ada"))
+    ])
+    expect(results.map((result) => result.removed).sort()).toEqual([false, true])
+    expect(events("domain.removed")).toHaveLength(1)
+    expect(events("primary.changed").map((event) => event.data)).toEqual([
+      expect.objectContaining({ orgId: "acme" }),
+      { orgId: "acme", domain: null }
+    ])
   })
 
   it("keeps the domain when the provider fails", async () => {
-    const { api, as, provider } = setup()
-    const added = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))
-    provider.failNext("remove", new HostnameProviderError("UNAVAILABLE", "Down."))
-    await expect(api.remove({ domainId: added.id }, as("ada"))).rejects.toMatchObject({ code: "PROVIDER_ERROR" })
-    expect((await api.list(undefined, as("ada"))).domains).toHaveLength(1)
+    const t = setup()
+    const added = await addReady(t, "ada", "links.acme.com")
+    t.provider.failNext("remove", new HostnameProviderError("UNAVAILABLE", "Down."))
+    await expect(t.api.remove({ domainId: added.id }, t.as("ada"))).rejects.toMatchObject({ code: "PROVIDER_ERROR" })
+    expect((await t.api.list(undefined, t.as("ada"))).domains).toHaveLength(1)
+  })
+
+  it("removes every domain of an organization, from the provider too", async () => {
+    const t = setup()
+    const { api, as, provider, events } = t
+    await api.add({ kind: "subdomain", label: "acme" }, as("ada"))
+    await addReady(t, "ada", "links.acme.com")
+    await api.add({ kind: "custom", hostname: "links.globex.com" }, as("gus"))
+    await expect(api.removeAll({ orgId: "acme" })).resolves.toEqual({ removed: 2 })
+    expect((await api.list(undefined, as("ada"))).domains).toEqual([])
+    expect((await api.list(undefined, as("gus"))).domains).toHaveLength(1)
+    expect(provider.hostnames.size).toBe(0)
+    await expect(api.getPrimary({ orgId: "acme" })).resolves.toBeNull()
+    expect(events("domain.removed")).toHaveLength(2)
   })
 })
 
 describe("setPrimary", () => {
   it("moves the primary place to another active domain, or clears it", async () => {
-    const { api, as, events } = setup()
+    const t = setup()
+    const { api, as, events } = t
     const subdomain = await api.add({ kind: "subdomain", label: "acme" }, as("ada"))
     vi.setSystemTime(minutes(0.5))
-    const custom = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))
-    await expect(api.setPrimary({ domainId: custom.id }, as("ada"))).rejects.toMatchObject({ code: "CONFLICT" })
-    vi.setSystemTime(minutes(1))
-    expect(await api.check({ domainId: custom.id }, as("ada"))).toMatchObject({ status: "active", primary: false })
+    const pending = await api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))
+    await expect(api.setPrimary({ domainId: pending.id }, as("ada"))).rejects.toMatchObject({ code: "CONFLICT" })
+    await api.remove({ domainId: pending.id }, as("ada"))
+    const custom = await addReady(t, "ada", "links.acme.com")
+    expect(custom.primary).toBe(false)
     await expect(api.setPrimary({ domainId: custom.id }, as("ada"))).resolves.toMatchObject({
       primary: { id: custom.id, primary: true }
     })
@@ -464,10 +741,29 @@ describe("setPrimary", () => {
     const domain = await api.add({ kind: "subdomain", label: "globex" }, as("gus"))
     await expect(api.setPrimary({ domainId: domain.id }, as("ada"))).rejects.toMatchObject({ code: "NOT_FOUND" })
   })
+
+  it("goes to one domain when two become ready at once", async () => {
+    const t = setup()
+    const { api, as } = t
+    const added = await Promise.all(
+      ["a.acme.com", "b.acme.com"].map((hostname) => api.add({ kind: "custom", hostname }, as("ada")))
+    )
+    for (const domain of added) {
+      t.prove(domain)
+      t.route(domain.hostname)
+      await api.check({ domainId: domain.id }, as("ada"))
+    }
+    advance()
+    await Promise.all(added.map((domain) => api.check({ domainId: domain.id }, as("ada"))))
+    const { domains: listed } = await api.list(undefined, as("ada"))
+    expect(listed.map((domain) => domain.status)).toEqual(["active", "active"])
+    expect(listed.filter((domain) => domain.primary)).toHaveLength(1)
+    expect(t.events("primary.changed")).toHaveLength(1)
+  })
 })
 
 describe("lookup", () => {
-  it("finds a hostname's organization, ignoring case and port", async () => {
+  it("finds the organization holding a hostname, ignoring case and port", async () => {
     const { api, as } = setup()
     const domain = await api.add({ kind: "subdomain", label: "acme" }, as("ada"))
     await expect(api.lookup({ hostname: "ACME.yourapp.com:443" })).resolves.toEqual({
@@ -483,19 +779,22 @@ describe("lookup", () => {
     await expect(api.lookup({ hostname: "not a host" })).resolves.toBeNull()
   })
 
-  it("reports pending custom domains as unverified", async () => {
-    const { api, as } = setup()
-    await api.add({ kind: "custom", hostname: "links.acme.com" }, as("ada"))
-    await expect(api.lookup({ hostname: "links.acme.com." })).resolves.toMatchObject({
+  it("reports a held custom domain that isn't ready as unverified", async () => {
+    const t = setup()
+    const added = await t.api.add({ kind: "custom", hostname: "links.acme.com" }, t.as("ada"))
+    t.prove(added)
+    await t.api.check({ domainId: added.id }, t.as("ada"))
+    await expect(t.api.lookup({ hostname: "links.acme.com." })).resolves.toMatchObject({
       verified: false,
       status: "pending"
     })
   })
 
-  it("isn't reachable over HTTP", async () => {
+  it("isn't reachable over HTTP, with getPrimary and removeAll", async () => {
     const { post } = setup()
     expect((await post("lookup", { hostname: "acme.yourapp.com" }, "ada")).status).toBe(404)
     expect((await post("getPrimary", { orgId: "acme" }, "ada")).status).toBe(404)
+    expect((await post("removeAll", { orgId: "acme" }, "ada")).status).toBe(404)
   })
 })
 

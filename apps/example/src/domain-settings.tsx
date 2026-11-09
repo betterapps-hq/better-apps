@@ -186,7 +186,7 @@ function AddDomain({ subdomainZone, customDomains }: AddDomainProps) {
         <CardTitle>
           <h2>Add a domain</h2>
         </CardTitle>
-        <CardDescription>A subdomain is ready at once. A domain you own needs a DNS record first.</CardDescription>
+        <CardDescription>A subdomain is ready at once. A domain you own needs DNS records first.</CardDescription>
       </CardHeader>
       <CardContent>
         <form className="stack" onSubmit={handleSubmit}>
@@ -249,7 +249,7 @@ function AddDomain({ subdomainZone, customDomains }: AddDomainProps) {
             <FieldDescription id={`${inputId}-hint`}>
               {kind === "subdomain"
                 ? "Use letters, numbers and hyphens."
-                : "You’ll add a DNS record where you manage the domain, and we’ll check for it."}
+                : "You’ll add DNS records where you manage the domain, and we’ll check for them."}
             </FieldDescription>
             {error && <FieldError id={`${inputId}-error`}>{error}</FieldError>}
           </Field>
@@ -384,7 +384,8 @@ const foundLabels = { true: "Found", false: "Not found yet", null: "Not checked"
 
 const purposeLabels = {
   routing: "Points the domain at us. Required.",
-  ownership: "Proves you own the domain. Optional once the CNAME record is in place.",
+  ownership: "Proves you own the domain. Required.",
+  prevalidation: "Lets us verify the domain before it points at us. Optional.",
   certificate: "Lets us issue the domain’s certificate."
 } as const
 
