@@ -13,6 +13,8 @@ export interface DomainHostsApi {
   lookup(input: { hostname: string }): Promise<HostnameMatch | null>
   /** An organization's primary domain. */
   getPrimary(input: { orgId: string | null }): Promise<Domain | null>
+  /** An organization's domains, in the order they were added. */
+  list(input: { orgId: string | null }): Promise<{ domains: readonly Domain[] }>
 }
 
 /** What `domainHosts` takes. */
@@ -45,7 +47,10 @@ export interface DomainHosts {
   hosts: {
     /** Whose links a host opens. The hostname is normalized as `lookup` does, so a port or trailing dot is fine. */
     resolve: (args: { hostname: string }) => Promise<HostOwner>
-    /** The origin of an organization's primary domain once it's `active`, or `null` for the app's own. */
+    /**
+     * The origin of an organization's primary domain once it's `active`, or else of its first `active` domain, or `null`
+     * for the app's own.
+     */
     origin: (args: { orgId: string | null }) => Promise<string | null>
   }
   /** Connects `app.api.domains` once the app is created, since features are created before it. */
@@ -55,7 +60,7 @@ export interface DomainHosts {
 /**
  * Hosts for a feature that serves organizations' domains, such as short links. The app's own hostnames are the app's,
  * an organization's `active` domain is the organization's, and every other host, such as a pending domain, is nobody's.
- * An organization's links are shared on its primary domain once it's `active`.
+ * An organization's links are shared on its primary domain once it's `active`, or else on its first `active` domain.
  *
  * Features are created before the app, so the app calls `connect(app.api.domains)` once it exists.
  */
@@ -130,12 +135,17 @@ export function domainHosts(options: DomainHostsOptions): DomainHosts {
         return found.orgId === null ? "app" : { orgId: found.orgId }
       },
       origin: async ({ orgId }) => {
+        // Without an active primary domain, such as after it's removed, another active domain still opens the
+        // organization's links, so they're shared there rather than nowhere.
         const primary = await api().getPrimary({ orgId })
-        if (primary?.status !== "active") {
+        const ready =
+          primary?.status === "active"
+            ? primary
+            : (await api().list({ orgId })).domains.find((domain) => domain.status === "active")
+        if (!ready) {
           return null
         }
-        const hostname =
-          suffix !== null && primary.kind === "custom" ? `${primary.hostname}.${suffix}` : primary.hostname
+        const hostname = suffix !== null && ready.kind === "custom" ? `${ready.hostname}.${suffix}` : ready.hostname
         return `${url.protocol}//${hostname}${port}`
       }
     },

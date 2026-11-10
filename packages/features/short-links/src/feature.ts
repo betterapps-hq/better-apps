@@ -16,7 +16,15 @@ import {
 } from "better-apps"
 import { z } from "zod"
 import { codeLimits, generateCode, isValidCode, normalizeCode } from "./codes.js"
-import { grantCodes, grantCookie, isUnder, reachesHost, type CookieSettings } from "./cookie.js"
+import {
+  grantCookie,
+  grantEntries,
+  grantKey,
+  isUnder,
+  reachesHost,
+  type CookieSettings,
+  type GrantEntry
+} from "./cookie.js"
 import { dayLimits, maxRangeDays, rangeOf, slotOf } from "./days.js"
 import { ShortLinksError } from "./errors.js"
 import { shortLinkEvents } from "./events.js"
@@ -138,7 +146,9 @@ function resolve(options: ShortLinksOptions): Config {
     }
     // An action can be called from an organization's domain, which doesn't open everyone's links.
     if (baseUrl === undefined) {
-      throw new Error("Short links with `hosts` need `baseUrl`, the app's own origin, which opens every link.")
+      throw new Error(
+        "Short links with `hosts` need `baseUrl`, the app's own origin, where links with the app's codes open."
+      )
     }
     hosts = { ...options.hosts, baseUrl }
   }
@@ -193,12 +203,17 @@ function originOf(value: string): string {
   return new URL(parsed.data).origin
 }
 
-/** Where links' short URLs go within one call. */
+/** Where links' short URLs go within one call, and which scope a new link is made in. */
 interface Prefixer {
-  /** The prefix of a link's short URL, such as `https://links.acme.com/s`. */
-  of: (row: LinkRow) => Promise<string>
+  /** The prefix of a link's short URL, such as `https://links.acme.com/s`, or `null` while no host opens it. */
+  of: (row: LinkRow) => Promise<string | null>
   /** Whether the cookie a link that grants access sets, on the host its short URL uses, reaches the record. */
   reaches: (row: LinkRow) => Promise<boolean>
+  /**
+   * The scope a new link is made in: its organization's, for an organization's own link shared on the organization's
+   * domain, and the app's, `""`, for every other.
+   */
+  scopeOf: (row: LinkRow) => Promise<string>
 }
 
 /** Loads each key once, sharing the promise with later asks for the same key. */
@@ -215,23 +230,24 @@ function loadOnce<T>(): (key: string, load: () => T | Promise<T>) => Promise<T> 
 }
 
 /**
- * Where each link's short URL goes in a call: on `hosts.origin`'s host for the link's organization, or the app's own. A
- * person's own link in an organization stays on the app's host, the only one that opens it. A link that grants access
- * also stays there when the cookie it would set on the organization's host can't reach the record. Each organization's
- * origin, and each record's `url`, is asked once per call.
+ * Where each link's short URL goes in a call. A link in an organization's scope is on the host `hosts.origin` gives the
+ * organization, and has none while it gives none, or while the cookie a link that grants access sets wouldn't reach the
+ * record from there. A link made outside any organization is on `hosts.origin`'s host for
+ * links outside any, when the cookie a link that grants access sets reaches the record from there. Every other link is
+ * on the app's own host. Each organization's origin, and each record's `url`, is asked once per call.
  */
 function prefixer(config: Config, request: Request | null): Prefixer {
   const own = prefixOf(config, request)
   const origin = config.hosts?.origin
   const origins = loadOnce<string | null>()
   const urls = loadOnce<string>()
-  /** The prefix on the link's organization's host, or `null` without one, or for a person's own link made in one. */
-  const sharedOf = async (row: LinkRow): Promise<string | null> => {
-    if (!origin || (row.orgId !== "" && row.owner !== ownerKey("org", row.orgId))) {
+  /** The prefix on the host `hosts.origin` gives an organization, or links outside any for `""`, or `null`. */
+  const originPrefix = async (orgId: string): Promise<string | null> => {
+    if (!origin) {
       return null
     }
-    const found = await origins(row.orgId, async () => {
-      const value = await origin({ orgId: row.orgId === "" ? null : row.orgId })
+    const found = await origins(orgId, async () => {
+      const value = await origin({ orgId: orgId === "" ? null : orgId })
       return value === null ? null : originOf(value)
     })
     return found === null ? null : `${found}${config.path}`
@@ -253,11 +269,41 @@ function prefixer(config: Config, request: Request | null): Prefixer {
     )
     return reachesHost(link, new URL(path, link).href, config.cookie.domain)
   }
-  const of = async (row: LinkRow): Promise<string> => {
-    const shared = await sharedOf(row)
-    return shared !== null && (await reachesFrom(row, shared)) ? shared : own
+  /** `hosts.origin`'s prefix for the link's organization, or outside any, when the link's cookie reaches from there. */
+  const sharedOf = async (row: LinkRow): Promise<string | null> => {
+    const shared = await originPrefix(row.orgId)
+    return shared !== null && (await reachesFrom(row, shared)) ? shared : null
   }
-  return { of, reaches: async (row) => reachesFrom(row, await of(row)) }
+  const of = async (row: LinkRow): Promise<string | null> => {
+    if (row.scope !== "") {
+      // No other host opens the link, so it has no short URL where its cookie wouldn't reach the record, such as after
+      // `origin` moves from a subdomain under the cookie's domain to one of the organization's own domains.
+      return sharedOf(row)
+    }
+    return (row.orgId === "" ? await sharedOf(row) : null) ?? own
+  }
+  const isOrgs = (row: LinkRow) => row.orgId !== "" && row.owner === ownerKey("org", row.orgId)
+  const resolved = loadOnce<boolean>()
+  /**
+   * Whether `hosts.resolve` gives the organization the host of `prefix`, so a link made in its scope opens there. An
+   * origin that names one of the app's hosts, say, keeps the organization's links in the app's scope.
+   */
+  const opensOn = async (orgId: string, prefix: string): Promise<boolean> =>
+    resolved(orgId, async () => {
+      const host = await config.hosts?.resolve({ hostname: new URL(prefix).hostname.replace(/\.$/, ""), request })
+      return typeof host === "object" && host !== null && host.orgId === orgId
+    })
+  return {
+    of,
+    reaches: async (row) => {
+      const prefix = await of(row)
+      return prefix === null || reachesFrom(row, prefix)
+    },
+    scopeOf: async (row) => {
+      const shared = config.hosts && isOrgs(row) ? await sharedOf(row) : null
+      return shared !== null && (await opensOn(row.orgId, shared)) ? row.orgId : ""
+    }
+  }
 }
 
 /** A row as actions return it, with its short URL from `prefix`. */
@@ -315,20 +361,24 @@ async function manages(config: Config, context: Context, row: LinkRow): Promise<
   )
 }
 
-const byCode = (code: string): Where[] => [{ field: "code", value: normalizeCode(code) }]
+/** A code in a scope, which is one link at most. */
+const inScope = (code: string, scope: string): Where[] => [
+  { field: "code", value: normalizeCode(code) },
+  { field: "scope", value: scope }
+]
 
-/** A link the caller manages, by its code, or the error that says why not. */
-async function requireLink(config: Config, context: Context, code: string): Promise<LinkRow> {
-  return requireRow(config, context, byCode(code))
-}
+/**
+ * An organization's own link with a code of the app's, such as one made before its domain was ready. Its domains open it
+ * for a code their scope doesn't have.
+ */
+const orgsOwnInApp = (code: string, orgId: string): Where[] => [
+  ...inScope(code, ""),
+  { field: "owner", value: ownerKey("org", orgId) }
+]
 
 /** A link the caller manages, by its id, or the error that says why not. */
-async function requireLinkById(config: Config, context: Context, id: string): Promise<LinkRow> {
-  return requireRow(config, context, [{ field: "id", value: id }])
-}
-
-async function requireRow(config: Config, context: Context, where: Where[]): Promise<LinkRow> {
-  const row = await context.db.findOne<LinkRow>({ model: linkModel, where })
+async function requireLink(config: Config, context: Context, id: string): Promise<LinkRow> {
+  const row = await context.db.findOne<LinkRow>({ model: linkModel, where: [{ field: "id", value: id }] })
   if (row && (await manages(config, context, row))) {
     return row
   }
@@ -451,7 +501,7 @@ const inputs = {
     grantsView: z.boolean().optional(),
     expiresAt: date.optional()
   }),
-  code: z.object({ code }),
+  id: z.object({ id: z.string().min(1).max(255) }),
   list: z.object({
     subjectType: subjectType.optional(),
     subjectId: subjectId.optional(),
@@ -461,7 +511,7 @@ const inputs = {
     limit: z.number().int().min(1).max(limits.maxLinksPerPage).optional()
   }),
   update: z.object({
-    code,
+    id: z.string().min(1).max(255),
     url: url.optional(),
     grantsView: z.literal(false).optional(),
     enabled: z.boolean().optional(),
@@ -541,6 +591,7 @@ async function create(config: Config, context: Context): Promise<ShortLink> {
       : `${chosen}-${generateCode(codeLimits.granting)}`
   }
   const fields: Omit<LinkRow, "id" | "code"> = {
+    scope: "",
     owner,
     orgId,
     createdBy: actor.userId,
@@ -553,33 +604,45 @@ async function create(config: Config, context: Context): Promise<ShortLink> {
     createdAt: context.now,
     updatedAt: context.now
   }
+  // An organization's own link, shared on its domain, has a code of the organization's. Every other has one of the app's.
+  fields.scope = await prefixes.scopeOf({ id: "", code: "", ...fields })
   await checkReach(prefixes, fields)
-  // A code with a random part that's taken is replaced, up to three times. A taken code is told apart from other failed
-  // writes by reading it back.
+  // A code with a random part is tried up to three times, with a new one each time it's taken. A taken code is told apart from other failed
+  // writes by reading it back, in the link's scope only, so nothing is told about other scopes' codes.
   for (let attempt = 1; ; attempt += 1) {
     const row: LinkRow = { id: crypto.randomUUID(), code: codeFor(), ...fields }
-    const link = await present(prefixes, row)
-    context.emit("link.created", { link })
-    try {
-      await context.db.batch([{ type: "create", model: linkModel, data: row }])
-      return link
-    } catch (error) {
-      if (!(await context.db.findOne({ model: linkModel, where: byCode(row.code), select: ["id"] }))) {
-        throw error
+    let cause: unknown
+    // On the organization's domains, its own older link with the app's code opens for a code their scope doesn't have,
+    // so a new link there can't take that code and hide it. This reads only the organization's own links.
+    const hides =
+      row.scope !== "" &&
+      (await context.db.findOne({ model: linkModel, where: orgsOwnInApp(row.code, row.scope), select: ["id"] })) !==
+        null
+    if (!hides) {
+      const link = await present(prefixes, row)
+      context.emit("link.created", { link })
+      try {
+        await context.db.batch([{ type: "create", model: linkModel, data: row }])
+        return link
+      } catch (error) {
+        if (!(await context.db.findOne({ model: linkModel, where: inScope(row.code, row.scope), select: ["id"] }))) {
+          throw error
+        }
+        cause = error
       }
-      if (!random) {
-        throw new ShortLinksError("CONFLICT", "That code is taken. Try another.", { cause: error })
-      }
-      if (attempt >= 3) {
-        throw new ShortLinksError("CONFLICT", "No free code was found. Try again.", { cause: error })
-      }
+    }
+    if (!random) {
+      throw new ShortLinksError("CONFLICT", "That code is taken. Try another.", { cause })
+    }
+    if (attempt >= 3) {
+      throw new ShortLinksError("CONFLICT", "No free code was found. Try again.", { cause })
     }
   }
 }
 
 async function get(config: Config, context: Context): Promise<ShortLink> {
-  const { code: wanted } = context.input as { code: string }
-  return present(prefixer(config, context.request), await requireLink(config, context, wanted))
+  const { id } = context.input as { id: string }
+  return present(prefixer(config, context.request), await requireLink(config, context, id))
 }
 
 /** The sort keys of each order, the first ones first. */
@@ -688,7 +751,7 @@ async function list(config: Config, context: Context): Promise<LinkPage> {
 
 async function update(config: Config, context: Context): Promise<ShortLink> {
   const input = context.input as Parsed<UpdateLinkInput>
-  const row = await requireLink(config, context, input.code)
+  const row = await requireLink(config, context, input.id)
   const changes: Partial<LinkRow> = { updatedAt: context.now }
   if (input.url !== undefined) {
     if (row.url === null) {
@@ -730,8 +793,8 @@ async function update(config: Config, context: Context): Promise<ShortLink> {
 }
 
 async function remove(config: Config, context: Context): Promise<{ removed: boolean }> {
-  const { code: wanted } = context.input as { code: string }
-  const row = await requireLink(config, context, wanted)
+  const { id } = context.input as { id: string }
+  const row = await requireLink(config, context, id)
   context.emit("link.removed", { link: await present(prefixer(config, context.request), row) })
   const [removed] = await context.db.batch([
     { type: "deleteMany", model: linkModel, where: [{ field: "id", value: row.id }] }
@@ -766,11 +829,11 @@ async function removeOwner(_config: Config, context: Context): Promise<{ removed
 }
 
 /**
- * The organization whose links a request's host opens, `""` for the app's own host, which opens every link, or `null`
- * for a host that opens none. Every host opens every link without `hosts`. The host is the request URL's, without a
- * trailing dot, so `acme.com.` is `acme.com`.
+ * The scope whose links a request's host opens: an organization's for its domain, `""` for the app's own host, or
+ * `null` for a host that opens none. Every host opens the app's scope without `hosts`. The host is the request URL's,
+ * without a trailing dot, so `acme.com.` is `acme.com`.
  */
-async function scopeOf(config: Config, request: Request, url: URL): Promise<string | null> {
+async function hostScope(config: Config, request: Request, url: URL): Promise<string | null> {
   if (!config.hosts) {
     return ""
   }
@@ -782,21 +845,36 @@ async function scopeOf(config: Config, request: Request, url: URL): Promise<stri
 }
 
 /**
- * Opens a link: one read by its code, then a temporary redirect, so a link turned off or changed takes effect at once.
- * On an organization's domain, only its own links open. A link that grants access adds its code to the visitor's
- * cookie. The click is written after the response.
+ * The link a host opens for a code: the one in the host's scope. A domain whose organization's codes don't have it also
+ * opens the organization's own link with the app's code, such as one made before the domain was ready, so a domain
+ * appearing never breaks a link, even one that sends visitors on to the record's new host. That second read happens
+ * only on a miss, and finds nothing of another organization's or a member's.
+ */
+async function read(db: RouteContext["db"], code: string, scope: string): Promise<LinkRow | null> {
+  const row = await db.findOne<LinkRow>({ model: linkModel, where: inScope(code, scope) })
+  if (row || scope === "") {
+    return row
+  }
+  return db.findOne<LinkRow>({ model: linkModel, where: orgsOwnInApp(code, scope) })
+}
+
+/**
+ * Opens a link: one read of its code in the host's scope, and on an organization's domain a second only when the first
+ * misses, then a temporary redirect, so a link turned off or changed takes effect at once. An organization's domain
+ * opens the links in its scope, and its own with the app's codes, and the app's own host the ones in the app's scope. A
+ * link that grants access adds its code and scope to the visitor's cookie. The click is written after the response.
  */
 async function open(config: Config, context: RouteContext): Promise<Response> {
   const { request, params, db, now } = context
   const wanted = params.code ?? ""
-  // A host that opens no links, and another organization's link, answer as a missing link does, so a domain tells
-  // nothing about the codes it doesn't open.
-  const scope = await scopeOf(config, request, context.url)
+  // A host that opens no links, and a code another scope has, answer as a missing link does, so a host tells nothing
+  // about the codes it doesn't open.
+  const scope = await hostScope(config, request, context.url)
   if (scope === null) {
     return config.notFound({ request, code: wanted })
   }
-  const row = isValidCode(wanted) ? await db.findOne<LinkRow>({ model: linkModel, where: byCode(wanted) }) : null
-  if (!row || !isOpen(row, now) || (scope !== "" && row.owner !== ownerKey("org", scope))) {
+  const row = isValidCode(wanted) ? await read(db, wanted, scope) : null
+  if (!row || !isOpen(row, now)) {
     return config.notFound({ request, code: wanted })
   }
   let location = row.url
@@ -815,23 +893,49 @@ async function open(config: Config, context: RouteContext): Promise<Response> {
     "cache-control": "private, no-store"
   })
   if (row.grantsView) {
-    if (config.hosts && !reachesHost(request.url, location, config.cookie.domain)) {
-      // The cookie set on this host wouldn't reach the record, so the link opens where it does: on the app's own host,
-      // which opens every link, or else on the record's host. Neither is this host. The click counts there.
-      const app = `${config.hosts.baseUrl}${config.path}`
-      const code = encodeURIComponent(row.code)
-      const there = reachesHost(app, location, config.cookie.domain)
-        ? `${app}/${code}`
-        : new URL(`${config.path}/${code}`, location).href
+    const there =
+      config.hosts && !reachesHost(request.url, location, config.cookie.domain)
+        ? await onward(config, config.hosts, row, location, request)
+        : null
+    if (there !== null) {
       return new Response(null, { status: 302, headers: { location: there, "cache-control": "private, no-store" } })
     }
-    headers.set("set-cookie", grantCookie(request, config.cookie, row.code))
+    headers.set("set-cookie", grantCookie(request, config.cookie, { code: row.code, scope: row.scope }))
   }
   if (request.method === "GET") {
     const clickedAt = new Date()
     context.waitUntil(db.batch(clickWrites(row.id, [clickedAt], clickedAt)))
   }
   return new Response(null, { status: 302, headers })
+}
+
+/**
+ * Where a link that grants access opens instead, when the cookie set on the request's host wouldn't reach the record:
+ * where it does, which is never this host, and the click counts there. A link in the app's scope opens on the app's own
+ * host, or else on the record's host. A link in an organization's scope opens on the host `hosts.origin` gives the
+ * organization, when the cookie reaches the record from there, and `null` says it opens where it is.
+ */
+async function onward(
+  config: Config,
+  hosts: NonNullable<Config["hosts"]>,
+  row: LinkRow,
+  location: string,
+  request: Request
+): Promise<string | null> {
+  const code = encodeURIComponent(row.code)
+  if (row.scope === "") {
+    const app = `${hosts.baseUrl}${config.path}`
+    return reachesHost(app, location, config.cookie.domain)
+      ? `${app}/${code}`
+      : new URL(`${config.path}/${code}`, location).href
+  }
+  const value = hosts.origin ? await hosts.origin({ orgId: row.scope }) : null
+  if (value === null) {
+    return null
+  }
+  const there = `${originOf(value)}${config.path}/${code}`
+  const elsewhere = new URL(there).host !== new URL(request.url).host
+  return elsewhere && reachesHost(there, location, config.cookie.domain) ? there : null
 }
 
 /**
@@ -890,7 +994,7 @@ function clickWrites(linkId: string, times: readonly Date[], lastClickedAt: Date
 /** A link's clicks on each day of a range, in the range's time zone, in one query. */
 async function clicksByDay(config: Config, context: Context): Promise<ClicksByDay> {
   const input = context.input as ClicksByDayInput
-  const row = await requireLinkById(config, context, input.id)
+  const row = await requireLink(config, context, input.id)
   const range = rangeOf(input)
   // Each 15-minute slot falls on one day in every zone, so the slots' counts add up to each day's.
   const groups = await context.db.countGroups({
@@ -957,7 +1061,7 @@ async function clickTotals(config: Config, context: Context): Promise<ClickTotal
  */
 async function recordClicks(config: Config, context: Context): Promise<ShortLink> {
   const input = context.input as Omit<RecordClicksInput, "at"> & { at: Date[] }
-  const row = await requireLinkById(config, context, input.id)
+  const row = await requireLink(config, context, input.id)
   const times = input.at.map((time) => time.getTime())
   const latest = Math.max(...times)
   if (latest > context.now.getTime()) {
@@ -1028,28 +1132,29 @@ function chunks<Item>(items: readonly Item[], size = 90): Item[][] {
 function grantsFor(config: Config): SubjectGrants {
   return {
     async canViewMany(checks: readonly GrantCheck[], { reportError }: GrantArgs, context: SubjectContext) {
-      const codesOf = checks.map(({ subjectType, request }) =>
-        grantsOn(config, subjectType) ? grantCodes(request, config.cookie.name) : []
+      const entriesOf = checks.map(({ subjectType, request }) =>
+        grantsOn(config, subjectType) ? grantEntries(request, config.cookie.name) : []
       )
-      const codes = [...new Set(codesOf.flat())]
-      if (codes.length === 0) {
+      const entries = entriesOf.flat()
+      if (entries.length === 0) {
         return checks.map(() => false)
       }
       const now = new Date()
-      const byCode = new Map(
+      // A link counts only for an entry with its code and its scope, so the same code in another scope never matches.
+      const byKey = new Map(
         (
           await readLinks(
             context,
-            codes,
-            checks.filter((_, index) => (codesOf[index] ?? []).length > 0)
+            entries,
+            checks.filter((_, index) => (entriesOf[index] ?? []).length > 0)
           )
         )
           .filter((row) => row.grantsView && isOpen(row, now) && mayGrant(config, row))
-          .map((row) => [row.code, row])
+          .map((row) => [grantKey(row), row])
       )
       const links = checks.map((check, index) =>
-        (codesOf[index] ?? []).flatMap((code) => {
-          const row = byCode.get(code)
+        (entriesOf[index] ?? []).flatMap((entry) => {
+          const row = byKey.get(grantKey(entry))
           return row && row.subjectType === check.subjectType && row.subjectId === check.subjectId ? [row] : []
         })
       )
@@ -1084,14 +1189,16 @@ const recordKey = ({ subjectType, subjectId }: SubjectRef) => JSON.stringify([su
 
 /**
  * The links a batch of checks may be granted by, in as few queries as it takes: by their codes, 90 to a query, or, when
- * the checks name fewer records than that takes, such as one record shown to many live viewers, by those records and
- * matched to the codes here.
+ * the checks name fewer records than that takes, such as one record shown to many live viewers, by those records. Only
+ * links whose code and scope an entry holds come back.
  */
 async function readLinks(
   context: SubjectContext,
-  codes: readonly string[],
+  entries: readonly GrantEntry[],
   checks: readonly SubjectRef[]
 ): Promise<LinkRow[]> {
+  const wanted = new Set(entries.map(grantKey))
+  const codes = [...new Set(entries.map((entry) => entry.code))]
   const records = new Map<string, Set<string>>()
   for (const { subjectType, subjectId } of checks) {
     records.set(subjectType, (records.get(subjectType) ?? new Set()).add(subjectId))
@@ -1099,7 +1206,6 @@ async function readLinks(
   const byRecord = [...records].flatMap(([subjectType, ids]) => chunks([...ids]).map((list) => ({ subjectType, list })))
   const byCode = chunks(codes)
   if (byRecord.length < byCode.length) {
-    const wanted = new Set(codes)
     const read = await Promise.all(
       byRecord.map(async ({ subjectType, list }) =>
         context.db.findMany<LinkRow>({
@@ -1112,14 +1218,21 @@ async function readLinks(
         })
       )
     )
-    return read.flat().filter((row) => wanted.has(row.code))
+    return read.flat().filter((row) => wanted.has(grantKey(row)))
   }
   const read = await Promise.all(
     byCode.map(async (list) =>
-      context.db.findMany<LinkRow>({ model: linkModel, where: [{ field: "code", operator: "in", value: list }] })
+      // Only links that grant access, since other scopes may have links with the same codes.
+      context.db.findMany<LinkRow>({
+        model: linkModel,
+        where: [
+          { field: "code", operator: "in", value: list },
+          { field: "grantsView", value: true }
+        ]
+      })
     )
   )
-  return read.flat()
+  return read.flat().filter((row) => wanted.has(grantKey(row)))
 }
 
 /**
@@ -1212,10 +1325,10 @@ export function shortLinks<const Options extends ShortLinksOptions>(options: Opt
     grants: granting ? grantsFor(config) : undefined,
     actions: {
       create: action<CreateLinkInput<SubjectType>, ShortLink>(inputs.create, create),
-      get: action<{ code: string }, ShortLink>(inputs.code, get),
+      get: action<{ id: string }, ShortLink>(inputs.id, get),
       list: action<ListLinksInput<SubjectType>, LinkPage>(inputs.list, list),
       update: action<UpdateLinkInput, ShortLink>(inputs.update, update),
-      remove: action<{ code: string }, { removed: boolean }>(inputs.code, remove),
+      remove: action<{ id: string }, { removed: boolean }>(inputs.id, remove),
       removeSubject: action<LinkSubject<SubjectType>, { removed: number }, true>(inputs.subject, removeSubject, true),
       removeOwner: action<{ owner: { type: OwnerType; id: string } }, { removed: number }, true>(
         inputs.removeOwner,

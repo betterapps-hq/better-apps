@@ -102,7 +102,8 @@ export const shortLink = sqliteTable(
   "short_link",
   {
     id: text("id").primaryKey(),
-    code: text("code").notNull().unique(),
+    code: text("code").notNull(),
+    scope: text("scope").default("").notNull(),
     owner: text("owner").notNull(),
     orgId: text("org_id").default("").notNull(),
     createdBy: text("created_by").notNull(),
@@ -118,6 +119,7 @@ export const shortLink = sqliteTable(
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull()
   },
   (table) => [
+    uniqueIndex("short_link_code").on(table.code, table.scope),
     index("short_link_by_owner").on(table.owner, table.createdAt),
     index("short_link_by_org").on(table.orgId, table.createdAt),
     index("short_link_by_subject").on(table.subjectType, table.subjectId, table.createdAt)
@@ -234,18 +236,6 @@ export const attachmentRemoval = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull()
   },
   (table) => [index("attachment_removal_by_time").on(table.createdAt)]
-)
-
-export const attachmentMove = sqliteTable(
-  "attachment_move",
-  {
-    id: text("id").primaryKey(),
-    toOrgId: text("to_org_id").default("").notNull(),
-    deleted: integer("deleted", { mode: "boolean" }).default(false).notNull(),
-    claim: text("claim").notNull(),
-    heldAt: integer("held_at", { mode: "timestamp_ms" }).notNull()
-  },
-  (table) => [index("attachment_move_by_time").on(table.heldAt)]
 )
 
 export const betterAppsEvent = sqliteTable(

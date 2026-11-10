@@ -44,7 +44,7 @@ describe("click events", () => {
     }
     // Nothing about who opened it is kept.
     expect(Object.keys(shortLinksSchema[clickModel]?.fields ?? {})).toEqual(["linkId", "clickedAt", "slot"])
-    const read = await t.api.get({ code: link.code }, t.as("ada"))
+    const read = await t.api.get({ id: link.id }, t.as("ada"))
     expect(read.clicks).toBe(2)
     expect(read.lastClickedAt?.getTime()).toBe(rows[1]?.clickedAt)
   })
@@ -75,7 +75,7 @@ describe("click events", () => {
     expect(there.headers.get("location")).toBe(`https://app.test/invoices/inv-1?via=${link.code}`)
     expect(cookieOf(there)).toBe(`better-apps-links=${link.code}`)
     expect(clickRows(t)).toHaveLength(1)
-    expect((await t.api.get({ code: link.code }, t.as("ada"))).clicks).toBe(1)
+    expect((await t.api.get({ id: link.id }, t.as("ada"))).clicks).toBe(1)
   })
 
   it("go with their link, whether it's removed alone, with its record or with its owner", async () => {
@@ -88,7 +88,7 @@ describe("click events", () => {
       await t.api.recordClicks({ id: link.id, at: at("2026-01-01T12:00:00Z", "2026-01-02T12:00:00Z") })
     }
     expect(clickRows(t)).toHaveLength(8)
-    await t.api.remove({ code: one.code }, t.as("ada"))
+    await t.api.remove({ id: one.id }, t.as("ada"))
     expect(clickRows(t)).toHaveLength(6)
     await t.api.removeSubject(inv1)
     expect(clickRows(t)).toHaveLength(4)
