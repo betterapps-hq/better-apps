@@ -309,8 +309,6 @@ So a domain appearing or going away never moves a link, and two links never come
   until it has a ready domain again. Then they open there, whichever domain it is. The app's host never opens them,
   since another organization's link, or one in the app's scope, may have the same code. New links go in the app's scope
   meanwhile.
-- An app that adds `hosts` keeps its existing links in the app's scope. An app that drops `hosts` opens only the app's
-  scope, so links in organizations' scopes stop opening.
 
 ### Which host opens which links
 
