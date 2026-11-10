@@ -181,6 +181,32 @@ describe("the upload route", () => {
     expect(events("attachment.added")).toHaveLength(1)
     expect(events("file.uploaded")).toHaveLength(2)
   })
+
+  it("returns a file another finish of it put on its record meanwhile", async () => {
+    let race: (() => Promise<unknown>) | null = null
+    const { api, as, send, count } = setup({
+      subjects: {
+        invoice: {
+          // Runs inside the finish, after it read the file, so another finish of the same upload can win.
+          canUpload: async () => {
+            const finish = race
+            race = null
+            await finish?.()
+            return true
+          },
+          contentTypes: ["text/plain"],
+          maxSize: 1000,
+          maxFiles: 3
+        }
+      }
+    })
+    const created = await api.createUpload({ ...inv1, name: "a.txt", contentType: "text/plain", size: 3 }, as("bob"))
+    await send(created.upload, "abc")
+    race = async () => api.completeUpload({ fileId: created.file.id }, as("bob"))
+    const result = await api.completeUpload({ fileId: created.file.id }, as("bob"))
+    expect(result).toMatchObject({ file: { id: created.file.id, status: "ready" }, attachment: null })
+    expect(count(attachmentModel)).toBe(1)
+  })
 })
 
 describe("downloads", () => {

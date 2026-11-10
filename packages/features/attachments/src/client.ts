@@ -434,7 +434,11 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
     const completed = await (call("attachments", "completeUpload", { fileId: prepared.file.id }, { signal }) as Promise<
       Serialized<CompleteUploadResult>
     >)
-    if (current() && completed.attachment && key !== null && subjectId !== undefined) {
+    if (current() && !completed.attachment && key !== null && subjectId !== undefined) {
+      // Finished by an earlier call whose answer was lost, so the answer has no place on the record, and it loads again.
+      bump(key)
+      await load(subjectType as Types["subjectType"], [subjectId]).catch(() => undefined)
+    } else if (current() && completed.attachment && key !== null && subjectId !== undefined) {
       const changed = (versions.get(key) ?? 0) !== started
       bump(key)
       if (changed) {

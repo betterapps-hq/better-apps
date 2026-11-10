@@ -200,10 +200,20 @@ interface UploadRowProps {
   /** What the remove button says it does, such as "Stop uploading notes.txt". */
   removeLabel(item: UploadItem): string
   onRemove(item: UploadItem): void
+  /** The most files the record holds, said beside UploadCN's count of places left when it refuses one. */
+  maxFiles: number | null
+  /** What holds the files, such as "This invoice". */
+  holder: string
+}
+
+/** Adds the record's own limit to UploadCN's "You can add up to 2 files", which counts only the places left. */
+function limitNote(item: UploadItem, { maxFiles, holder }: Pick<UploadRowProps, "maxFiles" | "holder">) {
+  const tooMany = item.issues.some((issue) => issue.code === "too-many-files")
+  return tooMany && maxFiles !== null ? ` ${holder} holds up to ${maxFiles} files.` : ""
 }
 
 /** An upload in a list: its progress or why it failed, and buttons to try it again or let it go. */
-function UploadRow({ removeLabel, onRemove }: UploadRowProps) {
+function UploadRow({ removeLabel, onRemove, maxFiles, holder }: UploadRowProps) {
   const item = useUploadItem<FileInfo>()
   return (
     <>
@@ -245,6 +255,7 @@ function UploadRow({ removeLabel, onRemove }: UploadRowProps) {
         render={(props) => (
           <p {...(props as ComponentProps<"p">)} className="form-error">
             {item.name} couldn’t upload. {sentence(String(props.children))}
+            {limitNote(item, { maxFiles, holder })}
           </p>
         )}
       />
@@ -469,6 +480,8 @@ export function FilesPanel({ invoiceId }: { invoiceId: string }) {
         )}
         <UploadRows
           label="Uploads"
+          maxFiles={maxFiles}
+          holder="This invoice"
           removeLabel={(item) => (isUnderWay(item) ? `Stop uploading ${item.name}` : `Dismiss ${item.name}`)}
           onRemove={letGo}
         />
@@ -579,6 +592,8 @@ export function DraftFiles({ files, returnFocus }: DraftFilesProps) {
       <output className="visually-hidden">{files.message}</output>
       <UploadRows
         label="Files to attach"
+        maxFiles={files.maxFiles}
+        holder="A comment"
         removeLabel={(item) => `Remove ${item.name}`}
         onRemove={(item) => {
           files.announce(`Removed ${item.name}`)

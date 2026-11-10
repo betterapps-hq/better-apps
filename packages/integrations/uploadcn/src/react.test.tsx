@@ -38,6 +38,24 @@ describe("useAttachmentsUploader", () => {
     expect(result.current.uploader.getOptions().maxFiles).toBe(2)
   })
 
+  it("finishes an upload on the record it was added for after the target changes", async () => {
+    const { wrapper, options, app, holdCall } = rendered()
+    const release = holdCall("completeUpload")
+    const { result, rerender } = renderHook(
+      ({ invoiceId }) => useAttachmentsUploader({ subjectType: "invoice", subjectId: invoiceId }, options),
+      {
+        wrapper,
+        initialProps: { invoiceId: "inv-1" }
+      }
+    )
+    await act(() => result.current.add([pick("hello")]))
+    rerender({ invoiceId: "inv-2" })
+    release()
+    await waitFor(() => expect(result.current.getState().items).toEqual([]))
+    const listed = await app.api.attachments.listFiles({ subjectType: "invoice", subjectIds: ["inv-1", "inv-2"] })
+    expect([listed["inv-1"]?.length, listed["inv-2"]?.length]).toEqual([1, 0])
+  })
+
   it("refuses a file the record doesn't take before asking the server", async () => {
     const { wrapper, options, calls } = rendered()
     const { result } = renderHook(() => useAttachmentsUploader(inv1, options), { wrapper })

@@ -12,11 +12,15 @@ Install `@uploadcn/core`, and `@uploadcn/react` for the hooks, alongside it. The
 ## Usage
 
 ```tsx
+import { useAttachments } from "@better-apps/attachments/react"
 import { useAttachmentsUploader } from "@better-apps/uploadcn/react"
 import { Upload } from "@uploadcn/react"
 
 function InvoiceFiles({ invoiceId }: { invoiceId: string }) {
-  const uploader = useAttachmentsUploader({ subjectType: "invoice", subjectId: invoiceId })
+  const invoice = { subjectType: "invoice", subjectId: invoiceId } as const
+  // Loads the invoice's files, which finished uploads join and the places left are counted from.
+  const { files } = useAttachments(invoice)
+  const uploader = useAttachmentsUploader(invoice)
   return (
     <Upload.Root uploader={uploader} multiple>
       <Upload.Trigger>Add files</Upload.Trigger>
@@ -29,6 +33,11 @@ function InvoiceFiles({ invoiceId }: { invoiceId: string }) {
           <Upload.Remove>Remove</Upload.Remove>
         </Upload.Item>
       </Upload.List>
+      <ul>
+        {files.map((file) => (
+          <li key={file.id}>{file.name}</li>
+        ))}
+      </ul>
     </Upload.Root>
   )
 }
@@ -38,7 +47,7 @@ Files picked before their record exists, such as a comment's before it's posted,
 
 ```tsx
 const drafts = useDraftUploader("comments.comment")
-// Give drafts.uploader to the comment box's Upload.Root. drafts.busy says whether one is still uploading.
+// Give drafts.uploader to the comment box's Upload.Root. drafts.busy says whether one hasn't finished.
 await drafts.attachTo(comment.id) // once the comment is saved
 ```
 
@@ -74,13 +83,19 @@ It only takes the subject types of the client's app.
   - A lost connection, a server error, rate limiting and an upload that expired are retried, then can be tried again by
     hand.
 - An attempt after a failure keeps the prepared upload in the item's resume state, unless its address closes within 30
-  seconds, and doesn't send bytes that already arrived. A send that storage refuses, such as to an address that expired,
-  starts over with a new address, and the old pending file is deleted. A finish the server refuses deletes the pending
-  file, so trying again by hand starts over, and one it found gone, such as after the sweep, starts over at once.
-- Cancelling or removing an unfinished upload deletes its file, and takes it off its record first when its bytes got
-  there. A file the server prepared just as its upload stopped is deleted too.
+  seconds, and doesn't send bytes that already arrived. A send to an address that's gone, which the upload route says
+  with `NOT_FOUND` and storage with 403, starts over with a new address. A file the route refuses, or one too large to
+  store, is refused for good. Either way the old pending file is deleted, and other failed sends go to the same address
+  again. Headers a browser refuses to set, such as a signed `content-length`, aren't sent.
+- A finish the server refuses deletes the pending file, so trying again by hand starts over, and one that finds the
+  upload gone, such as after the sweep, starts over at once. A finish whose first answer was lost loads the record
+  again, so the file shows.
+- Cancelling or removing an unfinished upload deletes its file, before a finish still under way can put it on its
+  record. A file that got there first comes off its record. A file the server prepared just as its upload stopped is
+  deleted too.
 - `useAttachmentsUploader(target, options)` returns an UploadCN uploader. Options go to UploadCN's `useUploader` and win
-  over the limits. On a record, a finished upload leaves the queue once it's on the record's list. Drafts and files on
+  over the limits. Each upload goes to the target it was added for, even after the target changes. On a record, a
+  finished upload leaves the queue once it's on the record's list, which `useAttachments` shows. Drafts and files on
   their own stay in the queue.
 - `useDraftUploader(subjectType, options)` returns `{ uploader, busy, attachTo, clear }`. `attachTo(subjectId)` puts the
   drafts that finished on the saved record, then takes every draft the queue held off it. Drafts picked meanwhile stay.

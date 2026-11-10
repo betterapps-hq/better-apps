@@ -4,6 +4,7 @@
 import type { AttachmentSettings, AttachmentsClient, FileInfo, UploadTarget } from "@better-apps/attachments/client"
 import {
   abortError,
+  isActiveStatus,
   toUploadError,
   UploadError,
   xhrTransport,
@@ -11,7 +12,6 @@ import {
   type TransportResponse,
   type UploadAdapter,
   type UploadItem,
-  type UploadStatus,
   type ValidationOptions
 } from "@uploadcn/core"
 import { BetterAppsClientError } from "better-apps/client"
@@ -68,11 +68,9 @@ function isResumeState(value: unknown): value is AttachmentsResumeState {
   )
 }
 
-const underWay = new Set<UploadStatus>(["validating", "queued", "uploading", "processing", "scanning"])
-
-/** Whether an upload is still under way: checked, waiting, sending or being processed. */
+/** Whether an upload hasn't ended: waiting, being checked, sent or processed, or paused, such as while offline. */
 export function isUnderWay(item: Pick<UploadItem, "status">): boolean {
-  return underWay.has(item.status)
+  return isActiveStatus(item.status) || item.status === "paused" || item.status === "idle"
 }
 
 /**
@@ -111,26 +109,43 @@ async function quietly(cleanup: Promise<unknown>): Promise<void> {
   }
 }
 
-/** Whether a failed send's address is no use for another attempt, such as one that expired or was refused. */
-const deadAddress = (status: number) => status >= 400 && status < 500 && status !== 413 && status !== 429
+// Headers a browser sets itself and refuses to have set, such as the length R2 signs.
+const unsafeHeaders = new Set(["content-length", "host", "connection"])
 
-/** A failed send, with the upload route's own message when it gave one. */
-function sendError(response: TransportResponse): UploadError {
-  let message = "The file couldn’t be stored. Try again."
+const sendable = (headers: Record<string, string>) =>
+  Object.fromEntries(Object.entries(headers).filter(([name]) => !unsafeHeaders.has(name.toLowerCase())))
+
+/**
+ * A failed send, with the upload route's own code and message when it gave them. `startOver` drops the prepared upload,
+ * whose pending file is no use: one refused for good, or one whose address is gone.
+ */
+function sendError(response: TransportResponse): { error: UploadError; startOver: boolean } {
+  let code: string | undefined
+  let message: string | undefined
   try {
-    const body = JSON.parse(response.body) as { error?: { message?: unknown } }
-    if (typeof body.error?.message === "string") {
-      message = body.error.message
-    }
+    const body = JSON.parse(response.body) as { error?: { code?: unknown; message?: unknown } }
+    code = typeof body.error?.code === "string" ? body.error.code : undefined
+    message = typeof body.error?.message === "string" ? body.error.message : undefined
   } catch {
     // Storage answers in XML or not at all.
   }
-  if (response.status === 413) {
-    return new UploadError(message, { code: "rejected", status: 413, retryable: false })
+  const options = { status: response.status, ...(code === undefined ? {} : { details: { code } }) }
+  // A type or length the upload route refuses, or a body too large to store, won't change on another attempt.
+  if (code === "INVALID_INPUT" || code === "PAYLOAD_TOO_LARGE" || response.status === 413) {
+    const error = new UploadError(message ?? "The file is too large to store.", {
+      ...options,
+      code: "rejected",
+      retryable: false
+    })
+    return { error, startOver: true }
   }
-  // Another refusal usually means the address expired or the bytes were cut short, so the next attempt starts over with
-  // a new one. A server error or rate limiting tries the same address again.
-  return new UploadError(message, { code: "http", status: response.status, retryable: true })
+  const error = new UploadError(message ?? "The file couldn’t be stored. Try again.", {
+    ...options,
+    code: "http",
+    retryable: true
+  })
+  // An address that expired, or that storage stopped taking, is replaced. Anything else tries the same one again.
+  return { error, startOver: code === "NOT_FOUND" || response.status === 403 }
 }
 
 /**
@@ -185,16 +200,17 @@ export function attachmentsAdapter<SubjectType extends string = string>(
           const response = await transport({
             method: "PUT",
             url: state.url,
-            headers: state.headers,
+            headers: sendable(state.headers),
             body: file,
             signal,
             onUploadProgress: (loaded, total) => onProgress(loaded, total)
           })
           if (response.status < 200 || response.status >= 300) {
-            if (deadAddress(response.status)) {
+            const { error, startOver } = sendError(response)
+            if (startOver) {
               drop(state)
             }
-            throw sendError(response)
+            throw error
           }
           state = { ...state, sent: true }
           saveResumeState(state)
@@ -234,13 +250,18 @@ export function attachmentsAdapter<SubjectType extends string = string>(
       if (!isResumeState(resumeState)) {
         return
       }
-      const { fileId, target, sent } = resumeState
-      // Bytes that arrived may have put the file on its record before the upload stopped.
-      if (sent && target.subjectType !== undefined && target.subjectId !== undefined) {
-        const subject = { subjectType: target.subjectType as SubjectType, subjectId: target.subjectId }
-        await quietly(client.detach(subject, fileId))
+      const { fileId, target } = resumeState
+      // Deleted first, so a finish still under way can't put the file on its record. A finish that got there first
+      // leaves a file that only comes off its record.
+      try {
+        await client.deleteFile(fileId)
+      } catch (error) {
+        const onRecord = error instanceof BetterAppsClientError && error.code === "INVALID_INPUT"
+        if (onRecord && target.subjectType !== undefined && target.subjectId !== undefined) {
+          const subject = { subjectType: target.subjectType as SubjectType, subjectId: target.subjectId }
+          await quietly(client.detach(subject, fileId))
+        }
       }
-      await quietly(client.deleteFile(fileId))
     }
   }
 }

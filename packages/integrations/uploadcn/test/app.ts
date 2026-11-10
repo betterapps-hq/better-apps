@@ -15,6 +15,7 @@ const users = [
 
 const orgs = new Map([
   ["inv-1", "acme"],
+  ["inv-2", "acme"],
   ["c-1", "acme"]
 ])
 
@@ -53,6 +54,8 @@ export function setup({
   const { app, identity, database } = createTestApp({ subjects, features: [feature], users })
   const calls: string[] = []
   const heldAnswers = new Map<string, Promise<void>>()
+  const heldCalls = new Map<string, Promise<void>>()
+  const lostAnswers = new Set<string>()
   const failures = new Map<string, { status: number; code: string }[]>()
   const client = createBetterAppsClient<typeof app>({
     baseURL: "https://app.test",
@@ -64,12 +67,16 @@ export function setup({
         const { status, code } = failure
         return Response.json({ error: { code, message: "Something went wrong." } }, { status })
       }
+      await heldCalls.get(action)
       const headers = new Headers(init.headers)
       for (const [name, value] of Object.entries(identity.headers("bob"))) {
         headers.set(name, value)
       }
       const response = await app.handler(new Request(url, { ...init, headers }))
       await heldAnswers.get(action)
+      if (lostAnswers.delete(action)) {
+        throw new TypeError("Failed to fetch")
+      }
       return response
     }
   })
@@ -78,8 +85,10 @@ export function setup({
   let stall = false
   // Bytes go where the server said, half then all of them, so progress shows. A stalled send waits until it's aborted.
   // Signed sends need the node test environment: happy-dom's Request drops the signed content-length header.
+  const sentHeaders: Record<string, string>[] = []
   const transport: Transport = async (request) => {
     sends.push(request.url)
+    sentHeaders.push(request.headers ?? {})
     const failure = sendStatuses.shift()
     if (failure !== undefined) {
       return { ...failure, headers: new Headers() }
@@ -102,6 +111,19 @@ export function setup({
     request.onUploadProgress?.(bytes.length, bytes.length)
     return { status: response.status, headers: response.headers, body: await response.text() }
   }
+  const holder = (waits: Map<string, Promise<void>>) => (action: string) => {
+    let release: () => void = () => undefined
+    waits.set(
+      action,
+      new Promise<void>((resolve) => {
+        release = resolve
+      })
+    )
+    return () => {
+      waits.delete(action)
+      release()
+    }
+  }
   /** Files that aren't deleted, as the server keeps them. */
   const liveFiles = () =>
     (
@@ -117,6 +139,7 @@ export function setup({
     transport,
     calls,
     sends,
+    sentHeaders,
     liveFiles,
     /** Answers the next sends with these statuses instead of storing the bytes, with an empty body or the one given. */
     failSends: (...failures: (number | { status: number; body: string })[]) =>
@@ -133,18 +156,10 @@ export function setup({
       stall = on
     },
     /** Holds an action's answer after the server handled it, until the returned function lets it go. */
-    holdAnswer: (action: string) => {
-      let release: () => void = () => undefined
-      heldAnswers.set(
-        action,
-        new Promise<void>((resolve) => {
-          release = resolve
-        })
-      )
-      return () => {
-        heldAnswers.delete(action)
-        release()
-      }
-    }
+    holdAnswer: holder(heldAnswers),
+    /** Holds an action's call before the server sees it, until the returned function lets it go. */
+    holdCall: holder(heldCalls),
+    /** Loses the next answer to an action after the server handled it, as a dropped connection does. */
+    loseAnswer: (action: string) => lostAnswers.add(action)
   }
 }

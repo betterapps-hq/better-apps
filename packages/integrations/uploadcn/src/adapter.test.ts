@@ -75,6 +75,81 @@ describe("attachmentsAdapter", () => {
     expect(listed?.map((file) => file.name).sort()).toEqual(["one.txt", "three.txt", "two.txt"])
   })
 
+  it("leaves out headers a browser refuses to have set, such as the signed length", async () => {
+    const view = setup({ signedUploads: true })
+    const uploader = uploaderFor(view, inv1)
+    await uploader.add([pick("hello")])
+    await settled(uploader)
+    expect(view.sentHeaders).toEqual([{ "content-type": "text/plain" }])
+  })
+
+  it("refuses for good a send the upload route says is wrong, and deletes its pending file", async () => {
+    const view = setup()
+    const message = "Send the file as text/plain, as the upload said."
+    view.failSends({ status: 400, body: JSON.stringify({ error: { code: "INVALID_INPUT", message } }) })
+    const uploader = uploaderFor(view, inv1)
+    await uploader.add([pick("hello")])
+    const [item] = await settled(uploader)
+    expect(item?.status).toBe("rejected")
+    expect(item?.error).toMatchObject({ message, details: { code: "INVALID_INPUT" } })
+    await until(() => view.liveFiles() === 0)
+    expect(count(view.calls, "createUpload")).toBe(1)
+  })
+
+  it("asks for a new address when the upload route says the old one is gone", async () => {
+    const view = setup()
+    view.failSends({ status: 404, body: JSON.stringify({ error: { code: "NOT_FOUND", message: "Gone." } }) })
+    const uploader = uploaderFor(view, inv1)
+    await uploader.add([pick("hello")])
+    const [item] = await settled(uploader)
+    expect(item?.status).toBe("success")
+    expect(count(view.calls, "createUpload")).toBe(2)
+    await until(() => view.liveFiles() === 1)
+  })
+
+  it("sends again to the same address after a refusal that doesn't say the address is gone", async () => {
+    const view = setup()
+    view.failSends({ status: 400, body: "The body doesn't match its length." })
+    const uploader = uploaderFor(view, inv1)
+    await uploader.add([pick("hello")])
+    const [item] = await settled(uploader)
+    expect(item?.status).toBe("success")
+    expect([count(view.calls, "createUpload"), view.sends.length]).toEqual([1, 2])
+  })
+
+  it("shows a file whose first finish committed but whose answer was lost", async () => {
+    const view = setup()
+    await view.attachments.load("invoice", ["inv-1"])
+    view.loseAnswer("completeUpload")
+    const uploader = uploaderFor(view, inv1)
+    await uploader.add([pick("hello")])
+    const [item] = await settled(uploader)
+    expect(item?.status).toBe("success")
+    expect([count(view.calls, "createUpload"), view.sends.length, count(view.calls, "completeUpload")]).toEqual([
+      1, 1, 2
+    ])
+    await until(() => view.attachments.store.getSnapshot().subjects[subjectKey("invoice", "inv-1")]?.files.length === 1)
+    expect(view.liveFiles()).toBe(1)
+  })
+
+  it("keeps a file off its record when the upload stops before its finish reaches the server", async () => {
+    const view = setup()
+    await view.attachments.load("invoice", ["inv-1"])
+    const release = view.holdCall("completeUpload")
+    const uploader = uploaderFor(view, inv1)
+    const [item] = await uploader.add([pick("hello")])
+    await until(() => count(view.calls, "completeUpload") === 1)
+    uploader.cancel(item?.id)
+    await until(() => count(view.calls, "deleteFile") === 1)
+    await until(() => view.liveFiles() === 0)
+    release()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(view.liveFiles()).toBe(0)
+    expect(await view.app.api.attachments.listFiles({ subjectType: "invoice", subjectIds: ["inv-1"] })).toEqual({
+      "inv-1": []
+    })
+  })
+
   it("retries a failed send to the same address, and finishes once", async () => {
     const view = setup()
     view.failSends(503)
@@ -321,11 +396,9 @@ describe("uploadErrorOf", () => {
 
 describe("isUnderWay", () => {
   it("says whether an upload is still going", () => {
-    expect(["queued", "uploading", "processing"].map((status) => isUnderWay({ status } as UploadItem))).toEqual([
-      true,
-      true,
-      true
-    ])
+    expect(
+      ["queued", "uploading", "processing", "paused"].map((status) => isUnderWay({ status } as UploadItem))
+    ).toEqual([true, true, true, true])
     expect(["success", "error", "rejected", "cancelled"].some((status) => isUnderWay({ status } as UploadItem))).toBe(
       false
     )

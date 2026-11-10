@@ -273,8 +273,17 @@ export async function completeUpload(config: Config, context: Context): Promise<
     })
     return { file: await present(config, ready), attachment: attached ?? null }
   } catch (error) {
+    if (error instanceof AttachmentsError && error.code === "CONFLICT") {
+      // Another call finished it meanwhile, such as a retry whose first answer was lost, which `ownUpload` reports if
+      // it was deleted instead. Otherwise it expired.
+      const current = await ownUpload(context, file.id)
+      if (current.status === "ready") {
+        return { file: await presentFinished(config, context, current), attachment: null }
+      }
+      throw error
+    }
     // A record that went away, filled up or stopped taking the person's files leaves the upload with nowhere to go.
-    if (error instanceof AttachmentsError && error.code !== "CONFLICT") {
+    if (error instanceof AttachmentsError) {
       await deleteFiles(config, context, [file], "detached")
     }
     throw error

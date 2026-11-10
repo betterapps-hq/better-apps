@@ -209,7 +209,8 @@ An upload takes three steps, the same for both ways of sending the bytes:
    and the limits, and marks the file `ready` with that etag. A file uploaded onto a record is attached in the same
    batch, after checking again that the person can see the record and `canUpload` allows them; if not, the upload is
    deleted. A mismatch deletes the bytes and answers `INVALID_INPUT`. When two calls finish one file at once, one marks
-   it ready, and both return it. Finishing a ready file again returns it only to someone who can still see it.
+   it ready and attaches it, and both return it, the other without its attachment. Finishing a ready file again returns
+   it only to someone who can still see it, without its attachment, so the browser client loads the record again.
 
 Where the upload is aimed:
 

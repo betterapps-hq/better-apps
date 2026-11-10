@@ -5,7 +5,7 @@ import { useAttachmentsClient, useAttachmentSettings } from "@better-apps/attach
 import { useStore } from "@better-apps/react"
 import type { Transport, Uploader } from "@uploadcn/core"
 import { useUploader, useUploadSelector, type UseUploaderOptions } from "@uploadcn/react"
-import { useCallback, useEffect, useMemo, useRef } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { attachmentsAdapter, isUnderWay, uploadLimits } from "./index.js"
 
 export interface AttachmentsUploaderOptions extends Omit<UseUploaderOptions<FileInfo>, "adapter"> {
@@ -38,27 +38,46 @@ export function useAttachmentsUploader<Types extends AttachmentsTypes = Attachme
     // Drafts go on a record that doesn't exist yet, so it has no files. Files on their own have no record to fill.
     return subjectType === undefined ? undefined : 0
   })
+  // Each upload keeps the target it was added for, so one queued or tried again after the target changed, such as on
+  // another record's page, still goes where it was picked for.
+  const [targets] = useState(() => new Map<string, UploadTarget>())
   const adapter = useMemo(
     () =>
-      attachmentsAdapter(client, (subjectType === undefined ? { owner } : { subjectType, subjectId }) as UploadTarget, {
+      attachmentsAdapter(client, (item) => targets.get(item.id) as UploadTarget, {
         transport
       }),
-    [client, subjectType, subjectId, owner, transport]
+    [client, targets, transport]
   )
   const uploader = useUploader<FileInfo>({ ...uploadLimits(settings, { existing }), ...options, adapter })
   useEffect(() => {
-    if (key === null) {
-      return undefined
+    const current = (subjectType === undefined ? { owner } : { subjectType, subjectId }) as UploadTarget
+    const added = uploader.on("add", ({ items }) => {
+      for (const item of items) {
+        targets.set(item.id, current)
+      }
+    })
+    const removed = uploader.on("remove", ({ item }) => targets.delete(item.id))
+    return () => {
+      added()
+      removed()
     }
-    return uploader.on("success", ({ item }) => uploader.remove(item.id))
-  }, [uploader, key])
+  }, [uploader, targets, subjectType, subjectId, owner])
+  useEffect(
+    () =>
+      uploader.on("success", ({ item }) => {
+        if (targets.get(item.id)?.subjectId !== undefined) {
+          uploader.remove(item.id)
+        }
+      }),
+    [uploader, targets]
+  )
   return uploader
 }
 
 /** What `useDraftUploader` returns. */
 export interface DraftUploader {
   uploader: Uploader<FileInfo>
-  /** Whether a draft is still uploading, so its record shouldn't be saved yet. */
+  /** Whether a draft hasn’t finished, such as one paused while offline, so its record shouldn’t be saved yet. */
   busy: boolean
   /**
    * Puts the drafts that finished on the saved record, then takes every draft the queue held off it. Drafts picked

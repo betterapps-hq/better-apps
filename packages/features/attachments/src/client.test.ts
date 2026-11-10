@@ -66,6 +66,17 @@ describe("attachments client", () => {
     expect(attachments.store.getSnapshot().uploads).toEqual({})
   })
 
+  it("shows a file whose first finish committed but whose answer never arrived", async () => {
+    const { attachments, send, api, as } = browser()
+    await attachments.load("invoice", ["inv-1"])
+    const prepared = await attachments.prepareUpload(pick("engine"), inv1)
+    await send(prepared.upload, "engine")
+    // The finish the browser never heard back from.
+    await api.completeUpload({ fileId: prepared.file.id }, as("bob"))
+    const file = await attachments.finishUpload(prepared)
+    expect(attachments.store.getSnapshot().subjects[key1]?.files.map((entry) => entry.id)).toEqual([file.id])
+  })
+
   it("refuses a file the loaded limits don't allow, without a call", async () => {
     const { attachments, requests } = browser()
     await attachments.loadSettings("invoice")
