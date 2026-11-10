@@ -9,7 +9,7 @@ export const attachmentModel = "attachment"
 /** The model of the table that remembers attachments just removed, so each removal is reported once. */
 export const removalModel = "attachmentRemoval"
 
-/** The model of the table that holds the latest move or deletion of each record whose moves attachments follow. */
+/** The model of the table that holds where attachments expect each record whose moves they follow to be. */
 export const moveModel = "attachmentMove"
 
 /** Where a file stands: uploading, stored, or on its way out while its bytes are deleted. */
@@ -50,16 +50,19 @@ export type AttachmentFile = {
 }
 
 /**
- * The latest move or deletion of a record, such as a comments' thread, that attachments follow, keyed by the record. A
- * move job's pages go on only while it holds its record's row, so an older move never writes after a newer one.
+ * Where attachments expect a record whose moves they follow, such as a comments' thread, to be: the organization the move
+ * they're following took it to, or deleted. A move takes the row only once the record is in its organization, and its
+ * pages write only while the row still names that organization, so an older move never writes after a newer one.
  */
 export type AttachmentMove = {
   /** The record, as `JSON.stringify([subjectType, subjectId])`. */
   id: string
-  /** The id of the event that reported the move or deletion, such as comments' `thread.moved`. */
-  eventId: string
-  /** When that event was emitted, which orders moves whose events arrive out of order. */
-  eventAt: Date
+  /** The organization the move being followed took the record to, or `""` for none. */
+  toOrgId: string
+  /** Whether the record was deleted, which stops any move of it for good. */
+  deleted: boolean
+  /** When the row was last written, so rows no move has used for 30 days can be cleared. */
+  heldAt: Date
 }
 
 /** One file on one record. */
@@ -129,10 +132,14 @@ export const attachmentsSchema: FeatureSchema = {
     fields: { createdAt: { type: "date" } },
     indexes: [{ fields: ["createdAt"], name: "attachment_removal_by_time" }]
   },
-  // One row per record whose move or deletion attachments followed, replaced by each newer one. Rows older than 30 days
-  // are cleared as moves start.
+  // One row per record whose move or deletion attachments followed. Rows no move has written for 30 days are cleared as
+  // moves start.
   [moveModel]: {
-    fields: { eventId: { type: "string" }, eventAt: { type: "date" } },
-    indexes: [{ fields: ["eventAt"], name: "attachment_move_by_time" }]
+    fields: {
+      toOrgId: { type: "string", defaultValue: "" },
+      deleted: { type: "boolean", defaultValue: false },
+      heldAt: { type: "date" }
+    },
+    indexes: [{ fields: ["heldAt"], name: "attachment_move_by_time" }]
   }
 }

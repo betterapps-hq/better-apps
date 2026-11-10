@@ -98,8 +98,6 @@ export const attachmentEvents: {
     subjectType: string;
     subjectId: string;
     };
-    moveEventId: string;
-    movedAt: string;
     } | undefined;
     }>;
 };
@@ -131,8 +129,9 @@ export const attachmentModel = "attachment";
 // @public
 export type AttachmentMove = {
     id: string;
-    eventId: string;
-    eventAt: Date;
+    toOrgId: string;
+    deleted: boolean;
+    heldAt: Date;
 };
 
 // @public
@@ -190,8 +189,6 @@ export function attachments<const Options extends AttachmentsOptions>(options: O
         subjectType: string;
         subjectId: string;
         };
-        moveEventId: string;
-        movedAt: string;
         } | undefined;
         }>;
     };

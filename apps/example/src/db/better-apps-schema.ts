@@ -240,10 +240,11 @@ export const attachmentMove = sqliteTable(
   "attachment_move",
   {
     id: text("id").primaryKey(),
-    eventId: text("event_id").notNull(),
-    eventAt: integer("event_at", { mode: "timestamp_ms" }).notNull()
+    toOrgId: text("to_org_id").default("").notNull(),
+    deleted: integer("deleted", { mode: "boolean" }).default(false).notNull(),
+    heldAt: integer("held_at", { mode: "timestamp_ms" }).notNull()
   },
-  (table) => [index("attachment_move_by_time").on(table.eventAt)]
+  (table) => [index("attachment_move_by_time").on(table.heldAt)]
 )
 
 export const betterAppsEvent = sqliteTable(

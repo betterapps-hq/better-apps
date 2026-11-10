@@ -124,8 +124,8 @@ declared size.
   `maxDrafts`, and `CONFLICT` for an upload that expired or hasn't arrived, or a draft another record took first.
 
 With files on comments' threads or comments, attachments follow comments' events: a deleted comment or thread loses its
-files, and a moved thread takes them along. A move goes on only while it's the thread's latest move or deletion, so an
-older move never undoes a newer one, and a deleted thread stops a move still running. Attachments also declares
+files, and a moved thread takes them along. A move goes on only while the thread is still where it took it, so an older
+move never undoes a newer one, and a deleted thread stops a move still running. Attachments also declares
 `attachments.file` as a subject type, so other features can attach to a file.
 
 ## Downloads
@@ -166,5 +166,6 @@ const drafts = useDraftAttachments("comments.comment")
 
 `attachmentFile` holds each file, `attachment` puts files on records, with a unique place per record so `maxFiles` holds
 even when uploads finish together, `attachmentRemoval` remembers removals for an hour so each is reported once, and
-`attachmentMove` holds the latest move or deletion of each comments' thread attachments followed, for 30 days. Run
-`better-apps generate` from [`@better-apps/cli`](../../tooling/cli/README.md) to add them to your schema.
+`attachmentMove` holds where attachments expect each comments' thread they follow to be, until no move has written it
+for 30 days. Run `better-apps generate` from [`@better-apps/cli`](../../tooling/cli/README.md) to add them to your
+schema.

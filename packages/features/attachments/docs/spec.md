@@ -106,9 +106,9 @@ Indexes:
 removal of the same one, such as a person deleting a draft while the sweep removes it, fails with its events, so each is
 reported once. Reactions does the same for its reactions.
 
-`attachmentMove` holds the latest move or deletion of each comments' thread that attachments followed, keyed by
-`JSON.stringify([subjectType, subjectId])`, with the id of the event that reported it and when that event was emitted.
-Each newer move or deletion replaces the row, and rows older than 30 days are cleared as moves start. See
+`attachmentMove` holds where attachments expect each comments' thread whose move or deletion they followed to be, keyed
+by `JSON.stringify([subjectType, subjectId])`: `toOrgId`, the organization of the move they're following, or `deleted`.
+`heldAt` is when a move last wrote the row, and rows no move has written for 30 days are cleared as moves start. See
 [Records that change](#records-that-change).
 
 ## Ownership
@@ -351,21 +351,25 @@ the move fails rather than landing under them. It moves everything in one call, 
 `{ files, attachments }`, how many files they uploaded and attachments they made.
 
 With files on comments' threads or comments, attachments follow comments' events, as reactions do: a deleted comment or
-thread loses its files, and a moved thread takes its and its comments' files along. Each delivery handles one page,
-reading at most ten lists of 90 ids, and the rest continues with attachments' own `cleanup.continued` event, emitted
-`{ later: true }` for the next `app.deliverEvents()` run.
+thread loses its files, and a moved thread takes its and its comments' files along. Each delivery handles one page: up
+to 100 attachments removed, reading at most ten lists of 90 ids to find them, or up to 20 moved in one batch, reading at
+most five. A delivery of a thread of any size stays under D1's 50 queries per request on its free plan, and the rest
+continues with attachments' own `cleanup.continued` event, emitted `{ later: true }` for the next `app.deliverEvents()`
+run.
 
-A move continues only while it's the thread's latest move and the thread is still in the organization it moved to, so an
-older move never undoes a newer one. Attachments keep each thread's latest move or deletion in `attachmentMove`, ordered
-by when comments emitted its event, so a move whose event arrives late, such as after a failed delivery, never takes
-over from a newer one. A newer move or the thread's deletion takes that place and stops the older move, even a move to
-no organization, which can't tell a deleted thread from one without an organization. Each page's batch also checks that
-its move still holds that place, so a newer move that lands while a page runs makes the page's writes fail, and the
+Attachments keep where they expect each thread they follow to be in `attachmentMove`: the organization of the move
+they're following, or deleted. A move takes that place only when the thread is in its organization, since the move that
+committed last is the one that put it there, whenever its event was emitted or arrives. So a move whose thread has moved
+on, such as one whose delivery is retried after a newer move, never runs. A move continues only while it holds the place
+and the thread is still in its organization, so an older move never undoes a newer one. Each page's batch also checks
+that its move still holds the place, so a newer move that lands while a page runs makes the page's writes fail, and the
 older move stop, rather than undo the newer one's work. The batch carries everything the page writes: the moved
-attachments, the files' new organization and the attachments withdrawn for want of a free place, with their events. A
-comment deleted during a move doesn't stop it, since the comment's own removal takes its files. A comment deleted while
-a file is attached to it can't keep the file: `attach` checks the record again after it's written and takes the file
-back off when the record went away meanwhile.
+attachments, the files' new organization and the attachments withdrawn for want of a free place, with their events. The
+thread's deletion takes the place for good, which stops a move even to no organization, since that move can't tell a
+deleted thread from one without an organization. Two moves to the same organization, such as when a thread moves away
+and back, share the place, so both run. A comment deleted during a move doesn't stop it, since the comment's own removal
+takes its files. A comment deleted while a file is attached to it can't keep the file: `attach` checks the record again
+after it's written and takes the file back off when the record went away meanwhile.
 
 ## Events
 

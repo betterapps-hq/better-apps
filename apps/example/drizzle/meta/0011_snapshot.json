@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "e61a6ed2-ff3d-4c7c-9296-ce8ad6b6a595",
+  "id": "17431629-6442-4804-a5e7-582ccae5ab98",
   "prevId": "593a003e-00ee-4399-8465-7e08f768ac04",
   "tables": {
     "invoice": {
@@ -775,15 +775,24 @@
           "notNull": true,
           "autoincrement": false
         },
-        "event_id": {
-          "name": "event_id",
+        "to_org_id": {
+          "name": "to_org_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false
+          "autoincrement": false,
+          "default": "''"
         },
-        "event_at": {
-          "name": "event_at",
+        "deleted": {
+          "name": "deleted",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "held_at": {
+          "name": "held_at",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
@@ -793,7 +802,7 @@
       "indexes": {
         "attachment_move_by_time": {
           "name": "attachment_move_by_time",
-          "columns": ["event_at"],
+          "columns": ["held_at"],
           "isUnique": false
         }
       },

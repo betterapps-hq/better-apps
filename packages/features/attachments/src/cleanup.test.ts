@@ -80,13 +80,11 @@ function withComments() {
           }
         ).count
     )
-  // The event id of the thread's latest move or deletion, as attachments hold it.
+  // Where attachments expect the thread to be, from the move they follow, or deleted.
   const turn = (threadId: string) =>
-    (
-      database.sqlite
-        .prepare(`SELECT eventId FROM ${moveModel} WHERE id = ?`)
-        .get(JSON.stringify(["comments.thread", threadId])) as { eventId: string } | undefined
-    )?.eventId
+    database.sqlite
+      .prepare(`SELECT toOrgId, deleted FROM ${moveModel} WHERE id = ?`)
+      .get(JSON.stringify(["comments.thread", threadId]))
   /** Puts a file on a comment or thread, as a person posting it. */
   const attach = async (subjectType: "comments.comment" | "comments.thread", subjectId: string) => {
     const created = await app.api.attachments.createUpload(
@@ -112,14 +110,15 @@ function withComments() {
   }
 }
 
+const backdated = { createdAt: new Date(Date.now() - 60 * 24 * 60 * 60_000) }
 const moved = (threadId: string, toOrgId: string, commentIds: string[], fromOrgId = "acme") => ({
   type: "thread.moved",
   data: { thread: { id: threadId, orgId: toOrgId }, fromOrgId, commentIds }
 })
 
-/** A thread in acme with 20 comments of two files each, 40 in all, so a move takes two pages of 30. */
+/** A thread in acme with 15 comments of two files each, 30 in all, so a move takes two pages: 20, then 10. */
 async function busyThread(setup: ReturnType<typeof withComments>) {
-  const ids = Array.from({ length: 20 }, (_, index) => `big-${index}`)
+  const ids = Array.from({ length: 15 }, (_, index) => `big-${index}`)
   setup.threads.set("t-big", { orgId: "acme", comments: new Set(ids) })
   for (const id of ids) {
     await setup.attach("comments.comment", id)
@@ -191,41 +190,81 @@ describe("with comments", () => {
       type: "thread.moved",
       data: { thread: { id: "t-1", orgId: "globex" }, commentIds: ["c-1", ...fillers, "c-2"], fromOrgId: "acme" }
     })
-    // Each delivery reads ten lists of 90 ids, so the first stops partway, and the comments where the next run starts
-    // are deleted before it.
+    // Each delivery of a move reads five lists of 90 ids, the first the thread's and four of its comments', so it stops
+    // partway, and the comments where the next run starts are deleted before it.
     expect(events("cleanup.continued")).toHaveLength(0)
-    const deleted = new Set(fillers.slice(700, 1000))
+    const deleted = new Set(fillers.slice(300, 450))
     threads.set("t-1", {
       orgId: "globex",
       comments: new Set(["c-1", ...fillers.filter((id) => !deleted.has(id)), "c-2"])
     })
-    await deliver()
-    await deliver()
-    expect(events("cleanup.continued")).toHaveLength(2)
+    for (let run = 0; run < 4; run += 1) {
+      await deliver()
+    }
+    expect(events("cleanup.continued")).toHaveLength(4)
     const listed = await api.listFiles({ subjectType: "comments.comment", subjectIds: ["c-1", "c-2"] })
     expect([listed["c-1"]?.[0]?.orgId, listed["c-2"]?.[0]?.orgId]).toEqual(["globex", "globex"])
   })
 
-  it("stops an older move's page when a newer move lands while it runs, keeping the newer move's work", async () => {
+  it("fails an older move's page when a newer move lands after its check, keeping the newer move's work", async () => {
     const setup = withComments()
     const ids = await busyThread(setup)
     setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
     await setup.emit(moved("t-big", "globex", ids))
-    expect(setup.inOrg("globex")).toEqual([30, 30])
-    // Right after the next page's check, the thread moves to initech, and the newer move takes the turn and moves
-    // every file there before the older page writes.
-    setup.hooks.afterOrg = () => {
-      setup.threads.set("t-big", { orgId: "initech", comments: new Set(ids) })
-      setup.database.sqlite.prepare(`UPDATE ${moveModel} SET eventId = 'newer'`).run()
-      setup.database.sqlite.prepare(`UPDATE ${attachmentModel} SET orgId = 'initech'`).run()
-      setup.database.sqlite.prepare(`UPDATE ${fileModel} SET orgId = 'initech'`).run()
-    }
+    expect(setup.inOrg("globex")).toEqual([20, 20])
+    // Once the next page has passed its check and goes to read its attachments, the thread moves to initech, and the
+    // newer move takes the turn and moves every file there, so only the page's batch can tell.
+    const { sqlite } = setup.database
+    const prepare = sqlite.prepare.bind(sqlite)
+    let landed = false
+    Object.assign(sqlite, {
+      prepare: (sql: string) => {
+        if (!landed && sql.includes('from "attachment"') && sql.includes("<>")) {
+          landed = true
+          setup.threads.set("t-big", { orgId: "initech", comments: new Set(ids) })
+          prepare(`UPDATE ${moveModel} SET toOrgId = 'initech'`).run()
+          prepare(`UPDATE ${attachmentModel} SET orgId = 'initech'`).run()
+          prepare(`UPDATE ${fileModel} SET orgId = 'initech'`).run()
+        }
+        return prepare(sql)
+      }
+    })
     await setup.deliver()
     await setup.deliver()
-    expect(setup.inOrg("initech")).toEqual([40, 40])
+    expect(landed).toBe(true)
+    expect(setup.inOrg("initech")).toEqual([30, 30])
+    expect(setup.events("subject.moved")).toHaveLength(10)
   })
 
-  it("lets only the latest of a thread's moves run on when it moves away and back", async () => {
+  it("lets the move that committed last run, even when its event says it's older", async () => {
+    const setup = withComments()
+    const ids = await busyThread(setup)
+    setup.threads.set("t-big", { orgId: "initech", comments: new Set(ids) })
+    await setup.emit(moved("t-big", "initech", ids))
+    expect(setup.inOrg("initech")).toEqual([20, 20])
+    // A move dated two months back, such as an import's, commits after it and leaves the thread in globex.
+    setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
+    await setup.emit(moved("t-big", "globex", ids, "initech"), backdated)
+    await setup.deliver()
+    await setup.deliver()
+    expect(setup.inOrg("globex")).toEqual([30, 30])
+  })
+
+  it("keeps a move's turn while it runs, whenever its event was dated", async () => {
+    const setup = withComments()
+    const ids = await busyThread(setup)
+    setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
+    await setup.emit(moved("t-big", "globex", ids), backdated)
+    // Another thread's move clears turns no move has written for 30 days, which this one's isn't.
+    setup.threads.set("t-1", { orgId: "globex", comments: new Set(["c-1", "c-2"]) })
+    await setup.emit(moved("t-1", "globex", ["c-1", "c-2"]))
+    expect(setup.turn("t-big")).toEqual({ toOrgId: "globex", deleted: 0 })
+    await setup.deliver()
+    await setup.deliver()
+    expect(setup.inOrg("globex")).toEqual([30, 30])
+  })
+
+  it("runs both moves to an organization a thread moves away from and back to", async () => {
     const setup = withComments()
     const ids = await busyThread(setup)
     setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
@@ -234,12 +273,11 @@ describe("with comments", () => {
     await setup.emit(moved("t-big", "acme", ids, "globex"))
     setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
     await setup.emit(moved("t-big", "globex", ids))
-    const latest = setup.events("thread.moved").at(-1)?.id
     await setup.deliver()
     await setup.deliver()
     await setup.deliver()
-    expect(setup.turn("t-big")).toBe(latest)
-    expect(setup.inOrg("globex")).toEqual([40, 40])
+    expect(setup.turn("t-big")).toEqual({ toOrgId: "globex", deleted: 0 })
+    expect(setup.inOrg("globex")).toEqual([30, 30])
   })
 
   it("never lets an older move take over when its delivery is retried after a newer one", async () => {
@@ -249,11 +287,9 @@ describe("with comments", () => {
     setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
     setup.hooks.failOnce = "thread.moved"
     await setup.emit(moved("t-big", "globex", ids))
-    expect(setup.inOrg("globex")).toEqual([30, 30])
+    expect(setup.inOrg("globex")).toEqual([20, 20])
     setup.threads.set("t-big", { orgId: "initech", comments: new Set(ids) })
     await setup.emit(moved("t-big", "initech", ids, "globex"))
-    const newer = setup.events("thread.moved").at(-1)?.id
-    expect(newer).toBeDefined()
     vi.useFakeTimers({ toFake: ["Date"] })
     try {
       vi.setSystemTime(Date.now() + 60_000)
@@ -263,8 +299,8 @@ describe("with comments", () => {
     } finally {
       vi.useRealTimers()
     }
-    expect(setup.turn("t-big")).toBe(newer)
-    expect(setup.inOrg("initech")).toEqual([40, 40])
+    expect(setup.turn("t-big")).toEqual({ toOrgId: "initech", deleted: 0 })
+    expect(setup.inOrg("initech")).toEqual([30, 30])
   })
 
   it("stops a move to no organization when its thread is deleted", async () => {
@@ -272,8 +308,8 @@ describe("with comments", () => {
     const ids = await busyThread(setup)
     setup.threads.set("t-big", { orgId: "", comments: new Set(ids) })
     await setup.emit(moved("t-big", "", ids))
-    expect(setup.inOrg("")).toEqual([30, 30])
-    expect(setup.events("subject.moved")).toHaveLength(15)
+    expect(setup.inOrg("")).toEqual([20, 20])
+    expect(setup.events("subject.moved")).toHaveLength(10)
     // The deletion's first delivery reads only the first of its thousand comments, so the move's next delivery comes
     // before its files go.
     const fillers = Array.from({ length: 1000 }, (_, index) => `gone-${index}`)
@@ -285,7 +321,8 @@ describe("with comments", () => {
     await setup.deliver()
     await setup.deliver()
     expect([setup.count(attachmentModel), setup.count(fileModel)]).toEqual([0, 0])
-    expect(setup.events("subject.moved")).toHaveLength(15)
+    expect(setup.events("subject.moved")).toHaveLength(10)
+    expect(setup.turn("t-big")).toEqual({ toOrgId: "", deleted: 1 })
   })
 
   it("continues a long cleanup in the next delivery run", async () => {
