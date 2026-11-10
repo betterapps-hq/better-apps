@@ -2,6 +2,7 @@ export { isEmoji, normalizeEmoji } from "./emoji.js"
 export { ReactionsError, type ReactionsErrorCode } from "./errors.js"
 export {
   reactionEvents,
+  type MoveFinishedData,
   type ReactionEventData,
   type ReactionRemovedData,
   type ReactionsEventData,
