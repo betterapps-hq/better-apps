@@ -496,12 +496,14 @@ const cleanupReads = 10
 /** How many batches of removals one delivery of a cleanup writes, each a few statements besides its rows. */
 const cleanupBatches = 3
 /**
- * One delivery of a move cleanup's share: up to 20 reactions, reading at most five lists of ids, over at most two
- * batches. Taking the turn takes up to five queries and checking it two; each batch takes a lookup, its updates, two
- * statements that hold the turn, up to three for merged reactions and one for its events; a lost turn takes one more
- * read; and the outbox writes three of its own. That's at most 48 queries, under D1's 50 per request on its free plan.
+ * One delivery of a move cleanup's share: up to 15 reactions, reading at most five lists of ids, over at most two
+ * batches, each tried once, so a failed batch leaves its page for the next run rather than reading it again. Taking the
+ * turn takes five queries, or checking it two. A batch of r reactions takes a lookup, two statements that hold the turn,
+ * an update for each reaction that moves, three for merged ones, and an insert per eight of its events, at most two per
+ * reaction: at most 6 + r + r / 4, so 32 for two batches. A failed batch takes one more read, and the outbox writes three
+ * of its own. That's at most 46 queries, under D1's 50 per request on its free plan.
  */
-const moveCleanup = { room: 20, reads: 5, batches: 2 } as const
+const moveCleanup = { room: 15, reads: 5, batches: 2 } as const
 
 /**
  * Removes or moves the reactions on records that went away or moved, such as comments' threads: one page of them per
@@ -551,6 +553,10 @@ async function cleanUp(config: Config, writer: Writer & Pick<Context, "subjects"
     if ("superseded" in step && step.superseded === true) {
       return
     }
+    if ("again" in step && step.again === true) {
+      // The page's batch failed, such as on a reaction that landed meanwhile: the next run reads it again.
+      break
+    }
     room -= found
     batches += found > 0 ? 1 : 0
     records[0] = { ...record, subjectIds: rest }
@@ -590,9 +596,9 @@ async function movePage(
   find: (limit: number) => Promise<Reaction[]>,
   toOrgId: string,
   turn?: Turn
-): Promise<{ moved: number; superseded?: boolean } & BulkStep> {
+): Promise<{ moved: number; superseded?: boolean; again?: boolean } & BulkStep> {
   const { db } = writer
-  return retried(async () => {
+  const page = async (): Promise<{ moved: number; superseded?: boolean; again?: boolean } & BulkStep> => {
     const rows = await find(movePageSize)
     if (rows.length === 0) {
       return { moved: 0, done: true }
@@ -645,21 +651,25 @@ async function movePage(
     // A reaction that lands in the new organization meanwhile can take a place this page meant to use, which fails the
     // batch, and the page is read again. One removed meanwhile updates nothing, so it isn't counted as moved. A job's
     // batch also holds its record's turn, so it fails, and the job stops, once a newer move or deletion has taken it.
+    // A job's page is tried once, so a delivery stays within its share of queries, and a failed one waits for the next.
     const held = turn ? holdTurn(turn) : []
     let results: WriteResult[]
     try {
       results = await db.batch([...held, ...updates, ...(dropped.length > 0 ? removals(dropped) : [])])
     } catch (error) {
-      if (turn && !(await hasTurn(db, turn))) {
-        return { moved: 0, done: true, superseded: true }
+      if (!turn) {
+        throw error
       }
-      throw error
+      return (await hasTurn(db, turn))
+        ? { moved: 0, done: false, again: true }
+        : { moved: 0, done: true, superseded: true }
     }
     return {
       moved: results.slice(held.length, held.length + updates.length).filter((result) => result !== null).length,
       done: rows.length < movePageSize
     }
-  })
+  }
+  return turn ? page() : retried(page)
 }
 
 /** A move of a record that reactions follow: the record, and the organization it took the record to. */
@@ -679,21 +689,20 @@ async function hasTurn(db: Context["db"], turn: Turn): Promise<boolean> {
   return row !== null && !row.deleted && row.toOrgId === turn.toOrgId
 }
 
-/** Writes a record's turn row. */
+/** Writes a record's turn row, with a new claim. */
 const turnRow = (subject: ReactionSubject, toOrgId: string, deleted: boolean): WriteOperation => ({
   type: "create",
   model: moveModel,
-  data: { id: turnId(subject), toOrgId, deleted, heldAt: new Date() }
+  data: { id: turnId(subject), toOrgId, deleted, claim: crypto.randomUUID(), heldAt: new Date() }
 })
 
-/** Deletes a record's turn row while it still reads as given. */
-const releaseTurn = (subject: ReactionSubject, row: Pick<ReactionMove, "toOrgId" | "deleted">): WriteOperation => ({
+/** Deletes a record's turn row only while it's the claim that was read, so a claim made since fails the batch. */
+const releaseClaim = (subject: ReactionSubject, row: Pick<ReactionMove, "claim">): WriteOperation => ({
   type: "deleteMany",
   model: moveModel,
   where: [
     { field: "id", value: turnId(subject) },
-    { field: "toOrgId", value: row.toOrgId },
-    { field: "deleted", value: row.deleted }
+    { field: "claim", value: row.claim }
   ]
 })
 
@@ -714,7 +723,15 @@ const pruneTurns = (subject: ReactionSubject): WriteOperation => ({
  */
 function holdTurn(turn: Turn): WriteOperation[] {
   return [
-    releaseTurn(turn.subject, { toOrgId: turn.toOrgId, deleted: false }),
+    {
+      type: "deleteMany",
+      model: moveModel,
+      where: [
+        { field: "id", value: turnId(turn.subject) },
+        { field: "toOrgId", value: turn.toOrgId },
+        { field: "deleted", value: false }
+      ]
+    },
     turnRow(turn.subject, turn.toOrgId, false)
   ]
 }
@@ -722,28 +739,28 @@ function holdTurn(turn: Turn): WriteOperation[] {
 /**
  * Takes a record's turn for a move, and returns whether it holds it. Only a move to where the record is now takes it,
  * since the move that committed last is the one that put it there, whenever its event was emitted or arrives; a move
- * whose record has moved on, or was deleted, takes none. Two moves to the same organization share the turn, so both run.
+ * whose record has moved on, or was deleted, takes none. Each claim writes the row again with a new `claim`, and only
+ * while the row is still the one it read, so a claim that read the row before another move's claim fails, its delivery
+ * is retried, and it reads the record's organization again. Two moves to the same organization share the turn, since
+ * a page holds it by organization, so both run.
  */
 async function takeTurn(db: Context["db"], subjects: Context["subjects"], turn: Turn): Promise<boolean> {
-  return retried(async () => {
-    const [row, orgId] = await Promise.all([findTurn(db, turn.subject), orgOf(subjects, turn.subject, null)])
-    if (row?.deleted === true || orgId !== turn.toOrgId) {
-      return false
-    }
-    if (row?.toOrgId === turn.toOrgId) {
-      return true
-    }
-    // Another move or a deletion taking the turn meanwhile makes this batch fail, and the turn is read again.
-    await db.batch([
-      ...(row ? [releaseTurn(turn.subject, row)] : []),
-      turnRow(turn.subject, turn.toOrgId, false),
-      pruneTurns(turn.subject)
-    ])
-    return true
-  })
+  const [row, orgId] = await Promise.all([findTurn(db, turn.subject), orgOf(subjects, turn.subject, null)])
+  if (row?.deleted === true || orgId !== turn.toOrgId) {
+    return false
+  }
+  await db.batch([
+    ...(row ? [releaseClaim(turn.subject, row)] : []),
+    turnRow(turn.subject, turn.toOrgId, false),
+    pruneTurns(turn.subject)
+  ])
+  return true
 }
 
-/** Marks a record deleted, which stops any move of it for good, including one to no organization. */
+/**
+ * Marks a record deleted, which stops any move of it, including one to no organization, until the row is cleared after
+ * `moveMemoryMs`.
+ */
 async function endTurns(db: Context["db"], subject: ReactionSubject): Promise<void> {
   await db.batch([
     { type: "deleteMany", model: moveModel, where: [{ field: "id", value: turnId(subject) }] },

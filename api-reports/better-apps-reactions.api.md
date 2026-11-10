@@ -191,6 +191,7 @@ export type ReactionMove = {
     id: string;
     toOrgId: string;
     deleted: boolean;
+    claim: string;
     heldAt: Date;
 };
 

@@ -19,8 +19,10 @@ export type ReactionMove = {
   id: string
   /** The organization the move being followed took the record to, or `""` for none. */
   toOrgId: string
-  /** Whether the record was deleted, which stops any move of it for good. */
+  /** Whether the record was deleted, which stops any move of it while the row is kept. */
   deleted: boolean
+  /** A new value on each claim, so a move that read the row before another claim can't write over it. */
+  claim: string
   /** When the row was last written, so rows no move has used for 30 days can be cleared. */
   heldAt: Date
 }
@@ -75,6 +77,7 @@ export const reactionsSchema: FeatureSchema = {
     fields: {
       toOrgId: { type: "string", defaultValue: "" },
       deleted: { type: "boolean", defaultValue: false },
+      claim: { type: "string" },
       heldAt: { type: "date" }
     },
     indexes: [{ fields: ["heldAt"], name: "reaction_move_by_time" }]
