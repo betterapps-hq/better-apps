@@ -1138,6 +1138,38 @@ describe("with comments", () => {
     ])
   })
 
+  it("leave a page whose writes fail for the next run, then merge the reaction that made them fail", async () => {
+    const setup = withComments()
+    const ids = await busyThread(setup, 10)
+    setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
+    await setup.emit(moved("t-big", "globex", ids))
+    expect(setup.inOrg("globex")).toEqual({ count: 15 })
+    // Right before the last page writes, one of its people reacts the same way in globex, so moving theirs fails.
+    const landed = beforeTurnWrite(setup, (run) => {
+      const left = setup.database.sqlite
+        .prepare(`SELECT subjectId, userId, emoji FROM ${reactionModel} WHERE orgId = 'acme' LIMIT 1`)
+        .get() as { subjectId: string; userId: string; emoji: string }
+      run(
+        `INSERT INTO ${reactionModel} (id, orgId, subjectType, subjectId, userId, emoji, slot, createdAt) VALUES (?, 'globex', 'comments.comment', ?, ?, ?, 9, ?)`,
+        "landed",
+        left.subjectId,
+        left.userId,
+        left.emoji,
+        Date.now()
+      )
+    })
+    await setup.deliver()
+    // The page was tried once, and waits for the next run.
+    expect(landed()).toBe(true)
+    expect(setup.inOrg("acme")).toEqual({ count: 5 })
+    await setup.deliver()
+    await setup.deliver()
+    expect(setup.inOrg("acme")).toEqual({ count: 0 })
+    expect(setup.inOrg("globex")).toEqual({ count: 20 })
+    expect(setup.events("reaction.removed").map((event) => event.data)).toMatchObject([{ reason: "merged" }])
+    expect(setup.events("move.finished")).toHaveLength(1)
+  })
+
   it("refuse a move whose thread is deleted between reading its turn and taking it", async () => {
     const setup = withComments()
     const ids = await busyThread(setup, 10)
