@@ -49,7 +49,10 @@ export interface MoveFinishedData {
   fromOrgId: string
   /** The organization it moved to, or `""` for none. */
   toOrgId: string
-  /** How many records of each subject type moved along, such as the thread and its comments, with reactions or not. */
+  /**
+   * How many records of each subject type moved: the thread, and the comments it had when it moved, with reactions or
+   * not, and whether or not reactions are set up on that subject type.
+   */
   records: { subjectType: string; count: number }[]
 }
 
@@ -64,8 +67,8 @@ export const reactionEvents = {
   /** A person's reactions were removed, in one organization, or in all of them when `orgId` is `null`. */
   "user.removed": defineEvent<{ userId: string; orgId: string | null }>(),
   /**
-   * Reactions finished moving after a record that moved to another organization, such as a comments' thread, with the
-   * records that moved along. Browsers never get it.
+   * Reactions finished moving after a record that moved to another organization, such as a comments' thread: the
+   * reactions on it, and on the records it had when it moved, are in the new organization. Browsers never get it.
    */
   "move.finished": defineEvent<MoveFinishedData>(),
   /**

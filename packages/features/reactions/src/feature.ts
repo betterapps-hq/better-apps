@@ -1086,17 +1086,18 @@ function commentHandlers(config: Config): Record<string, EventHandler> | null {
     },
     "thread.moved": async (event, context) => {
       const data = event.data as ThreadData & { fromOrgId: string }
-      const records = threadRecords([data.thread.id], data.commentIds ?? [])
+      const commentIds = data.commentIds ?? []
       await cleanUp(config, context, {
-        records,
+        records: threadRecords([data.thread.id], commentIds),
         move: {
           subject: { subjectType: commentTypes.thread, subjectId: data.thread.id },
           fromOrgId: data.fromOrgId,
           toOrgId: data.thread.orgId,
-          records: records.map((record) => ({
-            subjectType: record.subjectType,
-            count: new Set(record.subjectIds).size
-          }))
+          // What moved with the thread, whichever of its subject types reactions are set up on.
+          records: [
+            { subjectType: commentTypes.thread, count: 1 },
+            { subjectType: commentTypes.comment, count: new Set(commentIds).size }
+          ]
         }
       })
     }

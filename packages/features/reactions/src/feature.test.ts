@@ -639,7 +639,8 @@ describe("toClientEvent", () => {
 
 describe("with comments", () => {
   // Comments' subject types and events, as @better-apps/comments declares them, without its tables.
-  function withComments({ open = false } = {}) {
+  // `types` are the comments subject types reactions are set up on.
+  function withComments({ open = false, types = ["comments.comment", "comments.thread"] } = {}) {
     const threads = new Map([["t-1", { orgId: "acme", comments: new Set(["c-1", "c-2"]) }]])
     // Runs once, right after the next organization lookup, such as to move a thread while a reaction is saved.
     // `failOnce` fails the next delivery of that reactions event once, after reactions handled it, as a crash would.
@@ -678,7 +679,7 @@ describe("with comments", () => {
         })
       }
     })
-    const feature = reactions({ subjects: { "comments.comment": {}, "comments.thread": {} } })
+    const feature = reactions({ subjects: Object.fromEntries(types.map((type) => [type, {}])) })
     const delivered: BetterAppsEvent[] = []
     const record: EventHandler = (event) => {
       if (hooks.failOnce === event.type) {
@@ -837,6 +838,35 @@ describe("with comments", () => {
     await setup.deliver()
     expect(inOrg("initech")).toEqual({ count: 40 })
     expect(setup.events("move.finished").map((event) => event.data)).toMatchObject([{ toOrgId: "initech" }])
+  })
+
+  it("stop a move when its thread is deleted between pages, reporting no move.finished", async () => {
+    const setup = withComments()
+    const ids = await busyThread(setup, 20)
+    setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
+    await setup.emit(moved("t-big", "globex", ids))
+    expect(setup.inOrg("globex")).toEqual({ count: 30 })
+    setup.threads.delete("t-big")
+    await setup.deliver()
+    await setup.deliver()
+    // The thread's own deletion takes what's left.
+    expect(setup.inOrg("acme")).toEqual({ count: 10 })
+    expect(setup.events("move.finished")).toEqual([])
+  })
+
+  it("count every record that moved with the thread, whichever subject types have reactions", async () => {
+    const setup = withComments({ types: ["comments.comment"] })
+    setup.threads.set("t-1", { orgId: "globex", comments: new Set(["c-1", "c-2"]) })
+    await setup.emit(moved("t-1", "globex", ["c-1", "c-2"]))
+    await setup.deliver()
+    expect(setup.events("move.finished").map((event) => event.data)).toMatchObject([
+      {
+        records: [
+          { subjectType: "comments.thread", count: 1 },
+          { subjectType: "comments.comment", count: 2 }
+        ]
+      }
+    ])
   })
 
   it("keep moving a thread's comments when the job's first comment was deleted before its delivery", async () => {
