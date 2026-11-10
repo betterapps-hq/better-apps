@@ -1,4 +1,5 @@
 import type { DatabaseAdapter } from "./database.js"
+import type { EmitOptions } from "./events.js"
 import type { Actor, Identity } from "./identity.js"
 import type { Subjects } from "./subjects.js"
 
@@ -12,6 +13,7 @@ export interface RouteContext {
   url: URL
   /** The path's parameters, such as `code` for `/s/:code`, decoded. */
   params: Readonly<Record<string, string>>
+  /** The app's database. A `batch` also writes the events the route has emitted so far, so they commit together. */
   db: DatabaseAdapter
   identity: Identity
   /** Who can see the app's subjects. Pass the request to its checks for the person making it, so grants count. */
@@ -24,6 +26,13 @@ export interface RouteContext {
    * response waits for it. A failure goes to the app's `onError` and never changes the response.
    */
   waitUntil(promise: Promise<unknown>): void
+  /**
+   * Emits one of the feature's events, with no actor. It's written to the outbox with the route's next `db.batch`, or
+   * once the response is sent and the work handed to `waitUntil` is done, then delivered to subscribers, or by the next
+   * `app.deliverEvents()` with `later`. Events nobody subscribes to are dropped, and so are events not yet written when
+   * the handler throws.
+   */
+  emit(type: string, data: unknown, options?: EmitOptions): void
 }
 
 /**
