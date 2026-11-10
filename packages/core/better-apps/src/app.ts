@@ -132,6 +132,22 @@ async function validate(schema: StandardSchemaV1, value: unknown): Promise<unkno
   return result.value
 }
 
+/** Hands work to `waitUntil`, or waits for it without one, or when the runtime refuses it, such as after its context ended. */
+async function handOff(
+  work: Promise<void>,
+  waitUntil: ((promise: Promise<unknown>) => void) | undefined
+): Promise<void> {
+  if (waitUntil) {
+    try {
+      waitUntil(work)
+      return
+    } catch {
+      // Waited for below.
+    }
+  }
+  await work
+}
+
 async function readBody(request: Request, limit: number): Promise<string> {
   const tooLarge = () =>
     new BetterAppsError("PAYLOAD_TOO_LARGE", `The request body is larger than ${limit} bytes.`, { status: 413 })
@@ -352,22 +368,39 @@ export function createBetterApps<const Features extends readonly BetterAppsFeatu
     waitUntil: ((promise: Promise<unknown>) => void) | undefined
   ): Promise<Response> {
     const where = { feature: feature.id, route: name }
-    // Work the platform can't keep running after the response is waited for before it's sent.
+    const now = new Date()
+    const events = outbox.track(feature, { actor: null, author: null, now, silent: false })
+    // Work the handler keeps running after the response, settled before its events are written and delivered.
     const kept: Promise<unknown>[] = []
     const keep = (promise: Promise<unknown>) => {
-      const watched = promise.then(
-        () => undefined,
-        (error: unknown) => onError(error, where, waitUntil)
+      kept.push(
+        promise.then(
+          () => undefined,
+          (error: unknown) => onError(error, where, waitUntil)
+        )
       )
-      if (waitUntil) {
-        try {
-          waitUntil(watched)
-          return
-        } catch {
-          // The runtime refused it, such as after its context ended, so the response waits for it instead.
-        }
+    }
+    let answered = false
+    let emitted = false
+    const emit: typeof events.emit = (...args) => {
+      events.emit(...args)
+      emitted = true
+    }
+    // Settles the kept work, then writes the events left over, when the handler answered, and delivers them all.
+    const settle = async () => {
+      while (kept.length > 0) {
+        await Promise.all(kept.splice(0))
       }
-      kept.push(watched)
+      try {
+        if (answered) {
+          await events.flush()
+        }
+      } catch (error) {
+        onError(error, where, waitUntil)
+      }
+      if (events.written.length > 0) {
+        await outbox.deliver(events.written, waitUntil)
+      }
     }
     let actor: Promise<Actor | null> | undefined
     try {
@@ -375,13 +408,15 @@ export function createBetterApps<const Features extends readonly BetterAppsFeatu
         request,
         url,
         params,
-        db,
+        db: events.db,
         identity,
         subjects,
-        now: new Date(),
+        now,
         getActor: async () => (actor ??= identity.getActor(request)),
-        waitUntil: keep
+        waitUntil: keep,
+        emit
       })
+      answered = true
       if (request.method === "HEAD" && response.body) {
         // Cancelling the body lets the handler's source, such as a file being read from storage, close at once. It isn't
         // awaited: when the handler kept a clone, cancelling this branch settles only once the clone is read.
@@ -396,7 +431,10 @@ export function createBetterApps<const Features extends readonly BetterAppsFeatu
       onError(error, where, waitUntil)
       return internalError()
     } finally {
-      await Promise.all(kept)
+      // A route that kept no work and emitted nothing, such as a missing page, leaves nothing to settle.
+      if (kept.length > 0 || emitted) {
+        await handOff(settle(), waitUntil)
+      }
     }
   }
 

@@ -452,8 +452,8 @@ export interface LocalUser {
 
 // @public
 export interface RouteContext {
-    // (undocumented)
     db: DatabaseAdapter;
+    emit(type: string, data: unknown, options?: EmitOptions): void;
     getActor(): Promise<Actor | null>;
     // (undocumented)
     identity: Identity;

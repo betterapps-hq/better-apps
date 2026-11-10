@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "6e0cfff6-4341-4870-9aaa-607fdc75659e",
+  "id": "6a528da8-856b-4a25-bb13-27c28469345c",
   "prevId": "7188e9ae-38d0-48d8-b513-5060cdb1c30a",
   "tables": {
     "invoice": {
@@ -1489,59 +1489,6 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "reaction_move": {
-      "name": "reaction_move",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "to_org_id": {
-          "name": "to_org_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "''"
-        },
-        "deleted": {
-          "name": "deleted",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
-        },
-        "claim": {
-          "name": "claim",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "held_at": {
-          "name": "held_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "reaction_move_by_time": {
-          "name": "reaction_move_by_time",
-          "columns": ["held_at"],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
     "reaction_removal": {
       "name": "reaction_removal",
       "columns": {
@@ -1659,6 +1606,13 @@
         "expires_at": {
           "name": "expires_at",
           "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "expiry_token": {
+          "name": "expiry_token",
+          "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false

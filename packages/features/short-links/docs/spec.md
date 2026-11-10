@@ -25,6 +25,7 @@ Two tables. `shortLink` holds the links:
 | `grantsView`    | boolean      | Whether opening the link lets anyone who has it see the record.                                        |
 | `enabled`       | boolean      | Whether the link opens. Turning it off keeps its code and counts.                                      |
 | `expiresAt`     | date, null   | When it stops opening, or never.                                                                       |
+| `expiryToken`   | string, null | Matches the scheduled `link.expired` of the current `expiresAt`, as [Events](#events) describes.       |
 | `clicks`        | number       | How many times it was opened.                                                                          |
 | `lastClickedAt` | date, null   | When it was last opened.                                                                               |
 | `createdAt`     | date         |                                                                                                        |
@@ -70,6 +71,7 @@ shortLinks({
   codeLength: 8,
   cookie: { name: "better-apps-links", maxAge: 30 * 24 * 60 * 60, domain: "example.com" },
   notFound: ({ request }) => Response.redirect(new URL("/link-not-found", request.url), 302),
+  events: { clickRate: 1, milestones: [1, 10, 100, 1000, 10_000], notFoundPerMinute: 10 },
   source: { param: "via", urls: ({ url }) => url.hostname === "example.com", grants: false }
 })
 ```
@@ -101,6 +103,10 @@ shortLinks({
   must be under the domain, or browsers drop the cookie.
 - `notFound({ request, code })` answers a link that doesn't exist, is turned off or has expired. By default it's a plain
   404 page. It doesn't say which of those it was, so codes can't be probed for links that once existed.
+- `events` sets how often opening links emits events, as [Volume](#volume) describes: `clickRate`, the share of opens
+  that emit `link.clicked`, from 0 to 1, 1 by default; `milestones`, the click counts that emit `link.milestone`, 1, 10,
+  100, 1,000 and 10,000 by default; and `notFoundPerMinute`, the most `link.notFound` events each host emits a minute in
+  each running copy of the app, 10 by default.
 - `source` tells the page a link opens which link that was, as [The page a link opens](#the-page-a-link-opens)
   describes. Off by default.
 
@@ -222,7 +228,8 @@ reader gets them, with names and no user ids, and who reacted shows only where i
   though nothing reads them, since link ids aren't reused. A link stays in the organization it was made in when its
   record moves, and its clicks stay with it. A link removed while its click is being written fails the click row's
   foreign key, and that failed write goes to `onError` like any other.
-- Clicks emit no events.
+- The events an open emits, such as `link.clicked`, are written in the same batch as the click, so a click and its
+  events commit together.
 
 ### Clicks over time
 
@@ -303,7 +310,7 @@ link's host wouldn't, such as when the page is on an organization's domain and t
    access also sets the cookie. With `hosts`, when that cookie couldn't reach the record from this host, it can answer
    `302 Found` to the same link where the cookie does reach it instead, without the cookie or a click, as
    [Links that grant access](#links-that-grant-access) describes.
-6. Records the click after the response.
+6. Records the click and writes the open's events after the response.
 
 ## Expiry and turning a link off
 
@@ -312,6 +319,8 @@ link's host wouldn't, such as when the page is on an organization's domain and t
   code, owner and counts.
 - An expired or turned-off link opens nothing and grants nothing. Both still show in lists, so their managers can turn
   them on again or extend them.
+- `link.expired` is emitted when `expiresAt` passes, whether or not anyone opens the link, as [Events](#events)
+  describes.
 
 ## Actions
 
@@ -354,8 +363,66 @@ for a code that's taken in the link's scope.
 - `link.created`, `link.updated` and `link.removed` carry the link.
 - `subject.removed` carries the record whose links went.
 - `owner.removed` carries the owner whose links went.
+- `link.expired` carries the link once its `expiresAt` passes, whether or not anyone opens it, and whether or not it's
+  on.
+- `link.milestone` carries the link and `clicks`, the milestone its click count reached, one of `events.milestones`.
+
+Opening a link emits these, only for `GET`, never `HEAD`, and writes them after the response. They have no actor, since
+reading the visitor would cost a lookup on every open.
+
+- `link.clicked` is one open. It carries the link's `linkId`, `owner`, `orgId` and `subject`, which is `null` for a URL
+  link, the `host` it opened on, its `outcome`, `forwardedTo`, `country`, `referrer`, `clickedAt` and `sampleRate`. It
+  holds no IP address or user agent.
+  - `outcome` is `opened` for a redirect to the target, and `granted` when it also set the access cookie. A link that
+    grants access, opened on a host whose cookie can't reach the record, sends the visitor on to the same link on a host
+    where it does: its `outcome` is `hopped`, `forwardedTo` names that host, and it counts no click. The open on the
+    other host emits its own and counts. So to count opens, skip the `hopped` ones.
+  - `country` is the two-letter country Cloudflare puts in `request.cf`, such as `DE`, or `null` elsewhere.
+  - `referrer` is the site the visitor came from: the origin of an `http` or `https` `Referer`, such as
+    `https://news.example`, without its path or query, or `null`.
+- `link.granted` is a link that grants access setting its cookie for a visitor whose cookie didn't hold it. It carries
+  the same link fields as `link.clicked`, with the `host` and `grantedAt`. A visitor who opens the link again with the
+  cookie emits only `link.clicked`.
+- `link.notFound` is a code that didn't open on a host that opens links. It carries the `host`, `orgId`, the
+  organization whose domain the host is, or `null` for the app's own host, the `code` as the visitor gave it, up to 64
+  characters, and `requestedAt`. It's the same whether the code is unknown, turned off, expired, in another scope, or a
+  record link of a subject type the feature no longer has, so it says nothing about whose code it is or whether it's a
+  link on another host. A host that opens no links emits nothing.
+
+`expiry.scheduled` is short links' own event, which they subscribe to. Subscribers to `link.expired` don't need it.
 
 Events nobody subscribes to aren't written, as with every feature.
+
+### Volume
+
+- Each event is one outbox row, delivered once written and then removed.
+- `link.clicked` is emitted for every open by default. `events.clickRate` samples them instead: at 0.1, about 1 open in
+  10 emits it. Each event carries `sampleRate`, so a subscriber estimates opens as events divided by `sampleRate`. Exact
+  totals stay in `clicks`. Sampling needs no storage or scheduled job, which batching clicks into one event would.
+- An open's events go in the batch that counts its click. On D1, an open is one read before the response, or two on an
+  organization's domain when the first misses, then one batch after it, and each delivered event adds two statements,
+  one to claim it and one to remove it, besides what its subscribers do. That's well under D1's limit of 50 queries a
+  request. Event rows go in one insert, split to stay under 100 bound parameters a statement.
+- `link.granted` is emitted once per visitor and link, until their cookie forgets it, after 30 days by default or 20
+  newer links.
+- `link.notFound` is limited to `events.notFoundPerMinute` a host each minute, 10 by default. It's counted in memory, so
+  it costs no query, and the limit applies in each running copy of the app, such as each Worker isolate, rather than
+  across all of them. Guessing codes can fill the outbox with at most that many rows a minute per copy.
+- `link.milestone` and `link.expired` are rare.
+
+### Exactly once
+
+- A milestone is emitted by the click whose increment returned that count. The increment is one statement that adds one
+  and returns the new count, so each count goes to one click, and each milestone is emitted once, however many clicks
+  land at the same moment. The event is written after the increment commits, so a crash between the two loses the
+  milestone rather than emitting it twice.
+- Making a link with `expiresAt`, or changing it, gives the link a new `expiryToken` and writes `expiry.scheduled` with
+  it, in the same batch. The outbox holds the event until `expiresAt`. Clearing the expiry clears the token. When the
+  event is delivered, a link that's gone, or whose token has changed, emits nothing, so a changed, cleared or removed
+  expiry never fires. Otherwise `link.expired` is written in one batch with the token's removal, so a retried delivery
+  emits it once.
+- `link.expired` needs `app.deliverEvents()` on a schedule, such as every minute. The first run at or after `expiresAt`
+  emits it.
 
 ## Cleanup
 
@@ -500,7 +567,8 @@ once per record in a call, so `list` asks once per record on the page, however m
 Short links use two pieces of core `better-apps`:
 
 - [Public routes](../../../core/better-apps/README.md#routes) serve `GET {path}/:code`. The route reads the link with
-  the `db`, sees the host in its `url`, and records the click with its `waitUntil`. `createBetterApps` refuses a `path`
-  where links could be mistaken for action URLs, such as one directly under `basePath`.
+  the `db`, sees the host in its `url`, records the click with its `waitUntil`, and writes the open's events with its
+  `emit`. `createBetterApps` refuses a `path` where links could be mistaken for action URLs, such as one directly under
+  `basePath`.
 - [Access grants](../../../core/better-apps/README.md#access-grants) let a link's cookie widen read checks that pass the
   request. Without a request, grants play no part, so writes and checks for other people never count them.
