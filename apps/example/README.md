@@ -57,10 +57,11 @@ Then open <http://127.0.0.1:4190>. `build` and `preview` run the production buil
   comments. The invoice page has a Files panel: add files with the button or by dropping them on the panel, watch each
   upload's progress, try a failed one again, open or download a file, move it up or down, and delete it. Whoever added a
   file can delete it, and so can Ada. Comment boxes have a paperclip: files upload while the comment is written and
-  attach once it's posted. Uploads go through [`@better-apps/uploadcn`](../../packages/integrations/uploadcn/README.md),
-  with UploadCN's `Upload` primitives styled with the kit, `useAttachmentsUploader` in the panel and `useDraftUploader`
-  in comment boxes. Images show a thumbnail. Uploads, failures, moves and deletions are announced in polite live
-  regions, and a failure also shows beside its upload. The Files panel is for signed-in people. The UI is in
+  attach once it's posted. Files picked while a comment posts wait for the next one. Uploads go through
+  [`@better-apps/uploadcn`](../../packages/integrations/uploadcn/README.md), with UploadCN's `Upload` primitives styled
+  with the kit, `useAttachmentsUploader` in the panel and `useDraftUploader` in comment boxes. Images show a thumbnail.
+  Uploads, failures, moves and deletions are announced in polite live regions, with files picked together said in one
+  message, and a failure also shows beside its upload. The Files panel is for signed-in people. The UI is in
   `src/invoice-files.tsx`. The bytes go in a folder through the storage adapter in `src/folder-storage.server.ts`, where
   a Worker would use [`@better-apps/storage-r2`](../../packages/adapters/storage-r2/README.md). On start, the server
   sweeps away uploads that never finished and drafts that were never posted.

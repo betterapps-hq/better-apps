@@ -17,10 +17,15 @@ export interface AttachmentsUploaderOptions extends Omit<UseUploaderOptions<File
 }
 
 // @public
-export interface DraftUploader {
+export interface DraftHandoff {
     attachTo(subjectId: string): Promise<void>;
+}
+
+// @public
+export interface DraftUploader {
     busy: boolean;
     clear(): void;
+    take(): DraftHandoff;
     // (undocumented)
     uploader: Uploader<FileInfo>;
 }

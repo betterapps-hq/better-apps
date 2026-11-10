@@ -4,6 +4,7 @@
 import type { AttachmentSettings, AttachmentsClient, FileInfo, UploadTarget } from "@better-apps/attachments/client"
 import {
   abortError,
+  getFileType,
   isActiveStatus,
   toUploadError,
   UploadError,
@@ -172,6 +173,8 @@ export function attachmentsAdapter<SubjectType extends string = string>(
         saveResumeState(null)
         void quietly(client.deleteFile(fileId))
       }
+      // UploadCN takes a file with no type by its extension, as some systems give a CSV, so attachments gets that type.
+      const typed = file.type ? file : file.slice(0, file.size, getFileType(file))
       let state = isResumeState(resumeState) ? resumeState : null
       if (state && !state.sent && state.expiresAt - Date.now() < renewEarlyMs) {
         drop(state)
@@ -181,7 +184,9 @@ export function attachmentsAdapter<SubjectType extends string = string>(
         if (!state) {
           // Preparing isn't stopped midway, so a file the server made for an upload stopped meanwhile is known and
           // deleted. UploadCN keeps no state after a stop, so `abort` couldn't.
-          const prepared = await client.prepareUpload(file, targetOf(item), { name: item.name })
+          // A new upload sends every byte again, so its progress starts over.
+          onProgress(0, file.size)
+          const prepared = await client.prepareUpload(typed, targetOf(item), { name: item.name })
           if (signal.aborted) {
             void quietly(client.deleteFile(prepared.file.id))
             throw abortError(signal.reason)
@@ -201,7 +206,7 @@ export function attachmentsAdapter<SubjectType extends string = string>(
             method: "PUT",
             url: state.url,
             headers: sendable(state.headers),
-            body: file,
+            body: typed,
             signal,
             onUploadProgress: (loaded, total) => onProgress(loaded, total)
           })
@@ -269,7 +274,9 @@ export function attachmentsAdapter<SubjectType extends string = string>(
 /**
  * UploadCN's checks for what attachments allows: the media types, which also limit the file picker, the size, and for
  * a record, the places left on it when `existing` says how many files it has. `null` settings, still loading, check
- * nothing, and the server still refuses what it doesn't allow.
+ * nothing, and the server still refuses what it doesn't allow. Every limit is given, with `[]` for any type and
+ * `Infinity` for any number of files, so an uploader whose options are merged, as `useUploader`'s are, drops one that
+ * no longer applies.
  */
 export function uploadLimits(
   settings: AttachmentSettings | null,
@@ -279,11 +286,10 @@ export function uploadLimits(
     return {}
   }
   return {
-    ...(settings.contentTypes ? { accept: settings.contentTypes } : {}),
+    accept: settings.contentTypes ?? [],
     maxSize: settings.maxSize,
-    ...(settings.maxFiles !== null && existing !== undefined
-      ? { maxFiles: Math.max(0, settings.maxFiles - existing) }
-      : {})
+    maxFiles:
+      settings.maxFiles !== null && existing !== undefined ? Math.max(0, settings.maxFiles - existing) : Infinity
   }
 }
 

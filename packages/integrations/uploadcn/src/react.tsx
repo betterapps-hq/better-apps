@@ -5,7 +5,7 @@ import { useAttachmentsClient, useAttachmentSettings } from "@better-apps/attach
 import { useStore } from "@better-apps/react"
 import type { Transport, Uploader } from "@uploadcn/core"
 import { useUploader, useUploadSelector, type UseUploaderOptions } from "@uploadcn/react"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { attachmentsAdapter, isUnderWay, uploadLimits } from "./index.js"
 
 export interface AttachmentsUploaderOptions extends Omit<UseUploaderOptions<FileInfo>, "adapter"> {
@@ -48,7 +48,15 @@ export function useAttachmentsUploader<Types extends AttachmentsTypes = Attachme
       }),
     [client, targets, transport]
   )
-  const uploader = useUploader<FileInfo>({ ...uploadLimits(settings, { existing }), ...options, adapter })
+  const engine = { ...uploadLimits(settings, { existing }), ...options, adapter }
+  const uploader = useUploader<FileInfo>(engine)
+  // `useUploader` hands UploadCN its options after rendering, and `Upload.Root` reads them while rendering, so the limits
+  // go now too, for the file picker's types once the settings load. Handing UploadCN the same limits again changes
+  // nothing, and limits alone don't change its queue.
+  const { accept, maxSize, maxFiles } = engine
+  uploader.setOptions(
+    Object.fromEntries(Object.entries({ accept, maxSize, maxFiles }).filter(([, value]) => value !== undefined))
+  )
   useEffect(() => {
     const current = (subjectType === undefined ? { owner } : { subjectType, subjectId }) as UploadTarget
     const added = uploader.on("add", ({ items }) => {
@@ -74,24 +82,33 @@ export function useAttachmentsUploader<Types extends AttachmentsTypes = Attachme
   return uploader
 }
 
+/** The drafts picked for a record about to be saved, from `DraftUploader.take`. */
+export interface DraftHandoff {
+  /**
+   * Puts the drafts taken that finished on the saved record, then takes every draft taken off the queue. Those picked
+   * after `take` stay, for the next record. When the files can't be attached, they stay in the queue and it throws.
+   */
+  attachTo(subjectId: string): Promise<void>
+}
+
 /** What `useDraftUploader` returns. */
 export interface DraftUploader {
   uploader: Uploader<FileInfo>
   /** Whether a draft hasn’t finished, such as one paused while offline, so its record shouldn’t be saved yet. */
   busy: boolean
   /**
-   * Puts the drafts that finished on the saved record, then takes every draft the queue held off it. Drafts picked
-   * meanwhile stay.
+   * Takes the drafts picked so far, for the record about to be saved. Take them before saving, so drafts picked while it
+   * saves wait for the next record. A record that isn't saved needs nothing more: the drafts stay in the queue.
    */
-  attachTo(subjectId: string): Promise<void>
+  take(): DraftHandoff
   /** Empties the queue: drafts that finished are deleted, and those still uploading stop. */
   clear(): void
 }
 
 /**
  * An UploadCN uploader for files picked before their record exists, such as a comment's before it's posted. They upload
- * at once as drafts of the subject type, so saving the record doesn't wait, and `attachTo` puts them on it. Removing a
- * draft that finished deletes it, so it doesn't wait for the sweep.
+ * at once as drafts of the subject type, so saving the record doesn't wait, and `take` hands them to it. Removing a
+ * draft that finished deletes it, so it doesn't wait for the sweep, unless it's being attached.
  */
 export function useDraftUploader<Types extends AttachmentsTypes = AttachmentsTypes>(
   subjectType: Types["subjectType"],
@@ -99,36 +116,56 @@ export function useDraftUploader<Types extends AttachmentsTypes = AttachmentsTyp
 ): DraftUploader {
   const client = useAttachmentsClient()
   const uploader = useAttachmentsUploader<Types>({ subjectType }, options)
-  // Drafts that went on their record leave the queue without being deleted.
-  const attached = useRef(new Set<string>())
+  // Drafts going on a record, or already on it, leave the queue without being deleted.
+  const [attaching] = useState(() => new Set<string>())
   useEffect(
     () =>
       uploader.on("remove", ({ item }) => {
-        if (item.status === "success" && item.result && !attached.current.delete(item.id)) {
-          client.deleteFile(item.result.id).catch(() => undefined)
+        if (item.status === "success" && item.result && !attaching.has(item.id)) {
+          void client.deleteFile(item.result.id).catch(() => undefined)
         }
       }),
-    [client, uploader]
+    [client, uploader, attaching]
   )
   const busy = useUploadSelector(uploader, (state) => state.items.some(isUnderWay))
-  const attachTo = useCallback(
-    async (subjectId: string) => {
-      const { items } = uploader.getState()
-      const done = items.filter((item) => item.status === "success" && item.result)
-      if (done.length > 0) {
-        await client.attach(
-          { subjectType, subjectId },
-          done.map((item) => (item.result as FileInfo).id)
-        )
+  const take = useCallback((): DraftHandoff => {
+    const taken = new Set(uploader.getState().items.map((item) => item.id))
+    return {
+      async attachTo(subjectId) {
+        const held = () => uploader.getState().items.filter((item) => taken.has(item.id))
+        // Drafts another hand-off is attaching stay with it.
+        const done = held().filter((item) => item.status === "success" && item.result && !attaching.has(item.id))
+        for (const item of done) {
+          attaching.add(item.id)
+        }
+        try {
+          if (done.length > 0) {
+            await client.attach(
+              { subjectType, subjectId },
+              done.map((item) => (item.result as FileInfo).id)
+            )
+          }
+        } catch (error) {
+          for (const item of done) {
+            attaching.delete(item.id)
+          }
+          // A draft removed while it was being attached is deleted now, as removing it would have.
+          const left = new Set(uploader.getState().items.map((item) => item.id))
+          for (const item of done) {
+            if (!left.has(item.id)) {
+              void client.deleteFile((item.result as FileInfo).id).catch(() => undefined)
+            }
+          }
+          throw error
+        }
+        const mine = new Set(done.map((item) => item.id))
+        uploader.remove(held().flatMap((item) => (mine.has(item.id) || !attaching.has(item.id) ? [item.id] : [])))
+        for (const item of done) {
+          attaching.delete(item.id)
+        }
       }
-      for (const item of done) {
-        attached.current.add(item.id)
-      }
-      // Drafts picked while the record saved stay, for the next one.
-      uploader.remove(items.map((item) => item.id))
-    },
-    [client, subjectType, uploader]
-  )
+    }
+  }, [client, subjectType, uploader, attaching])
   const clear = useCallback(() => uploader.remove(), [uploader])
-  return { uploader, busy, attachTo, clear }
+  return { uploader, busy, take, clear }
 }

@@ -241,11 +241,24 @@ describe("attachmentsAdapter", () => {
     const view = setup()
     view.failCalls("completeUpload", 409, { code: "CONFLICT" })
     const uploader = uploaderFor(view, inv1)
+    const progress: number[] = []
+    uploader.on("progress", ({ item }) => progress.push(item.progress.loaded))
     await uploader.add([pick("hello")])
     const [item] = await settled(uploader)
     expect(item?.status).toBe("success")
     expect([count(view.calls, "createUpload"), view.sends.length]).toEqual([2, 2])
+    // Sending every byte again starts the progress over.
+    expect(progress.indexOf(0, progress.indexOf(5))).toBeGreaterThan(0)
     await until(() => view.liveFiles() === 1)
+  })
+
+  it("uploads a file with no type as the type its extension gives", async () => {
+    const view = setup()
+    const uploader = uploaderFor(view, inv1)
+    await uploader.add([pick("hello", "notes.txt", "")])
+    const [item] = await settled(uploader)
+    expect(item?.status).toBe("success")
+    expect(item?.result?.contentType).toBe("text/plain")
   })
 
   it("refuses bytes storage says are too large, with the upload route's own message", async () => {
@@ -410,9 +423,14 @@ describe("uploadLimits", () => {
 
   it("checks the types, the size and the places left on a record", () => {
     expect(uploadLimits(null)).toEqual({})
-    expect(uploadLimits(settings)).toEqual({ accept: ["image/*"], maxSize: 1000 })
+    expect(uploadLimits(settings)).toEqual({ accept: ["image/*"], maxSize: 1000, maxFiles: Infinity })
     expect(uploadLimits(settings, { existing: 2 })).toEqual({ accept: ["image/*"], maxSize: 1000, maxFiles: 1 })
     expect(uploadLimits(settings, { existing: 5 })).toMatchObject({ maxFiles: 0 })
-    expect(uploadLimits({ contentTypes: null, maxSize: 10, maxFiles: null }, { existing: 1 })).toEqual({ maxSize: 10 })
+    // No limit is given as one, so an uploader whose options merge drops the earlier limit.
+    expect(uploadLimits({ contentTypes: null, maxSize: 10, maxFiles: null }, { existing: 1 })).toEqual({
+      accept: [],
+      maxSize: 10,
+      maxFiles: Infinity
+    })
   })
 })

@@ -24,7 +24,7 @@ import {
   Progress,
   Spinner
 } from "@buildkitgg/shadcn-baseui-kit"
-import type { UploadItem, UploaderState, UploadStatus } from "@uploadcn/core"
+import type { Uploader, UploadItem, UploaderState, UploadStatus } from "@uploadcn/core"
 import { Upload, useUploadContext, useUploadItem, useUploadSelector, type UploadMessages } from "@uploadcn/react"
 import {
   ArrowDownIcon,
@@ -117,20 +117,77 @@ function useAnnouncer() {
 /** Ends a message with a full stop, as UploadCN's own messages don't. */
 const sentence = (text: string) => (/[.!?]$/.test(text) ? text : `${text}.`)
 
+/** Says nothing, for what `useUploadAnnouncements` says instead. */
+const silent = () => ""
+
 /**
- * What UploadCN says about uploads, in the app's voice. Its own checks, such as a file that's too large, keep UploadCN's
- * wording, and the server's refusals keep attachments'.
+ * UploadCN's labels in the app's voice. What happens to uploads is said by `useUploadAnnouncements`, so UploadCN's own
+ * announcements are silent.
  */
 const uploadMessages: Partial<UploadMessages> = {
-  added: (count) => (count === 1 ? "Uploading 1 file" : `Uploading ${count} files`),
-  uploaded: (name) => `${name} uploaded`,
-  failed: (name, reason) => `${name} couldn’t upload. ${sentence(reason)}`,
-  rejected: (name, reason) => `${name} couldn’t upload. ${sentence(reason)}`,
-  cancelled: (name) => `Stopped uploading ${name}`,
+  added: silent,
+  uploaded: silent,
+  failed: silent,
+  rejected: silent,
+  cancelled: silent,
   remove: (name) => `Remove ${name}`,
   cancel: (name) => `Stop uploading ${name}`,
   retry: (name) => `Try uploading ${name} again`,
   progress: (name) => `Uploading ${name}`
+}
+
+/**
+ * Says what happened to uploads through `announce`, gathering what happens at once into one message. UploadCN's own
+ * announcer says each event over the last, so of several files picked together only the last would be heard, and it
+ * doesn't say the same words twice, such as a second failure. Files refused as they're added aren't counted as
+ * uploading. Its own checks, such as a file that's too large, keep UploadCN's wording, and the server's refusals keep
+ * attachments'.
+ */
+function useUploadAnnouncements(uploader: Uploader<FileInfo>, announce: (text: string) => void) {
+  useEffect(() => {
+    let added = new Set<string>()
+    let said: string[] = []
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const flush = () => {
+      const { items } = uploader.getState()
+      const starting = items.filter((item) => added.has(item.id) && item.status !== "rejected").length
+      const counted = starting === 1 ? "Uploading 1 file." : `Uploading ${starting} files.`
+      const text = [...(starting > 0 ? [counted] : []), ...said].join(" ")
+      added = new Set()
+      said = []
+      if (text) {
+        announce(text)
+      }
+    }
+    // Refusals of files just added come a moment after them, once UploadCN has checked each.
+    const soon = () => {
+      clearTimeout(timer)
+      timer = setTimeout(flush, 150)
+    }
+    const say = (text: string) => {
+      said.push(text)
+      soon()
+    }
+    const failed = (item: UploadItem, reason: string) => say(`${item.name} couldn’t upload. ${sentence(reason)}`)
+    const listeners = [
+      uploader.on("add", ({ items }) => {
+        for (const item of items) {
+          added.add(item.id)
+        }
+        soon()
+      }),
+      uploader.on("success", ({ item }) => say(`${item.name} uploaded.`)),
+      uploader.on("error", ({ item, error }) => failed(item, error.message)),
+      uploader.on("reject", ({ item }) => failed(item, item.issues[0]?.message ?? "It isn’t allowed here")),
+      uploader.on("cancel", ({ item }) => say(`Stopped uploading ${item.name}.`))
+    ]
+    return () => {
+      clearTimeout(timer)
+      for (const off of listeners) {
+        off()
+      }
+    }
+  }, [uploader, announce])
 }
 
 /**
@@ -365,6 +422,17 @@ function FileCard({ file, index, count, canDelete, onMove, onDelete }: FileCardP
   )
 }
 
+/** Why a full invoice takes no more files, or `null` when it takes more. Failed and waiting uploads keep their places. */
+function fullHint(full: boolean, count: number, maxFiles: number | null) {
+  if (!full) {
+    return null
+  }
+  if (count >= (maxFiles ?? 0)) {
+    return `This invoice has ${maxFiles} files, the most it can hold.`
+  }
+  return "Uploads take this invoice’s last places. Remove one to add another file."
+}
+
 /** Refuses a drag of files, so a full invoice takes no more. */
 function refuseDrop(event: DragEvent) {
   event.preventDefault()
@@ -384,6 +452,7 @@ export function FilesPanel({ invoiceId }: { invoiceId: string }) {
   const uploader = useAttachmentsUploader<AttachmentTypes>(subject)
   const { settings } = useAttachmentSettings<AttachmentTypes>("invoice")
   const [message, announce] = useAnnouncer()
+  useUploadAnnouncements(uploader, announce)
   const addRef = useRef<HTMLButtonElement>(null)
   const hintId = useId()
   // A finished upload leaves the queue once it's in the list, so the two never count a file twice.
@@ -470,7 +539,7 @@ export function FilesPanel({ invoiceId }: { invoiceId: string }) {
           </Upload.Trigger>
         </div>
         <p id={hintId} className="panel-hint">
-          {full ? `This invoice has ${maxFiles} files, the most it can hold.` : limitsOf(settings)}
+          {fullHint(full, files.length, maxFiles) ?? limitsOf(settings)}
         </p>
         <output className="visually-hidden">{message}</output>
         {writeError && (
@@ -534,6 +603,7 @@ export function useCommentFiles() {
   const drafts = useDraftUploader<AttachmentTypes>(commentType)
   const { settings } = useAttachmentSettings<AttachmentTypes>(commentType)
   const [message, announce] = useAnnouncer()
+  useUploadAnnouncements(drafts.uploader, announce)
   const count = useUploadSelector(drafts.uploader, (state) => state.items.length)
   const taken = useUploadSelector(drafts.uploader, placesTaken)
   const maxFiles = settings?.maxFiles ?? null
@@ -583,10 +653,12 @@ interface DraftFilesProps {
   files: CommentFiles
   /** Where focus goes once a file's remove button is gone. */
   returnFocus: RefObject<HTMLButtonElement | null>
+  /** The id of where focus goes when `returnFocus` goes too, such as a reply's paperclip once its last file is removed. */
+  fallbackFocusId?: string | undefined
 }
 
 /** A comment's files before it's posted, with each one's progress and a button to remove it. */
-export function DraftFiles({ files, returnFocus }: DraftFilesProps) {
+export function DraftFiles({ files, returnFocus, fallbackFocusId }: DraftFilesProps) {
   return (
     <>
       <output className="visually-hidden">{files.message}</output>
@@ -598,6 +670,11 @@ export function DraftFiles({ files, returnFocus }: DraftFilesProps) {
         onRemove={(item) => {
           files.announce(`Removed ${item.name}`)
           returnFocus.current?.focus()
+          requestAnimationFrame(() => {
+            if (!returnFocus.current?.isConnected && fallbackFocusId) {
+              document.getElementById(fallbackFocusId)?.focus()
+            }
+          })
         }}
       />
     </>
