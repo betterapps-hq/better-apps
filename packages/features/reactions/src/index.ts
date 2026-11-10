@@ -14,6 +14,7 @@ export {
   type ClientReactionChange,
   type ClientReactionEvent,
   type ClientRecordChange,
+  type LiveViewer,
   type ReactionSettings,
   type ReactionSummary,
   type ReactionsFeature,

@@ -36,7 +36,7 @@ export type {
   UpdateAnchorInput,
   UpdateThreadInput
 } from "./options.js"
-export type { ClientEvent, ThreadPage, ThreadWithComments } from "./reads.js"
+export type { ClientEvent, LiveViewer, ThreadPage, ThreadWithComments } from "./reads.js"
 export {
   commentModel,
   commentsSchema,

@@ -2,8 +2,6 @@ import {
   Button,
   Card,
   CardContent,
-  CardHeader,
-  CardTitle,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -110,31 +108,17 @@ function InvoicePage({ invoice }: { invoice: LoadedInvoice }) {
       <div className="invoice-layout">
         <InvoiceSheet invoice={invoice} sheetRef={sheet} commenting={viewer !== null} />
         <aside aria-label="Collaboration">
-          {viewer ? (
-            <CommentsPanel />
-          ) : (
-            <Card>
-              <CardHeader>
-                <CardTitle>
-                  <h2>Comments</h2>
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <SignInPrompt>to discuss this invoice with your team.</SignInPrompt>
-              </CardContent>
-            </Card>
-          )}
+          <CommentsPanel />
         </aside>
       </div>
     </>
   )
 
-  return viewer ? (
+  // Someone signed out only gets here through a share link, which lets them read the comments but not add any.
+  return (
     <InvoiceCommentsProvider subject={subject} root={sheet} details={details}>
       {page}
     </InvoiceCommentsProvider>
-  ) : (
-    page
   )
 }
 

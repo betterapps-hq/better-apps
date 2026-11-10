@@ -601,7 +601,7 @@ describe("toClientEvent", () => {
     expect(
       await api.toClientEvents({
         event,
-        viewers: [identity.actor("bob"), identity.actor("gus"), null, identity.actor("ada")]
+        viewers: [identity.actor("bob"), identity.actor("gus"), null, identity.actor("ada")].map((actor) => ({ actor }))
       })
     ).toEqual([
       expect.objectContaining({ userId: "ada", mine: false }),
@@ -610,7 +610,9 @@ describe("toClientEvent", () => {
       expect.objectContaining({ mine: true })
     ])
     expect(await api.toClientEvents({ event, viewers: [] })).toEqual([])
-    expect(await api.toClientEvents({ event: { ...event, type: "user.removed" }, viewers: [null] })).toEqual([null])
+    expect(await api.toClientEvents({ event: { ...event, type: "user.removed" }, viewers: [{ actor: null }] })).toEqual(
+      [null]
+    )
     expect(await api.toClientEvent({ event, viewer: identity.actor("bob") })).toMatchObject({ mine: false })
     expect(await api.toClientEvent({ event, viewer: identity.actor("gus") })).toBeNull()
     expect(await api.toClientEvent({ event, viewer: null })).toBeNull()

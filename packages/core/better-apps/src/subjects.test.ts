@@ -8,6 +8,7 @@ import {
   defineSubject,
   type Actor,
   type BetterAppsFeature,
+  type ErrorContext,
   type Identity,
   type SubjectArgs,
   type SubjectDefinition
@@ -31,8 +32,12 @@ const page: SubjectDefinition = {
   publicRead: ({ subjectId }) => subjectId.startsWith("public-")
 }
 
-function setup(subjects: Record<string, SubjectDefinition> = { invoice, page }, features: BetterAppsFeature[] = []) {
-  return createBetterApps({ database: memoryDatabase().database, identity, subjects, features })
+function setup(
+  subjects: Record<string, SubjectDefinition> = { invoice, page },
+  features: BetterAppsFeature[] = [],
+  onError?: (error: unknown, context: ErrorContext) => void
+) {
+  return createBetterApps({ database: memoryDatabase().database, identity, subjects, features, onError })
 }
 
 describe("subjects", () => {
@@ -171,16 +176,18 @@ describe("subjects", () => {
     )
   })
 
-  it("counts grants a request carries, only for checks that pass it, asking each feature once per request", async () => {
+  it("counts grants a request carries, only for checks that pass it, asking each feature once per call", async () => {
     const asked: string[][] = []
     // Grants invoices whose id is in the request's x-share header.
     const shares = defineFeature({
       id: "shares",
       grants: {
-        canViewMany: (refs, { request }) => {
-          asked.push(refs.map((ref) => ref.subjectId))
-          const shared = (request.headers.get("x-share") ?? "").split(",")
-          return refs.map((ref) => ref.subjectType === "invoice" && shared.includes(ref.subjectId))
+        canViewMany: (checks) => {
+          asked.push(checks.map((check) => check.subjectId))
+          return checks.map(
+            ({ subjectType, subjectId, request }) =>
+              subjectType === "invoice" && (request.headers.get("x-share") ?? "").split(",").includes(subjectId)
+          )
         }
       }
     })
@@ -205,5 +212,97 @@ describe("subjects", () => {
     expect(allowed).toEqual([true, true, false, false])
     // inv-1 passed the app's rules, so only the refused checks that carry the request were asked about.
     expect(asked).toEqual([["inv-2", "draft"]])
+
+    // Checks carrying different requests, such as one per live connection, are asked together, and repeats once.
+    asked.length = 0
+    const other = new Request("https://app.test/", { headers: { "x-share": "inv-3" } })
+    const many = await subjects.canViewMany([
+      { actor: null, ...inv2, request },
+      { actor: solo, ...inv2, request },
+      { actor: null, ...inv2, request: other },
+      { actor: null, subjectType: "invoice", subjectId: "inv-3", request: other }
+    ])
+    expect(many).toEqual([true, true, false, true])
+    expect(asked).toEqual([["inv-2", "inv-2", "inv-3"]])
+  })
+
+  it("lets grants report an error they recovered from to the app's onError, as their feature's", async () => {
+    const failure = new Error("The share service is down.")
+    const shares = defineFeature({
+      id: "shares",
+      grants: {
+        canViewMany: (checks, { reportError }) => {
+          reportError(failure)
+          return checks.map(() => false)
+        }
+      }
+    })
+    const onError = vi.fn<(error: unknown, context: ErrorContext) => void>()
+    const { subjects } = setup({ invoice, page }, [shares], onError)
+    const request = new Request("https://app.test/")
+    expect(await subjects.canView(ada, { subjectType: "invoice", subjectId: "inv-2" }, { request })).toBe(false)
+    expect(onError).toHaveBeenCalledWith(failure, { feature: "shares" })
+  })
+
+  it("fails a throwing grant closed and reports it, while other grants and the check go on", async () => {
+    const failure = new Error("The share service is down.")
+    const broken = defineFeature({
+      id: "broken",
+      grants: {
+        canViewMany: () => {
+          throw failure
+        }
+      }
+    })
+    const shares = defineFeature({
+      id: "shares",
+      grants: { canViewMany: (checks) => checks.map((check) => check.subjectId === "inv-2") }
+    })
+    const onError = vi.fn<(error: unknown, context: ErrorContext) => void>()
+    const { subjects } = setup({ invoice, page }, [broken, shares], onError)
+    const request = new Request("https://app.test/")
+    expect(await subjects.canView(ada, { subjectType: "invoice", subjectId: "inv-2" }, { request })).toBe(true)
+    expect(await subjects.canView(ada, { subjectType: "invoice", subjectId: "inv-3" }, { request })).toBe(false)
+    expect(onError).toHaveBeenCalledWith(failure, { feature: "broken" })
+
+    // An onError that throws doesn't fail the check either.
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    try {
+      const { subjects: strict } = setup({ invoice, page }, [broken, shares], () => {
+        throw new Error("The reporter is down.")
+      })
+      expect(await strict.canView(ada, { subjectType: "invoice", subjectId: "inv-2" }, { request })).toBe(true)
+    } finally {
+      logged.mockRestore()
+    }
+  })
+
+  it("hands a grant's report to the waitUntil of the request it was checking", async () => {
+    const shares = defineFeature({
+      id: "shares",
+      grants: {
+        canViewMany: (checks, { reportError }) => {
+          reportError(new Error("A link's maker couldn't be checked."))
+          return checks.map(() => false)
+        }
+      },
+      actions: {
+        peek: defineAction({
+          handler: async ({ actor, subjects, request }) =>
+            subjects.canView(actor, { subjectType: "invoice", subjectId: "inv-2" }, { request })
+        })
+      }
+    })
+    const app = createBetterApps({
+      database: memoryDatabase().database,
+      identity,
+      subjects: { invoice, page },
+      features: [shares],
+      onError: async () => undefined
+    })
+    const waitUntil = vi.fn<(promise: Promise<unknown>) => void>()
+    const request = new Request("https://app.test/")
+    expect(await app.api.shares.peek(undefined, { actor: ada, request, waitUntil })).toBe(false)
+    expect(waitUntil).toHaveBeenCalledWith(expect.any(Promise))
   })
 })
