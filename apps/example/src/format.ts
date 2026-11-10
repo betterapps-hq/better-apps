@@ -38,3 +38,12 @@ export function totalsByCurrency(items: readonly { amount: number; currency: str
 export function plural(count: number, one: string, many: string) {
   return `${count} ${count === 1 ? one : many}`
 }
+
+/** A file's size, such as "820 bytes", "14 KB" or "2.5 MB". */
+export function formatSize(bytes: number) {
+  if (bytes < 1024) {
+    return plural(bytes, "byte", "bytes")
+  }
+  const [amount, unit] = bytes < 1024 * 1024 ? [bytes / 1024, "KB"] : [bytes / (1024 * 1024), "MB"]
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(amount)} ${unit}`
+}

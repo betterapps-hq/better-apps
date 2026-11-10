@@ -1,4 +1,5 @@
 import { elementAnchor } from "@better-apps/anchors"
+import { attachments } from "@better-apps/attachments"
 import { comments, commentSubjectTypes } from "@better-apps/comments"
 import {
   domainModel,
@@ -12,6 +13,8 @@ import { reactions } from "@better-apps/reactions"
 import { shortLinks } from "@better-apps/short-links"
 import { BetterAppsError, defineAction, defineFeature, type SubjectDefinition } from "better-apps"
 import { z } from "zod"
+// With its extension, because generating the schema loads this file in Node without a bundler.
+import { folderStorage } from "./folder-storage.server.ts"
 
 /** A note as the home page shows it. */
 export interface Note {
@@ -122,6 +125,31 @@ const invoiceLinks = shortLinks({
   subjects: { invoice: { url: ({ subjectId }) => `/invoices/${subjectId}`, grantView: true } }
 })
 
+/** Files up to 10 MB. */
+const maxSize = 10 * 1024 * 1024
+
+/**
+ * Files on invoices and on comments. Whoever can see an invoice or a comment can add files to it, whoever added a file
+ * can take it off, and so can the workspace owner. The bytes go in a folder beside the database.
+ */
+const invoiceFiles = attachments({
+  storage: folderStorage(process.env.FILES_FOLDER ?? ".data/files"),
+  subjects: {
+    invoice: {
+      canModerate: ({ actor }) => isOwner(actor.userId),
+      contentTypes: ["application/pdf", "image/*", "text/plain", "text/csv"],
+      maxSize,
+      maxFiles: 10
+    },
+    [commentSubjectTypes.comment]: {
+      canModerate: ({ actor }) => isOwner(actor.userId),
+      contentTypes: ["application/pdf", "image/*"],
+      maxSize,
+      maxFiles: 4
+    }
+  }
+})
+
 /**
  * Custom domains on a provider kept in memory, with its own DNS, so the example never calls Cloudflare. The provider
  * forgets its hostnames on restart, which the next check registers again.
@@ -170,5 +198,6 @@ export const features = [
   commentReactions,
   invoiceLinks,
   workspaceDomains,
-  demoCustomer
+  demoCustomer,
+  invoiceFiles
 ] as const

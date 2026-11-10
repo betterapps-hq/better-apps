@@ -34,6 +34,13 @@ scope[timer].unref()
 // Adds the sample conversations on the first start, through the features, as the demo people.
 await seedComments(app)
 
+// Removes uploads that never finished and comment drafts that were never posted, a page at a time. A Worker would
+// sweep from a scheduled handler instead.
+let swept = await app.api.attachments.sweep()
+while (!swept.done) {
+  swept = await app.api.attachments.sweep()
+}
+
 // The local DNS forgets the demo's records on restart, so the custom domains' records go back in.
 for (const domain of (await app.api.domains.list({ orgId: null })).domains) {
   publishDemoRecords(domain.records)

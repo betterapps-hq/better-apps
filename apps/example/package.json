@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@better-apps/anchors": "workspace:*",
+    "@better-apps/attachments": "workspace:*",
     "@better-apps/comments": "workspace:*",
     "@better-apps/database-drizzle": "workspace:*",
     "@better-apps/domains": "workspace:*",
