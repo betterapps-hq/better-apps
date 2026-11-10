@@ -1,7 +1,7 @@
 // Taking files off records and deleting files, for single changes and pages of bulk jobs alike. Rows go first, in one
 // batch with their events; bytes go after. Files whose bytes fail to delete stay `deleted`, and the sweep retries them.
 import { BetterAppsError, type DatabaseAdapter, type SubjectRef, type Where, type WriteOperation } from "better-apps"
-import { chunks, type Context } from "./access.js"
+import { chunks, isUnkept, type Context } from "./access.js"
 import type { Config } from "./config.js"
 import type { AttachmentRemovedData, DetachReason, FileDeletedReason } from "./events.js"
 import { eventFile } from "./present.js"
@@ -231,10 +231,21 @@ export async function deleteFiles(
       writer.emit("file.deleted", { file: eventFile(file), reason })
     }
   }
+  const notDeleted: Where = { field: "status", operator: "ne", value: "deleted" }
+  // A draft or an upload under way goes only while nothing keeps it, so one that an attach or a finish put on a record
+  // since it was read stays there.
+  const unkept = live.filter(isUnkept)
+  const unkeptMarks = markDeleted(unkept, [notDeleted, { field: "expiresAt", operator: "gt", value: new Date(0) }])
+  const removals = linkRemovals(links, live)
+  let results: unknown[]
   try {
-    await writer.db.batch([
-      ...linkRemovals(links, live),
-      ...markDeleted(live, [{ field: "status", operator: "ne", value: "deleted" }])
+    results = await writer.db.batch([
+      ...removals,
+      ...markDeleted(
+        live.filter((file) => !isUnkept(file)),
+        [notDeleted]
+      ),
+      ...unkeptMarks
     ])
   } catch (error) {
     // Another removal took some of them first, so this batch failed with its events. When it took them all, it reported
@@ -247,6 +258,31 @@ export async function deleteFiles(
       throw error
     }
     return false
+  }
+  const marked =
+    unkeptMarks.length === 0 ? 0 : results.slice(-unkeptMarks.length).reduce<number>((sum, n) => sum + Number(n), 0)
+  if (marked < unkept.length) {
+    // Only a race with an attach or a finish gets here: the files it kept stay, with their bytes, and aren't remembered
+    // as removed, so they can be removed later. Their `file.deleted` was written with the batch.
+    const after = await filesById(
+      writer.db,
+      unkept.map((file) => file.id)
+    )
+    const kept = unkept.filter((file) => after.get(file.id)?.status !== "deleted").map((file) => file.id)
+    await writer.db.batch(
+      chunks(kept).map((ids) => ({
+        type: "deleteMany" as const,
+        model: removalModel,
+        where: [{ field: "id", operator: "in" as const, value: ids }]
+      }))
+    )
+    const keptIds = new Set(kept)
+    await purge(
+      config,
+      writer.db,
+      files.filter((file) => !keptIds.has(file.id))
+    )
+    return true
   }
   await purge(config, writer.db, files)
   return true

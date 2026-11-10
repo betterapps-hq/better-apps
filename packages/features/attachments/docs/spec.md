@@ -186,18 +186,22 @@ All of them go through subject types, so a file follows its record's access.
 - **Uploading onto a record** needs someone who can see it and whom `canUpload` allows, when the upload starts and again
   when it finishes.
 - **Uploading a draft** needs someone signed in. The draft is checked against its subject type's limits, but its record
-  doesn't exist yet, so `canUpload` waits for the attach. `maxDrafts` bounds the bytes a person can store that way.
+  doesn't exist yet, so `canUpload` waits for the attach. `maxDrafts` bounds the bytes a person can store that way, one
+  person at a time, so an app that lets anyone make accounts, such as anonymous guests, should limit how fast they're
+  made.
 - **Attaching** a draft needs its uploader. Attaching a file kept on its own needs someone who can see it. Either way
   the record must be one the person can see and `canUpload` allows, and the file must meet the record's limits, since a
   draft for one subject type can go on a record of another. A person's own files and drafts go on records in any
   organization, such as an anonymous guest's documents on a booking: a draft holds only its uploader's bytes, so
   attaching it moves no organization's data, and the person could upload the same bytes there directly. Anyone else's
-  file, an organization's included, goes only on records in the organization it's in.
+  file, an organization's included, goes only on records in the organization it's in. Trusted server code attaches
+  anyone's drafts, and files kept on their own to records in the organization they're in, without `canView` or
+  `canUpload`, such as a payment webhook attaching a guest's drafts to the booking it creates.
 - **Taking a file off a record** needs the person who attached it, or someone `canModerate` allows. **Reordering** needs
   `canUpload`.
 - **Deleting a file kept on its own** needs its owner, or a member `canManage` allows. It comes off every record too.
-- **Server code** that passes neither an actor nor a request is trusted: it reads and removes anything. It can't upload,
-  since a file is always someone's.
+- **Server code** that passes neither an actor nor a request is trusted: it reads and removes anything, and attaches as
+  above. It can't upload, since a file is always someone's.
 - A file someone can't see answers `NOT_FOUND`, as if it didn't exist.
 
 Attachments declares a subject type for files, `attachments.file`, with these rules, so other features can attach to a
@@ -319,10 +323,16 @@ record keeps, in their order. Files kept on their own stay with their owner, and
 
 `removeSubject({ subjectType, subjectId })` takes every file off a deleted record and deletes the files it kept.
 `removeUser({ userId })` deletes a person's own files and drafts, and their uploads that haven't finished, including
-ones for their organization. Files they attached to records stay with the records. These are server only. Each call does
-one page, removing up to 100 attachments or moving up to 30, and returns `done`, so no request outgrows D1's limits of
-100 bound parameters a statement and 50 queries a request; call again until `done` is `true`. A page whose batch fails,
-such as one that lost a race with another removal, is read again.
+ones for their organization. Files they attached to records stay with the records, including a draft an attach put on a
+record while the removal was under way. These are server only. Each call does one page, removing up to 100 attachments
+or moving up to 30, and returns `done`, so no request outgrows D1's limits of 100 bound parameters a statement and 50
+queries a request; call again until `done` is `true`. A page whose batch fails, such as one that lost a race with
+another removal, is read again.
+
+`moveUser({ userId, toUserId })`, also server only, hands a person's files to another user: the files they keep on their
+own, their drafts and unfinished uploads, and the attachments they made. Call it when one user becomes another, such as
+from Better Auth's anonymous plugin `onLinkAccount`, so a guest who signs up mid-form can still attach their drafts. It
+moves everything in one call, emitting `user.moved`.
 
 With files on comments' threads or comments, attachments follow comments' events, as reactions do: a deleted comment or
 thread loses its files, and a moved thread takes its and its comments' files along. Each delivery handles one page,
@@ -342,7 +352,12 @@ written and takes the file back off when the record went away meanwhile.
   many at once are marked `bulk`.
 - `attachments.reordered` when a record's order changes.
 - `subject.changed` for each record a page of a bulk removal touched, `subject.moved` for each record a page of a move
-  touched, and `subject.removed` and `user.removed` once those finish.
+  touched, and `subject.removed` and `user.removed` once those finish. `user.moved` when `moveUser` hands a person's
+  files to another user.
+
+A draft's `file.uploaded` carries `orgId: ""`, and it joins an organization in its `attachment.added`, so count an
+organization's files from attachment events rather than `file.uploaded`.
+
 - `cleanup.continued`, attachments' own, for cleanups that continue in the next run.
 
 `toClientEvent({ event, viewer })` and `toClientEvents({ event, viewers })`, server only, turn an event into what a
@@ -360,7 +375,7 @@ enough.
   still pending, so a finish can't put it on its record meanwhile; one that finished onto its record first answers
   `INVALID_INPUT`, as any file on a record does, to be detached instead. `reorder` writes every file's position in one
   batch, so when two people reorder a record at once, it ends in the order of whichever saves last.
-- Server only: `sweep`, `removeSubject`, `moveSubject`, `removeUser`, `toClientEvent` and `toClientEvents`.
+- Server only: `sweep`, `removeSubject`, `moveSubject`, `removeUser`, `moveUser`, `toClientEvent` and `toClientEvents`.
 
 Errors are `AttachmentsError`s: `UNAUTHENTICATED`, `NOT_FOUND`, `FORBIDDEN`, `INVALID_INPUT` for a type, name or file
 that doesn't fit, `PAYLOAD_TOO_LARGE` past `maxSize`, `LIMIT_EXCEEDED` past `maxFiles` or `maxDrafts`, and `CONFLICT`

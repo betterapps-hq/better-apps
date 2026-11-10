@@ -546,6 +546,26 @@ describe("drafts", () => {
     expect(await api.getFile({ fileId: file.id }, as("solo"))).toMatchObject({ orgId: winner })
   })
 
+  it("go on records from trusted server code, whoever uploaded them, but files kept on their own stay in their organization", async () => {
+    const { api, as, upload } = setup()
+    const draft = await upload("solo", { subjectType: "booking" })
+    const { files } = await api.attach({ ...bookAcme, fileIds: [draft.file.id] })
+    expect(files[0]).toMatchObject({ id: draft.file.id, orgId: "acme", attachedBy: "solo" })
+    const ours = await upload("bob", {})
+    await expect(api.attach({ ...bookGlobex, fileIds: [ours.file.id] })).rejects.toMatchObject({
+      code: "INVALID_INPUT"
+    })
+    expect((await api.attach({ ...inv1, fileIds: [ours.file.id] })).files.map((file) => file.id)).toEqual([
+      ours.file.id
+    ])
+    await expect(
+      api.attach({ ...bookAcme, fileIds: [(await upload("bob", { owner: "user" })).file.id] }, signedOut())
+    ).rejects.toMatchObject({ code: "UNAUTHENTICATED" })
+    expect(
+      (await api.listFiles({ subjectType: "booking", subjectIds: ["book-acme"] }, as("bob")))["book-acme"]
+    ).toHaveLength(1)
+  })
+
   it("stay on the record that wins when two records race for one", async () => {
     const { api, as, upload, events, count } = setup()
     const { file } = await upload("bob", { subjectType: "invoice" })
@@ -1098,6 +1118,54 @@ describe("records that change", () => {
     expect(await api.removeUser({ userId: "bob" })).toEqual({ removed: 2, done: true })
     expect([...storage.objects.keys()]).toEqual([`attachments/${onRecord.file.id}`])
     expect(events("user.removed")).toHaveLength(1)
+  })
+
+  it("keep a draft that an attach put on a record while its uploader was being removed", async () => {
+    const { app, api, as, upload, storage } = setup()
+    const { file } = await upload("solo", { subjectType: "booking" })
+    const batch = app.db.batch.bind(app.db)
+    let reached!: () => void
+    const atBatch = new Promise<void>((resolve) => (reached = resolve))
+    let release!: () => void
+    const mayGo = new Promise<void>((resolve) => (release = resolve))
+    let calls = 0
+    // The removal read the draft before the attach, and writes after it.
+    app.db.batch = async (operations) => {
+      calls += 1
+      if (calls === 1) {
+        reached()
+        await mayGo
+      }
+      return batch(operations)
+    }
+    const removing = api.removeUser({ userId: "solo" })
+    await atBatch
+    await api.attach({ ...bookAcme, fileIds: [file.id] }, as("solo"))
+    release()
+    await removing
+    app.db.batch = batch
+    expect(await api.getFile({ fileId: file.id }, as("bob"))).toMatchObject({ status: "ready", orgId: "acme" })
+    expect(storage.objects.has(`attachments/${file.id}`)).toBe(true)
+    // It isn't remembered as removed, so it can still come off its record.
+    expect(await api.detach({ ...bookAcme, fileId: file.id }, as("solo"))).toEqual({ removed: true })
+  })
+
+  it("go to another user with their uploader, such as a guest who signs up", async () => {
+    const { api, as, upload, events } = setup()
+    const draft = await upload("solo", { subjectType: "booking" })
+    const own = await upload("solo", { owner: "user" })
+    const attached = await upload("solo", { subjectType: "booking" })
+    await api.attach({ ...bookAcme, fileIds: [attached.file.id] }, as("solo"))
+    expect(await api.moveUser({ userId: "solo", toUserId: "bob" })).toEqual({ moved: 3 })
+    expect(events("user.moved")[0]?.data).toEqual({ userId: "solo", toUserId: "bob" })
+    await expect(api.attach({ ...bookAcme, fileIds: [draft.file.id] }, as("solo"))).rejects.toMatchObject({
+      code: "NOT_FOUND"
+    })
+    const { files } = await api.attach({ ...bookAcme, fileIds: [draft.file.id, own.file.id] }, as("bob"))
+    expect(files.map((file) => file.id)).toEqual([draft.file.id, own.file.id])
+    expect((await api.listOwnFiles({ owner: "user" }, as("bob"))).files.map((file) => file.id)).toEqual([own.file.id])
+    expect(await api.detach({ ...bookAcme, fileId: attached.file.id }, as("bob"))).toEqual({ removed: true })
+    expect(await api.moveUser({ userId: "bob", toUserId: "bob" })).toEqual({ moved: 0 })
   })
 
   it("lose a person's unfinished uploads when the person is removed, an organization's too, a page a call", async () => {

@@ -1,7 +1,7 @@
 // Bulk jobs: the sweep of expired and deleted files, removing and moving a record's files, removing a person's files, and
 // following comments' threads and comments. Each call or delivery does one page, so no request outgrows D1's limits.
 import type { EventHandler, WriteOperation } from "better-apps"
-import { chunks, orgsOf, type Context } from "./access.js"
+import { chunks, orgsOf, userOwner, type Context } from "./access.js"
 import { settingsOf, type Config } from "./config.js"
 import { eventFile } from "./present.js"
 import {
@@ -291,7 +291,7 @@ export async function removeUser(config: Config, context: Context): Promise<{ re
     const owned = await db.findMany<AttachmentFile>({
       model: fileModel,
       where: [
-        { field: "owner", value: `user:${userId}` },
+        { field: "owner", value: userOwner(userId) },
         { field: "status", operator: "ne", value: "deleted" }
       ],
       limit: userPageSize
@@ -319,6 +319,40 @@ export async function removeUser(config: Config, context: Context): Promise<{ re
     }
     return { removed: files.length, done }
   })
+}
+
+/**
+ * Hands a person's files to another user, such as when an anonymous guest signs up and becomes a new user: the files they
+ * keep on their own, their drafts and unfinished uploads, and the attachments they made, so they can still attach their
+ * drafts and take their files off records. Each kind moves in one statement, so it takes one call.
+ */
+export async function moveUser(_config: Config, context: Context): Promise<{ moved: number }> {
+  const { userId, toUserId } = context.input as { userId: string; toUserId: string }
+  if (userId === toUserId) {
+    return { moved: 0 }
+  }
+  context.emit("user.moved", { userId, toUserId })
+  const [, uploaded] = await context.db.batch([
+    {
+      type: "updateMany",
+      model: fileModel,
+      where: [{ field: "owner", value: userOwner(userId) }],
+      update: { owner: userOwner(toUserId) }
+    },
+    {
+      type: "updateMany",
+      model: fileModel,
+      where: [{ field: "createdBy", value: userId }],
+      update: { createdBy: toUserId }
+    },
+    {
+      type: "updateMany",
+      model: attachmentModel,
+      where: [{ field: "createdBy", value: userId }],
+      update: { createdBy: toUserId }
+    }
+  ])
+  return { moved: Number(uploaded) }
 }
 
 /**

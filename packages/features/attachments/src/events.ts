@@ -48,6 +48,7 @@ export const attachmentEvents = {
   "subject.moved": defineEvent<RecordData & { toOrgId: string }>(),
   "subject.removed": defineEvent<RecordData>(),
   "user.removed": defineEvent<{ userId: string }>(),
+  "user.moved": defineEvent<{ userId: string; toUserId: string }>(),
   /**
    * Attachments' own: what's left of cleaning up after records that went away or moved, such as comments' threads,
    * continued in the next `app.deliverEvents()` run. Browsers never get it.

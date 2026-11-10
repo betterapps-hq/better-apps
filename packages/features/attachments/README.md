@@ -102,8 +102,9 @@ them besides actions, and an app's catch-all route for its base path reaches the
 Attach drafts with `attach({ subjectType, subjectId, fileIds })` once the record exists. Drafts that aren't attached
 expire after `draftTtl`, a day by default. A draft is in no organization until it's attached, then joins its record's,
 so a person with no active organization, such as an anonymous guest, can upload before the record exists. Only its
-uploader can attach it, so attach an anonymous guest's drafts before linking the guest to another account. A person's
-own files go on records in any organization too, but anyone else's stay in the organization they're in.
+uploader, or trusted server code such as a payment webhook, can attach it. When a guest signs up and becomes another
+user, call `moveUser({ userId, toUserId })` so their drafts and files go with them. A person's own files go on records
+in any organization too, but anyone else's stay in the organization they're in.
 
 The upload route counts a body that comes without a length, such as a chunked one, so it never stores more than the
 declared size.
@@ -115,7 +116,7 @@ declared size.
 - Writes: `createUpload`, `completeUpload`, `attach`, `detach({ subjectType, subjectId, fileId })`,
   `reorder({ subjectType, subjectId, fileIds })` and `deleteFile({ fileId })`.
 - Server only, through `app.api.attachments`: `sweep`, `removeSubject`, `moveSubject` and `removeUser`, which each do
-  one page and return `done`, and `toClientEvent` and `toClientEvents` for live updates.
+  one page and return `done`, `moveUser`, and `toClientEvent` and `toClientEvents` for live updates.
 - Errors are `AttachmentsError`s: `UNAUTHENTICATED`, `NOT_FOUND` for files and records the caller can't see,
   `FORBIDDEN`, `INVALID_INPUT`, `PAYLOAD_TOO_LARGE` (413) past `maxSize`, `LIMIT_EXCEEDED` past `maxFiles` or
   `maxDrafts`, and `CONFLICT` for an upload that expired or hasn't arrived, or a draft another record took first.

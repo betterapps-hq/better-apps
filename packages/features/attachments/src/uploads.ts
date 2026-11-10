@@ -1,7 +1,7 @@
 // Uploads: `createUpload` checks and writes a pending row and says where to send the bytes, the bytes go straight to
 // storage or through the upload route, and `completeUpload` checks what arrived and marks the file ready.
 import type { Actor, SubjectRef, WriteOperation } from "better-apps"
-import { canSeeFiles, isTrusted, orgOf, requireActor, type Context } from "./access.js"
+import { canSeeFiles, isTrusted, orgOf, orgOwner, requireActor, userOwner, type Context } from "./access.js"
 import { checkLimits, settingsOf, type Config, type Limits } from "./config.js"
 import { AttachmentsError } from "./errors.js"
 import { cleanContentType, cleanName } from "./files.js"
@@ -69,14 +69,15 @@ async function placeUpload(
   if (standalone.rules.canUpload && !(await standalone.rules.canUpload(actor))) {
     throw new AttachmentsError("FORBIDDEN", "You can't upload files here.")
   }
-  const ownerKind = input.owner ?? (actor.orgId ? "org" : "user")
-  if (ownerKind === "org" && !actor.orgId) {
+  const orgId = actor.orgId ?? ""
+  const ownerKind = input.owner ?? (orgId ? "org" : "user")
+  if (ownerKind === "org" && !orgId) {
     throw new AttachmentsError("INVALID_INPUT", "Only people in an organization can upload its files.")
   }
   return {
     limits: standalone,
-    orgId: actor.orgId ?? "",
-    owner: ownerKind === "org" ? `org:${actor.orgId}` : `user:${actor.userId}`,
+    orgId,
+    owner: ownerKind === "org" ? orgOwner(orgId) : userOwner(actor.userId),
     subjectType: null,
     target: null
   }

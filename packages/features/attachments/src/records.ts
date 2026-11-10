@@ -6,9 +6,11 @@ import {
   isTrusted,
   isUnkept,
   orgOf,
+  orgOwner,
   orgsOf,
   ownsFile,
   requireActor,
+  userOwner,
   viewable,
   type Context
 } from "./access.js"
@@ -134,12 +136,17 @@ export async function addLinks(
   )
 }
 
-/** Puts drafts and files kept on their own on a record. */
+/**
+ * Puts drafts and files kept on their own on a record: the uploader's drafts and files they can see, or, from trusted
+ * server code, anyone's drafts and the record's organization's files, such as a webhook attaching a guest's drafts to the
+ * booking it creates.
+ */
 export async function attach(config: Config, context: Context): Promise<{ files: AttachedFile[] }> {
   const input = context.input as AttachInput
   const settings = settingsOf(config, input.subjectType)
   const ref: SubjectRef = { subjectType: input.subjectType, subjectId: input.subjectId }
-  const actor = await requireUploader(settings, context, ref)
+  const trusted = isTrusted(context)
+  const actor = trusted ? null : await requireUploader(settings, context, ref)
   const fileIds = [...new Set(input.fileIds)]
   const found = await filesById(context.db, fileIds)
   const files = fileIds.map((id) => found.get(id)).filter((file) => file?.status === "ready") as AttachmentFile[]
@@ -147,13 +154,14 @@ export async function attach(config: Config, context: Context): Promise<{ files:
     throw fileNotFound()
   }
   const kept = files.filter((file) => file.owner !== null)
-  const seen = await canSeeFiles(context, actor, kept)
+  const seen = actor ? await canSeeFiles(context, actor, kept) : kept.map(() => true)
   const orgId = await orgOf(context.subjects, ref, actor)
   const now = new Date()
   const drafts: string[] = []
+  let onRecord: Set<string> | undefined
   for (const file of files) {
     if (isUnkept(file)) {
-      if (file.createdBy !== actor.userId) {
+      if (actor && file.createdBy !== actor.userId) {
         throw fileNotFound()
       }
       if ((file.expiresAt as Date).getTime() <= now.getTime()) {
@@ -169,8 +177,8 @@ export async function attach(config: Config, context: Context): Promise<{ files:
         throw new AttachmentsError("INVALID_INPUT", "That file can't go on records in this organization.")
       }
     } else {
-      const on = await attachmentsOn(context, ref, orgId)
-      if (!on.some((row) => row.fileId === file.id)) {
+      onRecord ??= new Set((await attachmentsOn(context, ref, orgId)).map((row) => row.fileId))
+      if (!onRecord.has(file.id)) {
         throw new AttachmentsError("INVALID_INPUT", "That file is on another record. Upload it again to add it here.")
       }
       continue
@@ -356,10 +364,11 @@ export async function listOwnFiles(
 ): Promise<{ files: FileInfo[]; cursor: string | null }> {
   const input = context.input as ListOwnFilesInput
   const actor = requireActor(context, "Sign in to see your files.")
-  if (input.owner === "org" && !actor.orgId) {
+  const orgId = actor.orgId ?? ""
+  if (input.owner === "org" && !orgId) {
     throw new AttachmentsError("INVALID_INPUT", "You aren't in an organization.")
   }
-  const owner = input.owner === "org" ? `org:${actor.orgId}` : `user:${actor.userId}`
+  const owner = input.owner === "org" ? orgOwner(orgId) : userOwner(actor.userId)
   const limit = input.limit ?? limits.ownFilesPerPage
   const rows = await context.db.findMany<AttachmentFile>({
     model: fileModel,

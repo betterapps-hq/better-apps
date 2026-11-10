@@ -66,20 +66,27 @@ export function requireActor(context: Context, message: string): Actor {
   return context.actor
 }
 
+/** The `owner` of a file a person keeps on its own. */
+export const userOwner = (userId: string): string => `user:${userId}`
+
+/** The `owner` of a file an organization keeps on its own. */
+export const orgOwner = (orgId: string): string => `org:${orgId}`
+
 /** Whether someone owns a file kept on its own: it's theirs, or their organization's. */
 export function ownsFile(actor: Actor, file: AttachmentFile): boolean {
   return (
-    file.owner === `user:${actor.userId}` ||
-    (actor.orgId !== null && actor.orgId !== "" && file.owner === `org:${actor.orgId}`)
+    file.owner === userOwner(actor.userId) ||
+    (actor.orgId !== null && actor.orgId !== "" && file.owner === orgOwner(actor.orgId))
   )
 }
 
 /**
  * Whether someone can put a file kept on its own on a record in an organization: their own files go on records in any
  * organization, and anyone else's, an organization's included, only on records in the organization the file is in.
+ * Trusted server code, `null`, has no files of its own.
  */
-export function canPlaceIn(actor: Actor, file: AttachmentFile, orgId: string): boolean {
-  return file.orgId === orgId || file.owner === `user:${actor.userId}`
+export function canPlaceIn(actor: Actor | null, file: AttachmentFile, orgId: string): boolean {
+  return file.orgId === orgId || (actor !== null && file.owner === userOwner(actor.userId))
 }
 
 /** Whether a file is a draft or an upload under way: nothing keeps it yet. */
