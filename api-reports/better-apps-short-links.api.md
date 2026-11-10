@@ -16,6 +16,46 @@ import type { SubjectArgs } from 'better-apps';
 import { SubjectGrants } from 'better-apps';
 
 // @public
+export const clickModel = "shortLinkClick";
+
+// @public
+export type ClickRow = {
+    id: string;
+    linkId: string;
+    clickedAt: Date;
+    slot: Date;
+};
+
+// @public
+export interface ClicksByDay {
+    days: {
+        date: string;
+        clicks: number;
+    }[];
+    total: number;
+}
+
+// @public
+export interface ClicksByDayInput extends DayRangeInput {
+    // (undocumented)
+    id: string;
+}
+
+// @public
+export interface ClickTotals {
+    links: {
+        id: string;
+        clicks: number;
+    }[];
+    total: number;
+}
+
+// @public
+export interface ClickTotalsInput extends DayRangeInput {
+    ids: readonly string[];
+}
+
+// @public
 export const codeLimits: {
     readonly minGenerated: 6;
     readonly maxGenerated: 32;
@@ -32,6 +72,13 @@ export interface CreateLinkInput<SubjectType extends string = string> {
     owner?: OwnerType | undefined;
     // (undocumented)
     target: LinkTarget<SubjectType>;
+}
+
+// @public
+export interface DayRangeInput {
+    from: string;
+    timeZone?: string | undefined;
+    to: string;
 }
 
 // @public
@@ -57,6 +104,8 @@ export const limits: {
     readonly linksPerPage: 20;
     readonly maxLinksPerPage: 50;
     readonly urlLength: 2048;
+    readonly maxRangeDays: 366;
+    readonly maxRecordedClicks: 500;
 };
 
 // @public
@@ -112,6 +161,16 @@ export interface LinkRules {
 }
 
 // @public
+export type LinkSort = "newest" | "clicks";
+
+// @public
+export interface LinkSource {
+    grants?: boolean | undefined;
+    param: string;
+    urls?: boolean | ((args: SourceUrlArgs) => boolean | Promise<boolean>) | undefined;
+}
+
+// @public
 export interface LinkSubject<SubjectType extends string = string> {
     // (undocumented)
     subjectId: string;
@@ -139,6 +198,7 @@ export interface ListLinksInput<SubjectType extends string = string> {
     cursor?: string | undefined;
     limit?: number | undefined;
     owner?: OwnerType | undefined;
+    sort?: LinkSort | undefined;
     // (undocumented)
     subjectId?: string | undefined;
     subjectType?: SubjectType | undefined;
@@ -162,6 +222,13 @@ export interface NotFoundArgs {
 
 // @public
 export type OwnerType = "user" | "org";
+
+// @public
+export interface RecordClicksInput {
+    at: readonly (Date | string)[];
+    // (undocumented)
+    id: string;
+}
 
 // @public
 export interface ResolveHostArgs {
@@ -299,6 +366,15 @@ export function shortLinks<const Options extends ShortLinksOptions>(options?: Op
         }> & {
             serverOnly?: true | undefined;
         };
+        clicksByDay: ActionDefinition<StandardSchemaV1<ClicksByDayInput, ClicksByDayInput>, ClicksByDay> & {
+            serverOnly?: false | undefined;
+        };
+        clickTotals: ActionDefinition<StandardSchemaV1<ClickTotalsInput, ClickTotalsInput>, ClickTotals> & {
+            serverOnly?: false | undefined;
+        };
+        recordClicks: ActionDefinition<StandardSchemaV1<RecordClicksInput, RecordClicksInput>, ShortLink> & {
+            serverOnly?: true | undefined;
+        };
     };
 };
 
@@ -334,6 +410,7 @@ export interface ShortLinksOptions {
     hosts?: LinkHosts | undefined;
     notFound?: ((args: NotFoundArgs) => Response | Promise<Response>) | undefined;
     path?: string | undefined;
+    source?: LinkSource | undefined;
     subjects?: Readonly<Record<string, LinkRules>> | undefined;
     validateUrl?: ((args: ValidateUrlArgs) => boolean | string | Promise<boolean | string>) | undefined;
 }
@@ -350,6 +427,12 @@ export type ShortLinkTarget = {
     subjectType: string;
     subjectId: string;
 };
+
+// @public
+export interface SourceUrlArgs {
+    // (undocumented)
+    url: URL;
+}
 
 // @public
 export type SubjectTypeOf<Options extends ShortLinksOptions> = Options["subjects"] extends Readonly<Record<string, LinkRules>> ? keyof Options["subjects"] & string : never;
