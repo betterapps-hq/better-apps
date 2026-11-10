@@ -283,9 +283,9 @@ Events nobody subscribes to aren't written, as with every feature.
 ### Volume
 
 - Each event is one outbox row, delivered once written and then removed.
-- `link.clicked` is emitted for every open by default. `events.clickRate` samples them instead: at 0.1, about one open
-  in ten emits it. Each event carries `sampleRate`, so a subscriber estimates opens as events divided by `sampleRate`.
-  Exact totals stay in `clicks`. Sampling needs no storage or scheduled job, which batching clicks into one event would.
+- `link.clicked` is emitted for every open by default. `events.clickRate` samples them instead: at 0.1, about 1 open in
+  10 emits it. Each event carries `sampleRate`, so a subscriber estimates opens as events divided by `sampleRate`. Exact
+  totals stay in `clicks`. Sampling needs no storage or scheduled job, which batching clicks into one event would.
 - An open's events go in the batch that counts its click. On D1, an open is one read before the response, then one batch
   after it, and each delivered event adds two statements, one to claim it and one to remove it, besides what its
   subscribers do. That's well under D1's limit of 50 queries a request. Event rows go in one insert, split to stay under

@@ -11,13 +11,13 @@ export interface EventSettings {
   notFoundPerMinute: number
 }
 
-export const defaultMilestones = [1, 10, 100, 1000, 10_000] as const
+const defaultMilestones = [1, 10, 100, 1000, 10_000] as const
 
 /** `events` with its defaults, or the setup error that says what's wrong. */
 export function eventSettings(options: LinkEventOptions = {}): EventSettings {
   const clickRate = options.clickRate ?? 1
   if (!Number.isFinite(clickRate) || clickRate < 0 || clickRate > 1) {
-    throw new Error("`events.clickRate` must be a number from 0 to 1, such as 0.1 for one open in ten.")
+    throw new Error("`events.clickRate` must be a number from 0 to 1, such as 0.1 for 1 open in 10.")
   }
   const milestones = options.milestones ?? defaultMilestones
   if (!milestones.every((count) => Number.isSafeInteger(count) && count > 0)) {
@@ -25,7 +25,7 @@ export function eventSettings(options: LinkEventOptions = {}): EventSettings {
   }
   const notFoundPerMinute = options.notFoundPerMinute ?? 10
   if (!Number.isSafeInteger(notFoundPerMinute) || notFoundPerMinute < 0) {
-    throw new Error("`events.notFoundPerMinute` must be a whole number from 0 up.")
+    throw new Error("`events.notFoundPerMinute` must be a whole number, 0 or more.")
   }
   return { clickRate, milestones: [...new Set(milestones)].sort((a, b) => a - b), notFoundPerMinute }
 }

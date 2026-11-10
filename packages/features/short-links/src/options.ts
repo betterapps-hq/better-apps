@@ -101,8 +101,8 @@ export interface LinkHosts {
 export interface LinkEventOptions {
   /**
    * The share of opens that emit `link.clicked`, from 0, none, to 1, every one. Each one is an outbox row, written in the
-   * same batch as the click count and delivered after the response, so a busy app can sample, such as 0.1 for one open
-   * in ten. 1 by default. Nothing is written while no feature subscribes to `link.clicked`, whatever the rate.
+   * same batch as the click count and delivered after the response, so a busy app can sample, such as 0.1 for 1 open
+   * in 10. 1 by default. Nothing is written while no feature subscribes to `link.clicked`, whatever the rate.
    */
   clickRate?: number | undefined
   /** The click counts that emit `link.milestone`. 1, 10, 100, 1,000 and 10,000 by default. An empty list emits none. */
