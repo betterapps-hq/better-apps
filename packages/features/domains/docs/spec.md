@@ -387,7 +387,7 @@ const match = await app.api.domains.lookup({ hostname: new URL(request.url).host
 
 A feature that serves organizations' domains needs to know whose host a request is on and where an organization's links
 are shared. [Short links](../../short-links/docs/spec.md#organizations-domains) take both as `hosts`, without importing
-domains. `domainHosts` builds them from `lookup` and `getPrimary`:
+domains. `domainHosts` builds them from `lookup`, `getPrimary` and `list`:
 
 ```ts
 const appUrl = "https://app.yourapp.com"
@@ -416,7 +416,9 @@ linkHosts.connect(app.api.domains)
   `"app"` for one in an app without organizations, and `null` for a domain that isn't `active` or a hostname no domain
   holds.
 - `hosts.origin({ orgId })` returns the origin of the organization's primary domain once it's `active`, on `url`'s
-  scheme and port, such as `https://links.acme.com`, or `null` without one, which means the app's own.
+  scheme and port, such as `https://links.acme.com`. Without an `active` primary domain, such as after it's removed or
+  while it's failing, it's the first `active` domain the organization added, which still opens its links, read with
+  `list`. With no `active` domain, it's `null`, which means the app's own.
 - Features are created before the app, and `app.api.domains` exists only once it is, so the app calls
   `connect(app.api.domains)` then. Until it does, both throw an error that says so, rather than every domain answering
   as unknown. A later `connect` replaces the earlier one.

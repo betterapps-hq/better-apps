@@ -73,7 +73,11 @@ export interface ResolveHostArgs {
    * such as `X-Forwarded-Host` play no part.
    */
   hostname: string
-  request: Request
+  /**
+   * The request that opens a link there, or, when short links check that `origin`'s host is the organization's before
+   * making a link in its scope, the action's request: `null` for server code without one.
+   */
+  request: Request | null
 }
 
 /** What `hosts.origin` receives: the links whose short URLs are being written. */

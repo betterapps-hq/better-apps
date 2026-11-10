@@ -82,6 +82,16 @@ describe("grant cookies", () => {
     for (const ref of [acmeInvoice, globexInvoice]) {
       expect(await app.subjects.canView(null, ref, { request: holding("better-apps-links=samecode1234") })).toBe(false)
     }
+    // In one batch, two visitors of the same record: one holds Acme's entry for the code, the other Globex's.
+    const globexEntry = `better-apps-links=samecode1234~${btoa("globex").replace(/=+$/, "")}`
+    expect(
+      await app.subjects.canViewMany([
+        { actor: null, ...globexInvoice, request: holding(cookie) },
+        { actor: null, ...globexInvoice, request: holding(globexEntry) },
+        { actor: null, ...acmeInvoice, request: holding(globexEntry) },
+        { actor: null, ...acmeInvoice, request: holding(cookie) }
+      ])
+    ).toEqual([false, true, false, true])
     // Globex's own link grants its invoice, read by record or by code alike.
     const both = `better-apps-links=samecode1234~${btoa("globex").replace(/=+$/, "")}.${cookie.split("=")[1] ?? ""}`
     expect(

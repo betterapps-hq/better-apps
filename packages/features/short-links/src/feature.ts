@@ -118,7 +118,9 @@ function resolve(options: ShortLinksOptions): Config {
     }
     // An action can be called from an organization's domain, which doesn't open everyone's links.
     if (baseUrl === undefined) {
-      throw new Error("Short links with `hosts` need `baseUrl`, the app's own origin, which opens every link.")
+      throw new Error(
+        "Short links with `hosts` need `baseUrl`, the app's own origin, where links with the app's codes open."
+      )
     }
     hosts = { ...options.hosts, baseUrl }
   }
@@ -245,13 +247,26 @@ function prefixer(config: Config, request: Request | null): Prefixer {
     return (row.orgId === "" ? await sharedOf(row) : null) ?? own
   }
   const isOrgs = (row: LinkRow) => row.orgId !== "" && row.owner === ownerKey("org", row.orgId)
+  const resolved = loadOnce<boolean>()
+  /**
+   * Whether `hosts.resolve` gives the organization the host of `prefix`, so a link made in its scope opens there. An
+   * origin that names one of the app's hosts, say, keeps the organization's links in the app's scope.
+   */
+  const opensOn = async (orgId: string, prefix: string): Promise<boolean> =>
+    resolved(orgId, async () => {
+      const host = await config.hosts?.resolve({ hostname: new URL(prefix).hostname.replace(/\.$/, ""), request })
+      return typeof host === "object" && host !== null && host.orgId === orgId
+    })
   return {
     of,
     reaches: async (row) => {
       const prefix = await of(row)
       return prefix === null || reachesFrom(row, prefix)
     },
-    scopeOf: async (row) => (config.hosts && isOrgs(row) && (await sharedOf(row)) !== null ? row.orgId : "")
+    scopeOf: async (row) => {
+      const shared = config.hosts && isOrgs(row) ? await sharedOf(row) : null
+      return shared !== null && (await opensOn(row.orgId, shared)) ? row.orgId : ""
+    }
   }
 }
 
@@ -743,9 +758,26 @@ async function hostScope(config: Config, request: Request, url: URL): Promise<st
 }
 
 /**
+ * The link a host opens for a code: the one in the host's scope. A domain whose organization's codes don't have it also
+ * opens the organization's own link with the app's code, such as one made before the domain was ready, so a domain
+ * appearing never breaks a link, even one that sends visitors on to the record's new host. That second read happens
+ * only on a miss, and finds nothing of another organization's or a member's.
+ */
+async function read(db: RouteContext["db"], code: string, scope: string): Promise<LinkRow | null> {
+  const row = await db.findOne<LinkRow>({ model: linkModel, where: inScope(code, scope) })
+  if (row || scope === "") {
+    return row
+  }
+  return db.findOne<LinkRow>({
+    model: linkModel,
+    where: [...inScope(code, ""), { field: "owner", value: ownerKey("org", scope) }]
+  })
+}
+
+/**
  * Opens a link: one read of its code in the host's scope, then a temporary redirect, so a link turned off or changed
- * takes effect at once. An organization's domain opens the links in its scope, and the app's own host the ones in the
- * app's. A link that grants access adds its code and scope to the visitor's cookie. The click is written after the
+ * takes effect at once. An organization's domain opens the links in its scope, and its own with the app's codes, and
+ * the app's own host the ones in the app's scope. A link that grants access adds its code and scope to the visitor's cookie. The click is written after the
  * response.
  */
 async function open(config: Config, context: RouteContext): Promise<Response> {
@@ -757,9 +789,7 @@ async function open(config: Config, context: RouteContext): Promise<Response> {
   if (scope === null) {
     return config.notFound({ request, code: wanted })
   }
-  const row = isValidCode(wanted)
-    ? await db.findOne<LinkRow>({ model: linkModel, where: inScope(wanted, scope) })
-    : null
+  const row = isValidCode(wanted) ? await read(db, wanted, scope) : null
   if (!row || !isOpen(row, now)) {
     return config.notFound({ request, code: wanted })
   }

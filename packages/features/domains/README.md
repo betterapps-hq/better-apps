@@ -95,8 +95,9 @@ linkHosts.connect(app.api.domains)
   hostnames, `url`'s and any in `hostnames`, which must be hostnames without a port. It answers `{ orgId }` for an
   organization's `active` domain, or `"app"` in an app without organizations, and `null` for any other host, such as a
   pending domain.
-- `hosts.origin({ orgId })` is the organization's primary domain once it's `active`, on `url`'s scheme and port, or
-  `null` for the app's own.
+- `hosts.origin({ orgId })` is the organization's primary domain once it's `active`, or else its first `active` domain,
+  on `url`'s scheme and port, or `null` for the app's own. So removing the primary domain leaves links shared on another
+  domain that still opens them.
 - Both throw until `connect(app.api.domains)` runs.
 - Short links' `baseUrl` must be on `url`'s host or one in `hostnames`, since only those open the links with the app's
   codes. Pass both from one constant, as above.

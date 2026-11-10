@@ -203,7 +203,9 @@ reader gets them, with names and no user ids, and who reacted shows only where i
 
 1. With `hosts`, asks `resolve` whose links the request's host opens: the app's scope or an organization's. A host that
    opens none gets `notFound` without reading the link. Without `hosts`, every host opens the app's scope.
-2. Reads the link by its code in that scope: one read through the unique index.
+2. Reads the link by its code in that scope: one read through the unique index. On an organization's domain, a miss
+   reads the organization's own link with that code in the app's scope, as
+   [Which host opens which links](#which-host-opens-which-links) describes.
 3. A link that isn't in that scope, is turned off or has expired gets `notFound`.
 4. A record link's target is its subject type's `url`, for a subject type the feature still has. A URL link's is its
    URL.
@@ -243,7 +245,7 @@ Each link comes back as a `ShortLink`: its `id`, `code`, `shortUrl`, its `owner`
 `createdBy`, its `target`, `grantsView`, `enabled`, `expiresAt`, `clicks`, `lastClickedAt`, `createdAt` and `updatedAt`.
 `shortUrl` is `baseUrl`, or the request's origin, followed by the path and code. For server code with neither, it's the
 path alone. With `hosts`, it's on a host that opens the link, as [Short URLs](#short-urls) describes, and `null` for a
-link in an organization's scope while the organization has no ready domain.
+link in an organization's scope while `hosts.origin` returns `null` for the organization.
 
 Errors are `ShortLinksError`s: `UNAUTHENTICATED`, `FORBIDDEN` when a rule refuses, `NOT_FOUND` for links and records the
 caller can't see or manage, `INVALID_INPUT` for a code, URL, target, owner or expiry that isn't allowed, and `CONFLICT`
@@ -304,11 +306,12 @@ A link's scope is set when it's made and never changes:
 So a domain appearing or going away never moves a link, and two links never come to share a code on one host:
 
 - When an organization's domain becomes ready, its links made before then keep their codes and their short URLs on the
-  app's host, which still opens them. New links go on the domain.
-- When an organization loses its last ready domain, the links in its scope open nowhere, and their `shortUrl` is `null`,
-  until it has a ready domain again. Then they open there, whichever domain it is. The app's host never opens them,
-  since another organization's link, or one in the app's scope, may have the same code. New links go in the app's scope
-  meanwhile.
+  app's host, which still opens them. Its domains open them too, for a code its own codes don't have, so a link that
+  sends visitors on to a record now on the domain keeps working. New links go on the domain.
+- When `origin` returns `null` for an organization, such as when it has no ready domain left, the links in its scope
+  open only on whichever domains `resolve` still gives it, and their `shortUrl` is `null` until `origin` names a domain
+  again. The app's host never opens them, since another organization's link, or one in the app's scope, may have the
+  same code. New links go in the app's scope meanwhile.
 
 ### Which host opens which links
 
@@ -317,13 +320,16 @@ port or a trailing dot, so `Links.Acme.com.:443` is `links.acme.com`. Headers su
 It returns:
 
 - `"app"`: the app's own host, which opens the links in the app's scope.
-- `{ orgId }`: a domain the organization verified, which opens the links in that organization's scope.
+- `{ orgId }`: a domain the organization verified, which opens the links in that organization's scope. For a code its
+  scope doesn't have, it also opens the organization's own link with that code in the app's scope, such as one made
+  before the domain was ready, with a second read only on that miss. Members' links and other organizations' never open
+  there.
 - `null`: any other host, such as a domain that's pending or failed, or one the app has never heard of. It opens none,
   and the link isn't read.
 
-Opening a link is one read of its code in the host's scope. A code the host's scope doesn't have answers as a missing
-link does, through `notFound`, which isn't told why. So `links.acme.com` never opens Globex's links and gives nothing
-away about which codes Globex has.
+Opening a link is one read of its code in the host's scope, and on a domain a second only when the first misses. A code
+the host doesn't open answers as a missing link does, through `notFound`, which isn't told why. So `links.acme.com`
+never opens Globex's links and gives nothing away about which codes Globex has.
 
 An app without organizations, such as one whose workspace has its own domains, can return `"app"` for its workspace's
 ready domains, so they open every link. `domainHosts` does.
@@ -337,11 +343,12 @@ route at `path`, every host already reaches the link route.
 
 ### Short URLs
 
-`origin({ orgId })` gives the origin of an organization's ready domain, such as `https://links.acme.com`, or `null`
-while it has none. It must name a host that `resolve` gives the organization, since it decides which links go in the
-organization's scope. Links made outside any organization ask with `orgId` `null`, for a host `resolve` calls `"app"`,
-or `null` for `baseUrl`. It runs once per organization in a call, so `list` asks once for a page of one organization's
-links.
+`origin({ orgId })` gives the origin of an organization's ready domain, such as `https://links.acme.com`, or `null` for
+none. It decides which links go in the organization's scope: `create` asks `resolve` about its host, once per
+organization in a call, and makes the link in the organization's scope only when `resolve` gives the organization that
+host. Otherwise, such as for an origin on one of the app's hosts, the link goes in the app's scope. Links made outside
+any organization ask with `orgId` `null`, for a host `resolve` calls `"app"`, or `null` for `baseUrl`. It runs once per
+organization in a call, so `list` asks once for a page of one organization's links.
 
 - A link in an organization's scope is shared on the domain `origin` gives, such as the organization's primary one.
   While `origin` returns `null`, its `shortUrl` is `null`.

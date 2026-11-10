@@ -47,6 +47,9 @@ function fakeDomains(held: Held[]): DomainHostsApi & { lookups: string[] } {
     async getPrimary({ orgId }) {
       const entry = held.find((domain) => domain.orgId === orgId && domain.primary)
       return entry ? toDomain(entry) : null
+    },
+    async list({ orgId }) {
+      return { domains: held.filter((domain) => domain.orgId === orgId).map(toDomain) }
     }
   }
 }
@@ -175,7 +178,22 @@ describe("domainHosts", () => {
       await expect(hosts.origin({ orgId: "globex" })).resolves.toBe("https://links.globex.com")
     })
 
-    it("is the app's own without an active primary domain", async () => {
+    it("is the first active domain when the primary one isn't active, or there's none", async () => {
+      const { hosts, connect } = domainHosts({ url: "https://app.yourapp.com" })
+      connect(
+        fakeDomains([
+          { orgId: "acme", hostname: "go.acme.com", kind: "custom", status: "pending", primary: true },
+          { orgId: "acme", hostname: "old.acme.com", kind: "custom", status: "failed" },
+          { orgId: "acme", hostname: "links.acme.com", kind: "custom", status: "active" },
+          { orgId: "acme", hostname: "acme.yourapp.com", kind: "subdomain", status: "active" },
+          { orgId: "globex", hostname: "links.globex.com", kind: "custom", status: "active" }
+        ])
+      )
+      await expect(hosts.origin({ orgId: "acme" })).resolves.toBe("https://links.acme.com")
+      await expect(hosts.origin({ orgId: "globex" })).resolves.toBe("https://links.globex.com")
+    })
+
+    it("is the app's own without an active domain", async () => {
       const { hosts, connect } = domainHosts({ url: "https://app.yourapp.com" })
       connect(fakeDomains(held))
       await expect(hosts.origin({ orgId: "initech" })).resolves.toBeNull()
@@ -253,6 +271,8 @@ describe("domainHosts with the domains feature", () => {
     vi.useFakeTimers({ toFake: ["Date"] })
     const t = setupApp({ subdomains: { zone: "yourapp.localhost" } })
     const subdomain = await t.api.add({ kind: "subdomain", label: "acme" }, t.as("ada"))
+    // Added later, so the subdomain is the first of Acme's domains.
+    vi.setSystemTime(new Date(Date.now() + 1000))
     const custom = await t.api.add({ kind: "custom", hostname: "go.acme.org" }, t.as("ada"))
     t.prove(custom)
     t.route("go.acme.org")
@@ -271,6 +291,8 @@ describe("domainHosts with the domains feature", () => {
 
     await t.api.setPrimary({ domainId: custom.id }, t.as("ada"))
     await expect(hosts.origin({ orgId: "acme" })).resolves.toBe("http://go.acme.org.yourapp.localhost:4190")
+    await t.api.setPrimary({ domainId: null }, t.as("ada"))
+    await expect(hosts.origin({ orgId: "acme" })).resolves.toBe("http://acme.yourapp.localhost:4190")
     await t.api.setPrimary({ domainId: subdomain.id }, t.as("ada"))
     await expect(hosts.origin({ orgId: "globex" })).resolves.toBeNull()
   })

@@ -129,7 +129,7 @@ back on, or giving it a later expiry, checks again that the caller can see and s
 - `remove({ id })` removes a link and returns `{ removed }`. Its code is free again.
 - Each link comes back with its `id`, `code`, `shortUrl`, `owner` as `{ type, id }`, `orgId`, `createdBy`, `target`,
   `grantsView`, `enabled`, `expiresAt`, `clicks`, `lastClickedAt`, `createdAt` and `updatedAt`. With `hosts`, `shortUrl`
-  is `null` for a link on an organization's domain while the organization has no ready domain.
+  is `null` for a link on an organization's domain while `origin` returns `null` for the organization.
 - Errors are `ShortLinksError`s: `UNAUTHENTICATED`, `FORBIDDEN` when a rule refuses, `NOT_FOUND` for links and records
   the caller can't see or manage, `INVALID_INPUT`, and `CONFLICT` for a code that's taken in the link's scope.
 
@@ -172,13 +172,13 @@ An app can write its own `hosts` instead, with the rules below.
   domain opens are shared there, whichever host an action is called from.
 - `resolve({ hostname, request })` says whose links a host opens: `"app"` for the app's own host, which opens the links
   with the app's codes; `{ orgId }` for a domain the organization verified, which opens the links with the
-  organization's codes; or `null` for any other host, such as a domain that's still pending, which opens none. A code
-  the host doesn't open answers as a missing link does, through `notFound`, so a domain gives nothing away about other
-  organizations' codes. `hostname` is the request URL's, lowercase and without its port or a trailing dot. Headers such
-  as `X-Forwarded-Host` play no part.
-- `origin({ orgId })` is the origin of an organization's ready domain, or `null` while it has none, asked once per
-  organization in a call. It must be a host `resolve` gives the organization. Links made outside any organization ask
-  with `orgId` `null`, for a host of the app's, or `null` for `baseUrl`.
+  organization's codes, and the organization's own links with the app's codes that its codes don't take; or `null` for
+  any other host, such as a domain that's still pending, which opens none. A code the host doesn't open answers as a
+  missing link does, through `notFound`, so a domain gives nothing away about other organizations' codes. `hostname` is
+  the request URL's, lowercase and without its port or a trailing dot. Headers such as `X-Forwarded-Host` play no part.
+- `origin({ orgId })` is the origin of an organization's ready domain, or `null` for none, asked once per organization
+  in a call. A link is made in the organization's scope only when `resolve` gives the organization that host. Links made
+  outside any organization ask with `orgId` `null`, for a host of the app's, or `null` for `baseUrl`.
 - Links open at the same `path` on every host, so the catch-all route that serves `/s` serves them on every domain.
 - A link that grants access sets its cookie on the host that opens it, for that host alone outside `cookie.domain`. When
   that cookie can't reach the record, such as a record on `app.yourapp.com` from a link on `links.acme.com`, the link is
@@ -198,9 +198,10 @@ a domain, so a code is one link on each host. An organization's domains share it
 - An organization's own links, made while `origin` returns its domain, get the organization's codes and are shared on
   its domain. Every other link gets the app's codes and is shared on the app's host: a member's own links, links made
   outside any organization, and an organization's links made before its domain was ready.
-- A link keeps its codes for good. Links made before an organization's domain was ready stay on the app's host, which
-  still opens them, and links made on its domain open on whichever ready domain it has. While it has none, they open
-  nowhere and their `shortUrl` is `null`, since the app's host may have the same code for another link.
+- A link keeps its codes for good. Links made before an organization's domain was ready keep their short URLs on the
+  app's host, which still opens them, and its domains open them too, unless the organization has the same code on its
+  domains. Links made on its domain open on whichever ready domain it has. While `origin` returns `null` for it, their
+  `shortUrl` is `null`, since the app's host may have the same code for another link.
 - `create` says `CONFLICT` only for a code taken among the link's own codes, so it tells nobody about another
   organization's codes. The [spec](docs/spec.md#codes-on-organizations-domains) has the details.
 
@@ -227,7 +228,7 @@ import { createShortLinksClient } from "@better-apps/short-links/client"
 const links = createShortLinksClient(client)
 await links.load({ subjectType: "invoice", subjectId: "inv-1" })
 const link = await links.create({ target: { subjectType: "invoice", subjectId: "inv-1" }, grantsView: true })
-await links.update({ code: link.code, enabled: false })
+await links.update({ id: link.id, enabled: false })
 ```
 
 - `load(filter)` loads a list's first page, `loadMore(filter)` the next. A filter is a record, an `owner`, or nothing

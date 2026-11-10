@@ -167,8 +167,7 @@ export type OwnerType = "user" | "org";
 // @public
 export interface ResolveHostArgs {
     hostname: string;
-    // (undocumented)
-    request: Request;
+    request: Request | null;
 }
 
 // @public

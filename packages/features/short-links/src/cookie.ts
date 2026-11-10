@@ -101,8 +101,8 @@ export function grantCookie(request: Request, settings: CookieSettings, link: Gr
   }
   const url = new URL(request.url)
   const secure = url.protocol === "https:" ? "; Secure" : ""
-  const scope = domain !== undefined && isUnder(url.hostname, domain) ? `; Domain=${domain}` : ""
-  return `${name}=${entries.join(".")}; Path=/${scope}; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${secure}`
+  const domainAttribute = domain !== undefined && isUnder(url.hostname, domain) ? `; Domain=${domain}` : ""
+  return `${name}=${entries.join(".")}; Path=/${domainAttribute}; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${secure}`
 }
 
 /**
