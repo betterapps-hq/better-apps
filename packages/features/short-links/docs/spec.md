@@ -230,20 +230,21 @@ those that fall on it: date-fns reads a midnight that happens twice, as in Havan
 23:59 the clocks skip, as in Nuuk each March, as the moment after the jump. Days with a change of offset are shorter or
 longer than 24 hours, and a day a zone skipped, such as 30 December 2011 in Samoa, has no clicks.
 
-- `clicksByDay({ code, from, to, timeZone? })` counts one link's clicks on each day: one `countGroups` query by `slot`,
+- `clicksByDay({ id, from, to, timeZone? })` counts one link's clicks on each day: one `countGroups` query by `slot`,
   which returns at most one group per 15 minutes, however many clicks there were. It returns `{ days, total }`, with
   every day of the range in `days` as `{ date, clicks }`, days without clicks included.
-- `clickTotals({ codes, from, to, timeZone? })` counts up to 50 links' clicks over the range, such as a page of `list`
-  or a dashboard's top links: one read for the links and one `countGroups` query by `linkId`, each 90 to a query. It
-  returns `{ links, total }`, with `links` as `{ code, clicks }` in the order asked. Codes of no link and links the
-  caller doesn't manage are left out alike, so the answer doesn't tell them apart.
+- `clickTotals({ ids, from, to, timeZone? })` counts up to 50 links' clicks over the range, such as a page of `list` or
+  a dashboard's top links: one read for the links and one `countGroups` query by `linkId`, each 90 to a query. It
+  returns `{ links, total }`, with `links` as `{ id, clicks }` in the order asked. Ids of no link and links the caller
+  doesn't manage are left out alike, so the answer doesn't tell them apart.
 
-Both are actions with the permissions of `get`: a link's managers, and trusted server code. Lifetime counts are each
-link's `clicks`, and `list({ sort: "clicks" })` lists the most opened links first.
+Both are actions with the permissions of `get`: a link's managers, and trusted server code. They take links by their
+`id`, as `recordClicks` does, since an id names one link however its code is shared. Lifetime counts are each link's
+`clicks`, and `list({ sort: "clicks" })` lists the most opened links first.
 
 ### Recorded clicks
 
-`recordClicks({ code, at })`, server only, records up to 500 clicks at given times, such as a demo's history. It writes
+`recordClicks({ id, at })`, server only, records up to 500 clicks at given times, such as a demo's history. It writes
 their rows, adds them to `clicks`, and sets `lastClickedAt` to the latest of them and the link's last click, in one
 batch, so a seeded link's counter, last click and chart agree. The rows take about 20 statements at most, well under
 D1's limit of queries per invocation. It refuses times later than now or before 2011, and links the caller doesn't
@@ -316,10 +317,9 @@ link's host wouldn't, such as when the page is on an organization's domain and t
   `{ removed }`.
 - `removeOwner({ owner: { type, id } })`, server only, removes a person's or an organization's links in one statement
   and returns `{ removed }`.
-- `clicksByDay({ code, from, to, timeZone? })` returns `{ days, total }`, and
-  `clickTotals({ codes, from, to, timeZone? })` returns `{ links, total }`, as [Clicks over time](#clicks-over-time)
-  describes.
-- `recordClicks({ code, at })`, server only, records clicks at given times and returns the link, as
+- `clicksByDay({ id, from, to, timeZone? })` returns `{ days, total }`, and `clickTotals({ ids, from, to, timeZone? })`
+  returns `{ links, total }`, as [Clicks over time](#clicks-over-time) describes.
+- `recordClicks({ id, at })`, server only, records clicks at given times and returns the link, as
   [Recorded clicks](#recorded-clicks) describes.
 
 Each link comes back as a `ShortLink`: its `code`, its `shortUrl`, its `owner` as `{ type, id }`, `orgId`, `createdBy`,

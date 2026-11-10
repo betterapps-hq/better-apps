@@ -151,23 +151,23 @@ from 2011 on, in an IANA `timeZone`, `UTC` by default. Each is for the links' ma
 
 ```ts
 const { days, total } = await app.api.shortLinks.clicksByDay(
-  { code: "intro-linkedin", from: "2026-10-12", to: "2026-11-10", timeZone: "Europe/Paris" },
+  { id: link.id, from: "2026-10-12", to: "2026-11-10", timeZone: "Europe/Paris" },
   { actor }
 )
 // days: [{ date: "2026-10-12", clicks: 14 }, ...], one per day, days without clicks included.
 
 const { links } = await app.api.shortLinks.clickTotals(
-  { codes: page.links.map((link) => link.code), from: "2026-10-12", to: "2026-11-10", timeZone: "Europe/Paris" },
+  { ids: page.links.map((link) => link.id), from: "2026-10-12", to: "2026-11-10", timeZone: "Europe/Paris" },
   { actor }
 )
-// links: [{ code: "intro-linkedin", clicks: 412 }, ...], for up to 50 codes, in the order asked.
+// links: [{ id, clicks: 412 }, ...], for up to 50 links, in the order asked.
 ```
 
-`clickTotals` leaves out codes of no link and links the caller doesn't manage. Lifetime counts are each link's `clicks`,
+`clickTotals` leaves out ids of no link and links the caller doesn't manage. Lifetime counts are each link's `clicks`,
 and `list({ sort: "clicks" })` lists the most opened links first.
 
-`recordClicks({ code, at })`, server only, records up to 500 clicks at given times, such as a demo's history, from 2011
-to now. It adds them to `clicks` and moves `lastClickedAt` to the latest of them and the link's last click, in one batch
+`recordClicks({ id, at })`, server only, records up to 500 clicks at given times, such as a demo's history, from 2011 to
+now. It adds them to `clicks` and moves `lastClickedAt` to the latest of them and the link's last click, in one batch
 with their rows, so a seeded link's counter and chart agree, and returns the link.
 
 ## Which link opened a page

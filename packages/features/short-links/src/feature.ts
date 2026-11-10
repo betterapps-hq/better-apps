@@ -56,8 +56,8 @@ export interface ClicksByDay {
 
 /** Links' clicks over a range of days. */
 export interface ClickTotals {
-  /** The links asked for that the caller manages, in the order asked, each with its clicks over the range. */
-  links: { code: string; clicks: number }[]
+  /** The links asked for that the caller manages, by `id`, in the order asked, each with its clicks over the range. */
+  links: { id: string; clicks: number }[]
   /** Their clicks together. */
   total: number
 }
@@ -304,9 +304,18 @@ async function manages(config: Config, context: Context, row: LinkRow): Promise<
 
 const byCode = (code: string): Where[] => [{ field: "code", value: normalizeCode(code) }]
 
-/** A link the caller manages, or the error that says why not. */
+/** A link the caller manages, by its code, or the error that says why not. */
 async function requireLink(config: Config, context: Context, code: string): Promise<LinkRow> {
-  const row = await context.db.findOne<LinkRow>({ model: linkModel, where: byCode(code) })
+  return requireRow(config, context, byCode(code))
+}
+
+/** A link the caller manages, by its id, or the error that says why not. */
+async function requireLinkById(config: Config, context: Context, id: string): Promise<LinkRow> {
+  return requireRow(config, context, [{ field: "id", value: id }])
+}
+
+async function requireRow(config: Config, context: Context, where: Where[]): Promise<LinkRow> {
+  const row = await context.db.findOne<LinkRow>({ model: linkModel, where })
   if (row && (await manages(config, context, row))) {
     return row
   }
@@ -411,6 +420,7 @@ function isLater(next: Date | null, current: Date | null): boolean {
 const subjectType = z.string().min(1).max(255)
 const subjectId = z.string().min(1).max(255)
 const code = z.string().min(1).max(limits.maxCode)
+const linkId = z.string().min(1).max(255)
 const url = z.string().min(1).max(limits.urlLength)
 const owner = z.enum(["user", "org"])
 const date = z.coerce.date()
@@ -446,9 +456,9 @@ const inputs = {
   }),
   subject,
   removeOwner: z.object({ owner: z.object({ type: owner, id: z.string().min(1).max(255) }) }),
-  clicksByDay: z.object({ code, ...days }),
-  clickTotals: z.object({ codes: z.array(code).min(1).max(limits.maxLinksPerPage), ...days }),
-  recordClicks: z.object({ code, at: z.array(date).min(1).max(limits.maxRecordedClicks) })
+  clicksByDay: z.object({ id: linkId, ...days }),
+  clickTotals: z.object({ ids: z.array(linkId).min(1).max(limits.maxLinksPerPage), ...days }),
+  recordClicks: z.object({ id: linkId, at: z.array(date).min(1).max(limits.maxRecordedClicks) })
 }
 
 type Parsed<Input> = Omit<Input, "expiresAt"> & { expiresAt?: Date | null | undefined }
@@ -867,7 +877,7 @@ function clickWrites(linkId: string, times: readonly Date[], lastClickedAt: Date
 /** A link's clicks on each day of a range, in the range's time zone, in one query. */
 async function clicksByDay(config: Config, context: Context): Promise<ClicksByDay> {
   const input = context.input as ClicksByDayInput
-  const row = await requireLink(config, context, input.code)
+  const row = await requireLinkById(config, context, input.id)
   const range = rangeOf(input)
   // Each 15-minute slot falls on one day in every zone, so the slots' counts add up to each day's.
   const groups = await context.db.countGroups({
@@ -896,8 +906,8 @@ function within(range: { start: Date; end: Date }): Where[] {
 }
 
 /**
- * Links' clicks over a range of days: one read for the links, 90 codes to a query, and one count, 90 links to a query.
- * Links the caller doesn't manage, and codes of no link, are left out, so they look alike.
+ * Links' clicks over a range of days: one read for the links and one count, each 90 links to a query. Links the caller
+ * doesn't manage, and ids of no link, are left out, so they look alike.
  */
 async function clickTotals(config: Config, context: Context): Promise<ClickTotals> {
   const input = context.input as ClickTotalsInput
@@ -905,29 +915,26 @@ async function clickTotals(config: Config, context: Context): Promise<ClickTotal
     throw new ShortLinksError("UNAUTHENTICATED", "Sign in to see your links.")
   }
   const range = rangeOf(input)
-  const codes = [...new Set(input.codes.filter((wanted) => isValidCode(wanted)).map((wanted) => normalizeCode(wanted)))]
+  const ids = [...new Set(input.ids)]
   const read = await Promise.all(
-    chunks(codes).map(async (list) =>
-      context.db.findMany<LinkRow>({ model: linkModel, where: [{ field: "code", operator: "in", value: list }] })
+    chunks(ids).map(async (list) =>
+      context.db.findMany<LinkRow>({ model: linkModel, where: [{ field: "id", operator: "in", value: list }] })
     )
   )
   const rows = read.flat()
   const managed = await Promise.all(rows.map(async (row) => manages(config, context, row)))
-  const byCode = new Map(rows.filter((_, index) => managed[index]).map((row) => [row.code, row]))
+  const byId = new Map(rows.filter((_, index) => managed[index]).map((row) => [row.id, row]))
   const counted = await Promise.all(
-    chunks([...byCode.values()].map((row) => row.id)).map(async (ids) =>
+    chunks([...byId.keys()]).map(async (list) =>
       context.db.countGroups({
         model: clickModel,
-        where: [{ field: "linkId", operator: "in", value: ids }, ...within(range)],
+        where: [{ field: "linkId", operator: "in", value: list }, ...within(range)],
         groupBy: ["linkId"]
       })
     )
   )
   const clicksOf = new Map(counted.flat().map(({ group, count }) => [group.linkId as string, count]))
-  const links = codes.flatMap((wanted) => {
-    const row = byCode.get(wanted)
-    return row ? [{ code: row.code, clicks: clicksOf.get(row.id) ?? 0 }] : []
-  })
+  const links = ids.flatMap((id) => (byId.has(id) ? [{ id, clicks: clicksOf.get(id) ?? 0 }] : []))
   return { links, total: links.reduce((sum, link) => sum + link.clicks, 0) }
 }
 
@@ -937,7 +944,7 @@ async function clickTotals(config: Config, context: Context): Promise<ClickTotal
  */
 async function recordClicks(config: Config, context: Context): Promise<ShortLink> {
   const input = context.input as Omit<RecordClicksInput, "at"> & { at: Date[] }
-  const row = await requireLink(config, context, input.code)
+  const row = await requireLinkById(config, context, input.id)
   const times = input.at.map((time) => time.getTime())
   const latest = Math.max(...times)
   if (latest > context.now.getTime()) {

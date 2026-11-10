@@ -240,20 +240,20 @@ export interface DayRangeInput {
   timeZone?: string | undefined
 }
 
-/** The input of `clicksByDay`: a link, and the days to count its clicks on. */
+/** The input of `clicksByDay`: a link, by its `id`, and the days to count its clicks on. */
 export interface ClicksByDayInput extends DayRangeInput {
-  code: string
+  id: string
 }
 
-/** The input of `clickTotals`: links, and the days to count their clicks over. */
+/** The input of `clickTotals`: links, by their `id`s, and the days to count their clicks over. */
 export interface ClickTotalsInput extends DayRangeInput {
-  /** Up to 50 codes, such as a page of `list`. */
-  codes: readonly string[]
+  /** Up to 50 link ids, such as a page of `list`. */
+  ids: readonly string[]
 }
 
-/** The input of `recordClicks`: a link, and when it was opened. */
+/** The input of `recordClicks`: a link, by its `id`, and when it was opened. */
 export interface RecordClicksInput {
-  code: string
+  id: string
   /** Up to 500 times, from 2011 to now. */
   at: readonly (Date | string)[]
 }

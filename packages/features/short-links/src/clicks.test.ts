@@ -85,7 +85,7 @@ describe("click events", () => {
     const mine = await t.api.create({ target: docs, owner: "user" }, t.as("bob"))
     const kept = await t.api.create({ target: docs }, t.as("gus"))
     for (const link of [one, record, mine, kept]) {
-      await t.api.recordClicks({ code: link.code, at: at("2026-01-01T12:00:00Z", "2026-01-02T12:00:00Z") })
+      await t.api.recordClicks({ id: link.id, at: at("2026-01-01T12:00:00Z", "2026-01-02T12:00:00Z") })
     }
     expect(clickRows(t)).toHaveLength(8)
     await t.api.remove({ code: one.code }, t.as("ada"))
@@ -102,17 +102,17 @@ describe("recordClicks", () => {
     const t = setup()
     const link = await t.api.create({ target: docs }, t.as("ada"))
     const recorded = await t.api.recordClicks({
-      code: link.code,
+      id: link.id,
       at: ["2026-01-03T09:00:00Z", new Date("2026-01-01T09:00:00Z"), "2026-01-02T09:00:00Z"]
     })
-    expect(recorded).toMatchObject({ code: link.code, clicks: 3, lastClickedAt: new Date("2026-01-03T09:00:00Z") })
+    expect(recorded).toMatchObject({ id: link.id, clicks: 3, lastClickedAt: new Date("2026-01-03T09:00:00Z") })
     // An older click doesn't move the last click back.
-    const older = await t.api.recordClicks({ code: link.code, at: at("2025-12-01T09:00:00Z") })
+    const older = await t.api.recordClicks({ id: link.id, at: at("2025-12-01T09:00:00Z") })
     expect(older).toMatchObject({ clicks: 4, lastClickedAt: new Date("2026-01-03T09:00:00Z") })
     expect(clickRows(t)).toHaveLength(4)
     // More than one statement's worth of rows goes in one batch.
     const many = Array.from({ length: 45 }, (_, index) => new Date(Date.UTC(2026, 0, 10, 0, index)))
-    expect((await t.api.recordClicks({ code: link.code, at: many })).clicks).toBe(49)
+    expect((await t.api.recordClicks({ id: link.id, at: many })).clicks).toBe(49)
     expect(clickRows(t)).toHaveLength(49)
   })
 
@@ -129,7 +129,7 @@ describe("recordClicks", () => {
       }
       return prepare(sql)
     }) as typeof sqlite.prepare
-    await expectCode(t.api.recordClicks({ code: link.code, at: at("2026-01-01T00:00:00Z") }), "NOT_FOUND")
+    await expectCode(t.api.recordClicks({ id: link.id, at: at("2026-01-01T00:00:00Z") }), "NOT_FOUND")
     sqlite.prepare = prepare
     expect(clickRows(t)).toHaveLength(0)
   })
@@ -137,15 +137,15 @@ describe("recordClicks", () => {
   it("refuses times later than now and links the caller can't manage, and is server only", async () => {
     const t = setup()
     const link = await t.api.create({ target: docs }, t.as("ada"))
-    await expectCode(t.api.recordClicks({ code: link.code, at: [new Date(Date.now() + 60 * 60_000)] }), "INVALID_INPUT")
-    await expectCode(t.api.recordClicks({ code: link.code, at: at("2026-01-01T00:00:00Z") }, t.as("gus")), "NOT_FOUND")
-    await expectCode(t.api.recordClicks({ code: "missing", at: at("2026-01-01T00:00:00Z") }), "NOT_FOUND")
-    await expectCode(t.api.recordClicks({ code: link.code, at: at("2010-12-31T23:59:59Z") }), "INVALID_INPUT")
-    const posted = await t.post("recordClicks", { code: link.code, at: ["2026-01-01T00:00:00Z"] }, "ada")
+    await expectCode(t.api.recordClicks({ id: link.id, at: [new Date(Date.now() + 60 * 60_000)] }), "INVALID_INPUT")
+    await expectCode(t.api.recordClicks({ id: link.id, at: at("2026-01-01T00:00:00Z") }, t.as("gus")), "NOT_FOUND")
+    await expectCode(t.api.recordClicks({ id: "missing", at: at("2026-01-01T00:00:00Z") }), "NOT_FOUND")
+    await expectCode(t.api.recordClicks({ id: link.id, at: at("2010-12-31T23:59:59Z") }), "INVALID_INPUT")
+    const posted = await t.post("recordClicks", { id: link.id, at: ["2026-01-01T00:00:00Z"] }, "ada")
     expect(posted.ok).toBe(false)
     expect(clickRows(t)).toHaveLength(0)
     // A manager's server code may record clicks on their links.
-    expect((await t.api.recordClicks({ code: link.code, at: at("2026-01-01T00:00:00Z") }, t.as("ada"))).clicks).toBe(1)
+    expect((await t.api.recordClicks({ id: link.id, at: at("2026-01-01T00:00:00Z") }, t.as("ada"))).clicks).toBe(1)
   })
 })
 
@@ -155,11 +155,11 @@ describe("clicksByDay", () => {
     const link = await t.api.create({ target: docs }, t.as("ada"))
     const other = await t.api.create({ target: docs }, t.as("ada"))
     await t.api.recordClicks({
-      code: link.code,
+      id: link.id,
       at: at("2026-01-01T00:00:00Z", "2026-01-01T23:59:59Z", "2026-01-03T12:00:00Z", "2026-01-04T00:00:00Z")
     })
-    await t.api.recordClicks({ code: other.code, at: at("2026-01-02T12:00:00Z") })
-    const days = await t.api.clicksByDay({ code: link.code, from: "2026-01-01", to: "2026-01-03" }, t.as("ada"))
+    await t.api.recordClicks({ id: other.id, at: at("2026-01-02T12:00:00Z") })
+    const days = await t.api.clicksByDay({ id: link.id, from: "2026-01-01", to: "2026-01-03" }, t.as("ada"))
     expect(days).toEqual({
       days: [
         { date: "2026-01-01", clicks: 2 },
@@ -168,7 +168,7 @@ describe("clicksByDay", () => {
       ],
       total: 3
     })
-    const one = await t.api.clicksByDay({ code: link.code, from: "2026-01-04", to: "2026-01-04" }, t.as("ada"))
+    const one = await t.api.clicksByDay({ id: link.id, from: "2026-01-04", to: "2026-01-04" }, t.as("ada"))
     expect(one).toEqual({ days: [{ date: "2026-01-04", clicks: 1 }], total: 1 })
   })
 
@@ -176,7 +176,7 @@ describe("clicksByDay", () => {
     const t = setup()
     const link = await t.api.create({ target: docs }, t.as("ada"))
     await t.api.recordClicks({
-      code: link.code,
+      id: link.id,
       at: at(
         // Kathmandu is 5:45 ahead: 23:59 on 1 January there, then midnight on the 2nd.
         "2026-01-01T18:14:00Z",
@@ -189,7 +189,7 @@ describe("clicksByDay", () => {
       )
     })
     const kathmandu = await t.api.clicksByDay(
-      { code: link.code, from: "2026-01-01", to: "2026-01-02", timeZone: "Asia/Kathmandu" },
+      { id: link.id, from: "2026-01-01", to: "2026-01-02", timeZone: "Asia/Kathmandu" },
       t.as("ada")
     )
     expect(kathmandu.days).toEqual([
@@ -197,7 +197,7 @@ describe("clicksByDay", () => {
       { date: "2026-01-02", clicks: 1 }
     ])
     const newYork = await t.api.clicksByDay(
-      { code: link.code, from: "2026-03-08", to: "2026-03-09", timeZone: "America/New_York" },
+      { id: link.id, from: "2026-03-08", to: "2026-03-09", timeZone: "America/New_York" },
       t.as("ada")
     )
     expect(newYork.days).toEqual([
@@ -206,7 +206,7 @@ describe("clicksByDay", () => {
     ])
     // The range's edges are the zone's midnights: the 7th in New York ends at 05:00 UTC on the 8th.
     const before = await t.api.clicksByDay(
-      { code: link.code, from: "2026-03-07", to: "2026-03-07", timeZone: "America/New_York" },
+      { id: link.id, from: "2026-03-07", to: "2026-03-07", timeZone: "America/New_York" },
       t.as("ada")
     )
     expect(before.total).toBe(0)
@@ -218,16 +218,16 @@ describe("clicksByDay", () => {
     // Amman turned its clocks back from 01:00 to 00:00 on 25 October 2019: 21:30 UTC was 00:30 there, the first time.
     // Samoa skipped 30 December 2011, going from the 29th straight to the 31st.
     await t.api.recordClicks({
-      code: link.code,
+      id: link.id,
       at: at("2019-10-24T21:30:00Z", "2011-12-30T09:59:00Z", "2011-12-30T10:00:00Z")
     })
     const amman = await t.api.clicksByDay(
-      { code: link.code, from: "2019-10-25", to: "2019-10-25", timeZone: "Asia/Amman" },
+      { id: link.id, from: "2019-10-25", to: "2019-10-25", timeZone: "Asia/Amman" },
       t.as("ada")
     )
     expect(amman.total).toBe(1)
     const samoa = await t.api.clicksByDay(
-      { code: link.code, from: "2011-12-29", to: "2011-12-31", timeZone: "Pacific/Apia" },
+      { id: link.id, from: "2011-12-29", to: "2011-12-31", timeZone: "Pacific/Apia" },
       t.as("ada")
     )
     expect(samoa.days).toEqual([
@@ -236,7 +236,7 @@ describe("clicksByDay", () => {
       { date: "2011-12-31", clicks: 1 }
     ])
     const skipped = await t.api.clicksByDay(
-      { code: link.code, from: "2011-12-30", to: "2011-12-30", timeZone: "Pacific/Apia" },
+      { id: link.id, from: "2011-12-30", to: "2011-12-30", timeZone: "Pacific/Apia" },
       t.as("ada")
     )
     expect(skipped).toEqual({ days: [{ date: "2011-12-30", clicks: 0 }], total: 0 })
@@ -246,9 +246,9 @@ describe("clicksByDay", () => {
     const t = setup()
     const link = await t.api.create({ target: docs }, t.as("ada"))
     // Nuuk went from 23:00 on 28 March 2026 straight to 00:00 on the 29th, at 01:00 UTC, so the 29th starts then.
-    await t.api.recordClicks({ code: link.code, at: at("2026-03-29T00:59:00Z", "2026-03-29T01:00:00Z") })
+    await t.api.recordClicks({ id: link.id, at: at("2026-03-29T00:59:00Z", "2026-03-29T01:00:00Z") })
     const nuuk = await t.api.clicksByDay(
-      { code: link.code, from: "2026-03-28", to: "2026-03-29", timeZone: "America/Nuuk" },
+      { id: link.id, from: "2026-03-28", to: "2026-03-29", timeZone: "America/Nuuk" },
       t.as("ada")
     )
     expect(nuuk.days).toEqual([
@@ -256,7 +256,7 @@ describe("clicksByDay", () => {
       { date: "2026-03-29", clicks: 1 }
     ])
     const only = await t.api.clicksByDay(
-      { code: link.code, from: "2026-03-29", to: "2026-03-29", timeZone: "America/Nuuk" },
+      { id: link.id, from: "2026-03-29", to: "2026-03-29", timeZone: "America/Nuuk" },
       t.as("ada")
     )
     expect(only.total).toBe(1)
@@ -265,7 +265,7 @@ describe("clicksByDay", () => {
   it("is for the link's managers", async () => {
     const t = setup()
     const link = await t.api.create({ target: docs }, t.as("ada"))
-    const range = { code: link.code, from: "2026-01-01", to: "2026-01-02" }
+    const range = { id: link.id, from: "2026-01-01", to: "2026-01-02" }
     await expectCode(t.api.clicksByDay(range, t.as("gus")), "NOT_FOUND")
     await expectCode(t.api.clicksByDay(range, t.as("cy")), "NOT_FOUND")
     expect((await t.post("clicksByDay", range)).status).toBe(401)
@@ -278,7 +278,7 @@ describe("clicksByDay", () => {
     const t = setup()
     const link = await t.api.create({ target: docs }, t.as("ada"))
     const ask = (range: { from: string; to: string; timeZone?: string }) =>
-      t.api.clicksByDay({ code: link.code, ...range }, t.as("ada"))
+      t.api.clicksByDay({ id: link.id, ...range }, t.as("ada"))
     for (const range of [
       { from: "2026-1-1", to: "2026-01-02" },
       { from: "2026-02-30", to: "2026-03-01" },
@@ -305,12 +305,12 @@ describe("clickTotals", () => {
     const second = await t.api.create({ target: docs }, t.as("ada"))
     const quiet = await t.api.create({ target: docs }, t.as("ada"))
     const globex = await t.api.create({ target: docs }, t.as("gus"))
-    await t.api.recordClicks({ code: first.code, at: at("2026-01-01T10:00:00Z", "2026-01-05T10:00:00Z") })
-    await t.api.recordClicks({ code: second.code, at: at("2026-01-02T10:00:00Z", "2026-01-03T10:00:00Z") })
-    await t.api.recordClicks({ code: globex.code, at: at("2026-01-02T10:00:00Z") })
+    await t.api.recordClicks({ id: first.id, at: at("2026-01-01T10:00:00Z", "2026-01-05T10:00:00Z") })
+    await t.api.recordClicks({ id: second.id, at: at("2026-01-02T10:00:00Z", "2026-01-03T10:00:00Z") })
+    await t.api.recordClicks({ id: globex.id, at: at("2026-01-02T10:00:00Z") })
     const totals = await t.api.clickTotals(
       {
-        codes: [second.code, first.code.toUpperCase(), quiet.code, globex.code, "missing", "not a code", first.code],
+        ids: [second.id, first.id, quiet.id, globex.id, "missing", first.id],
         from: "2026-01-01",
         to: "2026-01-03"
       },
@@ -318,18 +318,16 @@ describe("clickTotals", () => {
     )
     expect(totals).toEqual({
       links: [
-        { code: second.code, clicks: 2 },
-        { code: first.code, clicks: 1 },
-        { code: quiet.code, clicks: 0 }
+        { id: second.id, clicks: 2 },
+        { id: first.id, clicks: 1 },
+        { id: quiet.id, clicks: 0 }
       ],
       total: 3
     })
     // Trusted server code reads any link's.
-    const all = await t.api.clickTotals({ codes: [globex.code], from: "2026-01-01", to: "2026-01-31" })
-    expect(all.links).toEqual([{ code: globex.code, clicks: 1 }])
-    expect((await t.post("clickTotals", { codes: [first.code], from: "2026-01-01", to: "2026-01-02" })).status).toBe(
-      401
-    )
+    const all = await t.api.clickTotals({ ids: [globex.id], from: "2026-01-01", to: "2026-01-31" })
+    expect(all.links).toEqual([{ id: globex.id, clicks: 1 }])
+    expect((await t.post("clickTotals", { ids: [first.id], from: "2026-01-01", to: "2026-01-02" })).status).toBe(401)
   })
 })
 
@@ -344,7 +342,7 @@ describe("listing by clicks", () => {
     for (const [index, link] of made.entries()) {
       const count = clicks[index] ?? 0
       if (count > 0) {
-        await t.api.recordClicks({ code: link.code, at: Array.from({ length: count }, () => new Date("2026-01-01")) })
+        await t.api.recordClicks({ id: link.id, at: Array.from({ length: count }, () => new Date("2026-01-01")) })
       }
     }
     const first = await t.api.list({ sort: "clicks", limit: 3 }, t.as("ada"))

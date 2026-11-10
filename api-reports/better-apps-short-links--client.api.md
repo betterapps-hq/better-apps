@@ -30,13 +30,13 @@ export interface ClicksByDay {
 // @public
 export interface ClicksByDayInput extends DayRangeInput {
     // (undocumented)
-    code: string;
+    id: string;
 }
 
 // @public
 export interface ClickTotals {
     links: {
-        code: string;
+        id: string;
         clicks: number;
     }[];
     total: number;
@@ -44,7 +44,7 @@ export interface ClickTotals {
 
 // @public
 export interface ClickTotalsInput extends DayRangeInput {
-    codes: readonly string[];
+    ids: readonly string[];
 }
 
 // @public
