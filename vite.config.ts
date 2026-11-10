@@ -53,7 +53,8 @@ export default defineConfig({
     }
   },
   staged: {
-    "*.{ts,tsx,js,jsx,mjs,cjs}": "vp lint --fix",
+    // Lint-ignored files such as the generated schema can be the only staged scripts.
+    "*.{ts,tsx,js,jsx,mjs,cjs}": "vp lint --fix --no-error-on-unmatched-pattern",
     "*.{ts,tsx,js,jsx,mjs,cjs,json,jsonc,md,yml,yaml}": "vp fmt --no-error-on-unmatched-pattern"
   }
 })
