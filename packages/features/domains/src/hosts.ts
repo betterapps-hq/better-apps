@@ -1,7 +1,7 @@
 // Which organization a host serves, and the origin of an organization's domain, for features that serve customers'
 // domains, such as short links' `hosts`.
 import type { Domain, HostnameMatch } from "./feature.js"
-import { isWithin, normalizeHostname } from "./hostname.js"
+import { isWithin, maxHostnameLength, normalizeHostname } from "./hostname.js"
 
 /** The domains calls `domainHosts` makes: `app.api.domains`, which exists only once the app is created. */
 export interface DomainHostsApi {
@@ -18,7 +18,7 @@ export interface DomainHostsOptions {
    * and port.
    */
   url: string | URL
-  /** More hostnames that are the app's own, such as `localhost` beside `127.0.0.1`. */
+  /** More hostnames that are the app's own, such as `localhost` beside `127.0.0.1`, without a scheme or port. */
   hostnames?: readonly string[] | undefined
   /**
    * For local development with `localHostnames()` only. Browsers can't reach a custom domain such as `go.acme.com` on
@@ -39,7 +39,7 @@ export type HostOwner = "app" | { orgId: string } | null
 export interface DomainHosts {
   /** Pass as short links' `hosts`. Each call throws until `connect` runs. */
   hosts: {
-    /** Whose links a host opens. */
+    /** Whose links a host opens. The hostname is normalized as `lookup` does, so a port or trailing dot is fine. */
     resolve: (args: { hostname: string }) => Promise<HostOwner>
     /** The origin of an organization's primary domain once it's `active`, or `null` for the app's own. */
     origin: (args: { orgId: string | null }) => Promise<string | null>
@@ -57,9 +57,14 @@ export interface DomainHosts {
  */
 export function domainHosts(options: DomainHostsOptions): DomainHosts {
   const url = new URL(options.url)
-  const appHostnames = new Set(
-    [url.hostname, ...(options.hostnames ?? [])].map((hostname) => normalizeHostname(hostname) ?? hostname)
-  )
+  const appHostnames = new Set([url.hostname])
+  for (const entry of options.hostnames ?? []) {
+    const hostname = normalizeHostname(entry)
+    if (hostname === null) {
+      throw new Error(`\`hostnames\` holds "${entry}", which isn't a hostname without a port, such as \`localhost\`.`)
+    }
+    appHostnames.add(hostname)
+  }
   const suffix = options.localSuffix === undefined ? null : normalizeHostname(options.localSuffix)
   if (options.localSuffix !== undefined && (suffix === null || !isWithin(suffix, "localhost"))) {
     throw new Error(
@@ -76,27 +81,35 @@ export function domainHosts(options: DomainHostsOptions): DomainHosts {
     return connected
   }
 
-  /** The domain a host reaches: a custom domain only through its alias while `localSuffix` is set. */
+  /**
+   * The domain a host reaches. While `localSuffix` is set, a subdomain answers as it is and a custom domain only at its
+   * alias. The host itself is looked up first, so a custom domain's alias never takes a subdomain's place.
+   */
   const match = async (hostname: string): Promise<HostnameMatch | null> => {
-    if (suffix === null) {
-      return api().lookup({ hostname })
-    }
-    if (hostname.endsWith(`.${suffix}`)) {
-      const aliased = hostname.slice(0, -suffix.length - 1)
-      // A custom hostname has at least two labels, so a subdomain of a zone under the suffix needs no lookup here.
-      const found = aliased.includes(".") ? await api().lookup({ hostname: aliased }) : null
-      if (found?.kind === "custom") {
-        return found
-      }
-    }
     const found = await api().lookup({ hostname })
-    return found?.kind === "custom" ? null : found
+    if (suffix === null) {
+      return found
+    }
+    if (found?.kind === "subdomain") {
+      return found
+    }
+    const aliased = hostname.endsWith(`.${suffix}`) ? hostname.slice(0, -suffix.length - 1) : ""
+    // A custom hostname has at least two labels.
+    if (!aliased.includes(".")) {
+      return null
+    }
+    const custom = await api().lookup({ hostname: aliased })
+    return custom?.kind === "custom" ? custom : null
   }
 
   return {
     hosts: {
       resolve: async ({ hostname }) => {
-        const host = hostname.toLowerCase()
+        // Normalized as `lookup` does, and a host no domain could hold answers at once.
+        const host = normalizeHostname(hostname, { allowPort: true })
+        if (host === null || host.length > maxHostnameLength) {
+          return null
+        }
         if (appHostnames.has(host)) {
           return "app"
         }

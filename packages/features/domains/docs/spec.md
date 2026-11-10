@@ -399,12 +399,16 @@ linkHosts.connect(app.api.domains)
 | Option        | Default | What it does                                                                                           |
 | ------------- | ------- | ------------------------------------------------------------------------------------------------------ |
 | `url`         | none    | The app's own URL. Its hostname is the app's, and domains' origins use its scheme and port             |
-| `hostnames`   | none    | More hostnames that are the app's own, such as `localhost` beside `127.0.0.1`                          |
+| `hostnames`   | none    | More hostnames that are the app's own, such as `localhost` beside `127.0.0.1`, without a port          |
 | `localSuffix` | none    | For local development with `localHostnames()` only: answers custom domains under this `localhost` name |
 
-- `hosts.resolve({ hostname })` returns `"app"` for the app's own hostnames without a lookup. Otherwise it looks the
-  hostname up and returns `{ orgId }` for a `verified` domain, `"app"` for one in an app without organizations, and
-  `null` for a domain that isn't `active` or a hostname no domain holds.
+- `domainHosts` throws for a `hostnames` entry that isn't a hostname, such as `localhost:4190` or `::1`, which could
+  never match. Write an IPv6 address in brackets, as `[::1]`.
+- `hosts.resolve({ hostname })` normalizes the hostname as `lookup` does, so case, a trailing dot and a port don't
+  matter, and answers `null` without a lookup for one no domain could hold. It returns `"app"` for the app's own
+  hostnames without a lookup. Otherwise it looks the hostname up and returns `{ orgId }` for a `verified` domain,
+  `"app"` for one in an app without organizations, and `null` for a domain that isn't `active` or a hostname no domain
+  holds.
 - `hosts.origin({ orgId })` returns the origin of the organization's primary domain once it's `active`, on `url`'s
   scheme and port, such as `https://links.acme.com`, or `null` without one, which means the app's own.
 - Features are created before the app, and `app.api.domains` exists only once it is, so the app calls
@@ -418,10 +422,11 @@ hostnames under `.localhost` (see [custom hostnames](#custom-hostnames)). Browse
 the machine, so with `localSuffix: "yourapp.localhost"` the app answers a custom domain at
 `go.acme.com.yourapp.localhost`:
 
-- `resolve` strips the suffix from a hostname under it and looks the rest up. It answers only for a custom domain there,
-  and a custom domain only there, so `go.acme.com` itself answers `null`.
-- Subdomains are reachable as they are, such as `acme.yourapp.localhost` for the zone `yourapp.localhost`, and never at
-  an alias.
+- `resolve` looks the hostname up as it is first, and answers for a subdomain there, such as `acme.yourapp.localhost`
+  for the zone `yourapp.localhost`. So a custom domain's alias never takes a subdomain's place, even with the suffix
+  `localhost` above the zone. A subdomain never answers at an alias.
+- Otherwise it strips the suffix from a hostname under it and looks the rest up, answering only for a custom domain. A
+  custom domain answers only there, so `go.acme.com` itself answers `null`. An alias costs two lookups.
 - `origin` adds the suffix to a primary custom domain's hostname, so links are shared where the browser reaches them.
 - `domainHosts` throws for a suffix that isn't `localhost` or under it. It's for the local provider only, never
   production.

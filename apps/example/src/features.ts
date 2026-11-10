@@ -124,6 +124,9 @@ const appUrl = new URL(
     (process.env.NODE_ENV === "production" ? "http://127.0.0.1:4191" : "http://127.0.0.1:4190")
 )
 
+/** The workspace's subdomains go under it, and its custom domains open in the dev server under it too. */
+const zone = "better-invoices.localhost"
+
 /**
  * Where the workspace's links open: on the app's own address, and on the workspace's domains once they're ready. The
  * custom domains it owns, such as `go.acme.com`, open in the dev server at `go.acme.com.better-invoices.localhost`.
@@ -132,7 +135,7 @@ const appUrl = new URL(
 export const linkHosts = domainHosts({
   url: appUrl,
   hostnames: ["127.0.0.1", "localhost"],
-  localSuffix: "better-invoices.localhost"
+  localSuffix: zone
 })
 
 /**
@@ -176,7 +179,7 @@ const invoiceFiles = attachments({
  * Custom domains on a provider kept in memory, with its own DNS, so the example never calls Cloudflare. The provider
  * forgets its hostnames on restart, which the next check registers again.
  */
-const hostnames = localHostnames({ target: "customers.better-invoices.localhost" })
+const hostnames = localHostnames({ target: `customers.${zone}` })
 
 /** Adds records to the local DNS, as a customer would where they manage their domain. */
 export function publishDemoRecords(records: readonly DnsRecord[]) {
@@ -207,7 +210,7 @@ const demoCustomer = defineFeature({
  * organizations, so the whole workspace shares one set, and the owner manages them.
  */
 const workspaceDomains = domains({
-  subdomains: { zone: "better-invoices.localhost" },
+  subdomains: { zone },
   custom: { provider: hostnames },
   dns: hostnames.dns,
   canManage: ({ actor }) => isOwner(actor.userId)

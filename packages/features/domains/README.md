@@ -89,9 +89,10 @@ const app = createBetterApps({
 linkHosts.connect(app.api.domains)
 ```
 
-- `hosts.resolve({ hostname })` answers `"app"` for the app's own hostnames, `url`'s and any in `hostnames`. It answers
-  `{ orgId }` for an organization's `active` domain, or `"app"` in an app without organizations, and `null` for any
-  other host, such as a pending domain.
+- `hosts.resolve({ hostname })` normalizes the hostname as `lookup` does. It answers `"app"` for the app's own
+  hostnames, `url`'s and any in `hostnames`, which must be hostnames without a port. It answers `{ orgId }` for an
+  organization's `active` domain, or `"app"` in an app without organizations, and `null` for any other host, such as a
+  pending domain.
 - `hosts.origin({ orgId })` is the organization's primary domain once it's `active`, on `url`'s scheme and port, or
   `null` for the app's own.
 - Both throw until `connect(app.api.domains)` runs.

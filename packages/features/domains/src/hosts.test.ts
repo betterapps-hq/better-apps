@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vite-plus/test"
+import { afterEach, describe, expect, it, vi } from "vite-plus/test"
+import { setup as setupApp } from "../test/app.js"
 import { domainHosts, type Domain, type DomainHostsApi, type DomainKind, type DomainStatus } from "./index.js"
 
 interface Held {
@@ -70,6 +71,14 @@ describe("domainHosts", () => {
     expect(() => domainHosts({ url: "http://127.0.0.1:4190", localSuffix: "Yourapp.Localhost." })).not.toThrow()
   })
 
+  it("refuses app hostnames that aren't hostnames without a port", () => {
+    const url = "http://127.0.0.1:4190"
+    expect(() => domainHosts({ url, hostnames: ["localhost:4190"] })).toThrow('"localhost:4190"')
+    expect(() => domainHosts({ url, hostnames: ["::1"] })).toThrow('"::1"')
+    expect(() => domainHosts({ url, hostnames: ["", "Local Host"] })).toThrow("hostnames")
+    expect(() => domainHosts({ url, hostnames: ["[::1]", "Localhost."] })).not.toThrow()
+  })
+
   describe("resolve", () => {
     const setup = () => {
       const api = fakeDomains(held)
@@ -82,6 +91,22 @@ describe("domainHosts", () => {
       const { api, hosts } = setup()
       await expect(hosts.resolve({ hostname: "app.yourapp.com" })).resolves.toBe("app")
       await expect(hosts.resolve({ hostname: "localhost" })).resolves.toBe("app")
+      expect(api.lookups).toEqual([])
+    })
+
+    it("normalizes the hostname as lookup does", async () => {
+      const { api, hosts } = setup()
+      await expect(hosts.resolve({ hostname: "App.YourApp.com." })).resolves.toBe("app")
+      await expect(hosts.resolve({ hostname: "app.yourapp.com:443" })).resolves.toBe("app")
+      await expect(hosts.resolve({ hostname: "localhost:4190" })).resolves.toBe("app")
+      await expect(hosts.resolve({ hostname: "Go.Acme.com.:8443" })).resolves.toEqual({ orgId: "acme" })
+      expect(api.lookups).toEqual(["go.acme.com"])
+    })
+
+    it("answers nobody for a host no domain could hold, without a lookup", async () => {
+      const { api, hosts } = setup()
+      await expect(hosts.resolve({ hostname: `${"a".repeat(250)}.com` })).resolves.toBeNull()
+      await expect(hosts.resolve({ hostname: "not a host" })).resolves.toBeNull()
       expect(api.lookups).toEqual([])
     })
 
@@ -143,8 +168,12 @@ describe("domainHosts", () => {
     }
 
     it("answers a custom domain at its alias", async () => {
-      const { hosts } = setup()
+      const { api, hosts } = setup()
       await expect(hosts.resolve({ hostname: "go.acme.com.yourapp.localhost" })).resolves.toEqual({ orgId: "acme" })
+      expect(api.lookups).toEqual(["go.acme.com.yourapp.localhost", "go.acme.com"])
+      await expect(hosts.resolve({ hostname: "go.acme.com.yourapp.localhost:4190" })).resolves.toEqual({
+        orgId: "acme"
+      })
       await expect(hosts.resolve({ hostname: "go.initech.com.yourapp.localhost" })).resolves.toBeNull()
     })
 
@@ -159,6 +188,24 @@ describe("domainHosts", () => {
       expect(api.lookups).toEqual(["acme.yourapp.localhost"])
     })
 
+    it("keeps a subdomain when a custom domain's alias would name the same host", async () => {
+      // The suffix `localhost` sits above the zone `yourapp.localhost`, so `acme.yourapp` would alias to the subdomain.
+      const api = fakeDomains([
+        ...held,
+        { orgId: "globex", hostname: "acme.yourapp", kind: "custom", status: "active" }
+      ])
+      const { hosts, connect } = domainHosts({ url: "http://127.0.0.1:4190", localSuffix: "localhost" })
+      connect(api)
+      await expect(hosts.resolve({ hostname: "acme.yourapp.localhost" })).resolves.toEqual({ orgId: "acme" })
+      expect(api.lookups).toEqual(["acme.yourapp.localhost"])
+    })
+
+    it("answers nobody for an unknown alias", async () => {
+      const { hosts } = setup()
+      await expect(hosts.resolve({ hostname: "unknown.example.org.yourapp.localhost" })).resolves.toBeNull()
+      await expect(hosts.resolve({ hostname: "unknown.yourapp.localhost" })).resolves.toBeNull()
+    })
+
     it("never answers a subdomain at an alias", async () => {
       const { hosts } = setup()
       await expect(hosts.resolve({ hostname: "acme.yourapp.localhost.yourapp.localhost" })).resolves.toBeNull()
@@ -169,5 +216,37 @@ describe("domainHosts", () => {
       await expect(hosts.origin({ orgId: "globex" })).resolves.toBe("http://links.globex.com.yourapp.localhost:4190")
       await expect(hosts.origin({ orgId: "acme" })).resolves.toBe("http://acme.yourapp.localhost:4190")
     })
+  })
+})
+
+describe("domainHosts with the domains feature", () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it("answers for real domains on the local provider", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] })
+    const t = setupApp({ subdomains: { zone: "yourapp.localhost" } })
+    const subdomain = await t.api.add({ kind: "subdomain", label: "acme" }, t.as("ada"))
+    const custom = await t.api.add({ kind: "custom", hostname: "go.acme.org" }, t.as("ada"))
+    t.prove(custom)
+    t.route("go.acme.org")
+    await t.api.check({ domainId: custom.id }, t.as("ada"))
+    vi.setSystemTime(new Date(Date.now() + 10_000))
+    await expect(t.api.check({ domainId: custom.id }, t.as("ada"))).resolves.toMatchObject({ status: "active" })
+    await t.api.add({ kind: "custom", hostname: "links.globex.org" }, t.as("gus"))
+
+    const { hosts, connect } = domainHosts({ url: "http://127.0.0.1:4190", localSuffix: "yourapp.localhost" })
+    connect(t.api)
+    await expect(hosts.resolve({ hostname: "acme.yourapp.localhost" })).resolves.toEqual({ orgId: "acme" })
+    await expect(hosts.resolve({ hostname: "go.acme.org.yourapp.localhost" })).resolves.toEqual({ orgId: "acme" })
+    await expect(hosts.resolve({ hostname: "go.acme.org" })).resolves.toBeNull()
+    await expect(hosts.resolve({ hostname: "links.globex.org.yourapp.localhost" })).resolves.toBeNull()
+    await expect(hosts.origin({ orgId: "acme" })).resolves.toBe("http://acme.yourapp.localhost:4190")
+
+    await t.api.setPrimary({ domainId: custom.id }, t.as("ada"))
+    await expect(hosts.origin({ orgId: "acme" })).resolves.toBe("http://go.acme.org.yourapp.localhost:4190")
+    await t.api.setPrimary({ domainId: subdomain.id }, t.as("ada"))
+    await expect(hosts.origin({ orgId: "globex" })).resolves.toBeNull()
   })
 })
