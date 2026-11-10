@@ -77,8 +77,10 @@ links are shared, without that feature importing domains:
 ```ts
 import { domainHosts } from "@better-apps/domains"
 
-export const linkHosts = domainHosts({ url: "https://app.yourapp.com" })
-const links = shortLinks({ baseUrl: "https://app.yourapp.com", hosts: linkHosts.hosts })
+// One constant, so the app's own host is the one short links share links on.
+const appUrl = "https://app.yourapp.com"
+export const linkHosts = domainHosts({ url: appUrl })
+const links = shortLinks({ baseUrl: appUrl, hosts: linkHosts.hosts })
 
 // Features are created before the app, so connect its domains once it exists.
 const app = createBetterApps({
@@ -96,6 +98,8 @@ linkHosts.connect(app.api.domains)
 - `hosts.origin({ orgId })` is the organization's primary domain once it's `active`, on `url`'s scheme and port, or
   `null` for the app's own.
 - Both throw until `connect(app.api.domains)` runs.
+- Short links' `baseUrl` must be on `url`'s host or one in `hostnames`, since only those open every link. Pass both from
+  one constant, as above.
 - `localSuffix`, such as `"yourapp.localhost"`, is for local development with `localHostnames()` only. Browsers can't
   reach a custom domain such as `go.acme.com` on your machine, and domains refuses `.localhost` custom hostnames, so the
   app answers a custom domain at `go.acme.com.yourapp.localhost` instead, since browsers send every name under

@@ -73,7 +73,8 @@ shortLinks({
 - `path` is where links open, `/s` by default. It can't be directly under the app's `basePath`, where a link's URL would
   look like an action's.
 - `baseUrl` is the origin of the short URLs the actions return, such as a shorter domain that serves the same app. The
-  request's origin, by default. `hosts` needs it.
+  request's origin, by default. `hosts` needs it. It's an `http` or `https` URL, which may have a path but no
+  credentials, query or fragment, since short URLs follow it with the path and code.
 - `hosts` opens links on organizations' own domains and shares them there, as
   [Organizations' domains](#organizations-domains) describes. Without it, every host that serves the app opens every
   link.
@@ -266,9 +267,10 @@ through `hosts`, usually with [`@better-apps/domains`](../../domains/docs/spec.m
 so the app connects its domains once it exists, as the [README](../README.md#organizations-domains) shows:
 
 ```ts
-const linkHosts = domainHosts({ url: "https://app.yourapp.com" })
+const appUrl = "https://app.yourapp.com"
+const linkHosts = domainHosts({ url: appUrl })
 
-shortLinks({ baseUrl: "https://app.yourapp.com", hosts: linkHosts.hosts })
+shortLinks({ baseUrl: appUrl, hosts: linkHosts.hosts })
 // Once the app is created:
 linkHosts.connect(app.api.domains)
 ```

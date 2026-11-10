@@ -30,6 +30,11 @@ describe("short links options", () => {
     expect(() => shortLinks({ codeLength: 7.5 })).toThrow("`codeLength`")
     expect(() => shortLinks({ baseUrl: "go.example.com" })).toThrow("`baseUrl`")
     expect(() => shortLinks({ baseUrl: "ftp://go.example.com" })).toThrow("`baseUrl`")
+    expect(() => shortLinks({ baseUrl: "https:go.example.com" })).toThrow("`baseUrl`")
+    expect(() => shortLinks({ baseUrl: "https://go.example.com/?ref=1" })).toThrow("`baseUrl`")
+    expect(() => shortLinks({ baseUrl: "https://go.example.com/?" })).toThrow("`baseUrl`")
+    expect(() => shortLinks({ baseUrl: "https://go.example.com/#top" })).toThrow("`baseUrl`")
+    expect(() => shortLinks({ baseUrl: "https://ada:secret@go.example.com" })).toThrow("`baseUrl`")
     expect(() => shortLinks({ cookie: { name: "a b" } })).toThrow("cookie name")
     expect(() => shortLinks({ cookie: { maxAge: 0 } })).toThrow("`maxAge`")
     expect(() => shortLinks({ cookie: { domain: "example.test/" } })).toThrow("cookie's domain")
@@ -37,6 +42,17 @@ describe("short links options", () => {
       "under the cookie's domain"
     )
     expect(() => shortLinks({ baseUrl: "https://go.example.test", cookie: { domain: ".example.test" } })).not.toThrow()
+  })
+
+  it("take a baseUrl on any host, including local addresses, which z.httpUrl would refuse", () => {
+    for (const baseUrl of [
+      "http://127.0.0.1:4190",
+      "http://[::1]:4190",
+      "http://localhost:4190",
+      "https://go.example.com/go"
+    ]) {
+      expect(() => shortLinks({ baseUrl })).not.toThrow()
+    }
   })
 })
 

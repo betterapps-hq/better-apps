@@ -390,8 +390,9 @@ are shared. [Short links](../../short-links/docs/spec.md#organizations-domains) 
 domains. `domainHosts` builds them from `lookup` and `getPrimary`:
 
 ```ts
-const linkHosts = domainHosts({ url: "https://app.yourapp.com", hostnames: ["www.yourapp.com"] })
-shortLinks({ baseUrl: "https://app.yourapp.com", hosts: linkHosts.hosts })
+const appUrl = "https://app.yourapp.com"
+const linkHosts = domainHosts({ url: appUrl, hostnames: ["www.yourapp.com"] })
+shortLinks({ baseUrl: appUrl, hosts: linkHosts.hosts })
 // Once the app is created:
 linkHosts.connect(app.api.domains)
 ```
@@ -404,6 +405,9 @@ linkHosts.connect(app.api.domains)
 
 - `domainHosts` throws for a `url` that isn't an `http` or `https` URL, such as `localhost:3000` without its scheme. Its
   hostname is normalized like the others, so a trailing dot doesn't matter.
+- Short links' `baseUrl` must be on `url`'s host or one in `hostnames`. Links that no organization's domain opens are
+  shared on `baseUrl`, and only the app's own hosts open them, so a `baseUrl` elsewhere would open none. Nothing can
+  check this, since the two are separate features' options, so pass both from one constant.
 - It throws for a `hostnames` entry that isn't a hostname, such as `localhost:4190` or `::1`, which could never match.
   Write an IPv6 address in brackets, as `[::1]`.
 - `hosts.resolve({ hostname })` normalizes the hostname as `lookup` does, so case, a trailing dot and a port don't

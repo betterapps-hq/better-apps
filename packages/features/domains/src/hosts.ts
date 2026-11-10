@@ -61,12 +61,13 @@ export interface DomainHosts {
  */
 export function domainHosts(options: DomainHostsOptions): DomainHosts {
   const parsed = appUrl.safeParse(String(options.url))
-  if (!parsed.success) {
+  const url = parsed.success ? new URL(parsed.data) : null
+  // Normalized as requests' hosts are, so a trailing dot can't keep the app's own host from matching.
+  const appHostname = url && normalizeHostname(url.hostname)
+  if (!url || !appHostname) {
     throw new Error("`url` is the app's own http or https URL, such as `https://app.yourapp.com`.")
   }
-  const url = new URL(parsed.data)
-  // Normalized as requests' hosts are, so a trailing dot can't keep the app's own host from matching.
-  const appHostnames = new Set([normalizeHostname(url.host, { allowPort: true }) ?? url.hostname])
+  const appHostnames = new Set([appHostname])
   for (const entry of options.hostnames ?? []) {
     const hostname = normalizeHostname(entry)
     if (hostname === null) {

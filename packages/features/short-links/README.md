@@ -147,11 +147,12 @@ connects its domains once it exists:
 // features.ts
 import { domainHosts } from "@better-apps/domains"
 
-export const linkHosts = domainHosts({ url: "https://app.yourapp.com" })
+const appUrl = "https://app.yourapp.com"
+export const linkHosts = domainHosts({ url: appUrl })
 
 export const links = shortLinks({
-  subjects: { invoice: { url: ({ subjectId }) => `https://app.yourapp.com/invoices/${subjectId}`, grantView: true } },
-  baseUrl: "https://app.yourapp.com",
+  subjects: { invoice: { url: ({ subjectId }) => `${appUrl}/invoices/${subjectId}`, grantView: true } },
+  baseUrl: appUrl,
   hosts: linkHosts.hosts
 })
 

@@ -87,6 +87,15 @@ describe("domainHosts", () => {
     await expect(hosts.origin({ orgId: "globex" })).resolves.toBe("http://links.globex.com:3000")
   })
 
+  it("takes an IPv6 url, which z.httpUrl would refuse", async () => {
+    const api = fakeDomains(held)
+    const { hosts, connect } = domainHosts({ url: "http://[::1]:4190" })
+    connect(api)
+    await expect(hosts.resolve({ hostname: "[::1]" })).resolves.toBe("app")
+    expect(api.lookups).toEqual([])
+    await expect(hosts.origin({ orgId: "globex" })).resolves.toBe("http://links.globex.com:4190")
+  })
+
   it("refuses app hostnames that aren't hostnames without a port", () => {
     const url = "http://127.0.0.1:4190"
     expect(() => domainHosts({ url, hostnames: ["localhost:4190"] })).toThrow('"localhost:4190"')
