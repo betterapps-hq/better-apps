@@ -80,8 +80,9 @@ It only takes the subject types of the client's app.
   the settings load and the record's list changes. A record whose list hasn't loaded and drafts get all of their
   record's places, and files on their own get no count. They hand the limits to UploadCN as they render, because
   `Upload.Root` reads them while rendering, so its file picker takes only the allowed types once the settings load.
-  Every limit is given, with `[]` for any type and `Infinity` for any number of files, because `useUploader` merges
-  options and would keep a limit that's left out.
+  Every limit is given, with `[]` for any type and `Infinity` for any size or number of files, because `useUploader`
+  merges options and would keep a limit that's left out. Settings that are still loading check nothing, so another
+  subject type's limits don't stay meanwhile.
 - Failures are UploadCN errors with attachments' message, and attachments' code in `details.code`:
   - A refusal that won't change, such as a type the record doesn't take, is `rejected` and never retried.
   - A full record or too many drafts fail without an automatic retry, so they can be tried again by hand once there's
@@ -103,7 +104,8 @@ It only takes the subject types of the client's app.
 - `useAttachmentsUploader(target, options)` returns an UploadCN uploader. Options go to UploadCN's `useUploader` and win
   over the limits. Each upload goes to the target it was added for, even after the target changes. On a record, a
   finished upload leaves the queue once it's on the record's list, which `useAttachments` shows. Drafts and files on
-  their own stay in the queue.
+  their own stay in the queue. The client's `reset`, such as when someone else signs in, empties the queue and stops
+  uploads under way, without deleting anything as the new person.
 - `useDraftUploader(subjectType, options)` returns `{ uploader, busy, take, clear }`. `take()`, called before the record
   is saved, takes the drafts picked so far, and its `attachTo(subjectId)` puts those that finished on the saved record,
   then takes them all off the queue. Drafts picked after `take` stay, for the next record. A draft is attached once,

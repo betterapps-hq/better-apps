@@ -1,4 +1,5 @@
-import { useAttachments } from "@better-apps/attachments/react"
+import type { UploadTarget } from "@better-apps/attachments/client"
+import { useAttachments, useAttachmentsClient } from "@better-apps/attachments/react"
 import { BetterAppsProvider } from "@better-apps/react"
 import { act, renderHook, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react"
@@ -63,6 +64,34 @@ describe("useAttachmentsUploader", () => {
     const [item] = await act(() => result.current.add([pick("%PDF", "contract.pdf", "application/pdf")]))
     expect(result.current.getItem(item?.id as string)?.status).toBe("rejected")
     expect(calls).not.toContain("createUpload")
+  })
+
+  it("empties the queue when the client resets, without a call for the previous person's uploads", async () => {
+    const { wrapper, options, calls, stallSends, sends } = rendered()
+    const { result } = renderHook(
+      () => ({ uploader: useAttachmentsUploader(inv1, options), client: useAttachmentsClient() }),
+      { wrapper }
+    )
+    stallSends(true)
+    await act(() => result.current.uploader.add([pick("hello")]))
+    await waitFor(() => expect(sends).toHaveLength(1))
+    act(() => result.current.client.reset())
+    expect(result.current.uploader.getState().items).toEqual([])
+    await pause()
+    expect(calls).not.toContain("deleteFile")
+  })
+
+  it("drops another subject type's limits while this one's settings load", async () => {
+    const { wrapper, options, holdCall } = rendered()
+    const { result, rerender } = renderHook(({ target }) => useAttachmentsUploader(target, options), {
+      wrapper,
+      initialProps: { target: inv1 as UploadTarget }
+    })
+    await waitFor(() => expect(result.current.getOptions().maxFiles).toBe(3))
+    const release = holdCall("getSettings")
+    rerender({ target: { subjectType: "comment" } })
+    expect(result.current.getOptions()).toMatchObject({ accept: [], maxSize: Infinity, maxFiles: Infinity })
+    release()
   })
 
   it("keeps a file on its own in the queue, with its FileInfo as the result", async () => {
@@ -159,6 +188,21 @@ describe("useDraftUploader", () => {
     // Removed now, the draft is deleted as usual.
     act(() => result.current.clear())
     await waitFor(() => expect(liveFiles()).toBe(0))
+  })
+
+  it("empties without deleting the previous person's drafts when the client resets", async () => {
+    const { wrapper, options, calls, liveFiles } = rendered()
+    const { result } = renderHook(
+      () => ({ drafts: useDraftUploader("comment", options), client: useAttachmentsClient() }),
+      { wrapper }
+    )
+    await act(() => result.current.drafts.uploader.add([pick("one", "one.txt")]))
+    await waitFor(() => expect(result.current.drafts.busy).toBe(false))
+    act(() => result.current.client.reset())
+    expect(result.current.drafts.uploader.getState().items).toEqual([])
+    await pause()
+    expect(calls).not.toContain("deleteFile")
+    expect(liveFiles()).toBe(1)
   })
 
   it("leaves nothing to attach when no draft finished, and takes as many drafts as the record does", async () => {

@@ -275,15 +275,15 @@ export function attachmentsAdapter<SubjectType extends string = string>(
  * UploadCN's checks for what attachments allows: the media types, which also limit the file picker, the size, and for
  * a record, the places left on it when `existing` says how many files it has. `null` settings, still loading, check
  * nothing, and the server still refuses what it doesn't allow. Every limit is given, with `[]` for any type and
- * `Infinity` for any number of files, so an uploader whose options are merged, as `useUploader`'s are, drops one that
- * no longer applies.
+ * `Infinity` for any size or number of files, so an uploader whose options are merged, as `useUploader`'s are, drops
+ * one that no longer applies, such as another subject type's while this one's settings load.
  */
 export function uploadLimits(
   settings: AttachmentSettings | null,
   { existing }: { existing?: number | undefined } = {}
 ): Pick<ValidationOptions, "accept" | "maxSize" | "maxFiles"> {
   if (!settings) {
-    return {}
+    return { accept: [], maxSize: Infinity, maxFiles: Infinity }
   }
   return {
     accept: settings.contentTypes ?? [],

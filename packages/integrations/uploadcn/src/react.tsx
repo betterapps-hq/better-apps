@@ -3,10 +3,15 @@
 import { subjectKey, type AttachmentsTypes, type FileInfo, type UploadTarget } from "@better-apps/attachments/client"
 import { useAttachmentsClient, useAttachmentSettings } from "@better-apps/attachments/react"
 import { useStore } from "@better-apps/react"
-import type { Transport, Uploader } from "@uploadcn/core"
+import type { Transport, UploadAdapter, Uploader } from "@uploadcn/core"
 import { useUploader, useUploadSelector, type UseUploaderOptions } from "@uploadcn/react"
+import { BetterAppsClientError } from "better-apps/client"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { attachmentsAdapter, isUnderWay, uploadLimits } from "./index.js"
+
+// Uploaders emptying for a reset of the attachments client, such as when someone else signs in. What they held was the
+// previous person's, so it goes without a word to the server, which would take the calls as the new person's.
+const resetting = new WeakSet<Uploader<FileInfo>>()
 
 export interface AttachmentsUploaderOptions extends Omit<UseUploaderOptions<FileInfo>, "adapter"> {
   /** Sends a file's bytes, as `attachmentsAdapter` takes it. */
@@ -19,7 +24,8 @@ export interface AttachmentsUploaderOptions extends Omit<UseUploaderOptions<File
  * the limits.
  *
  * A file uploaded onto a record joins the record's list in `useAttachments`, so it leaves the queue once it's there.
- * Drafts and files on their own stay in the queue, with the `FileInfo` as each item's `result`.
+ * Drafts and files on their own stay in the queue, with the `FileInfo` as each item's `result`. The client's `reset`
+ * empties the queue, stopping uploads under way.
  */
 export function useAttachmentsUploader<Types extends AttachmentsTypes = AttachmentsTypes>(
   target: UploadTarget<Types["subjectType"]>,
@@ -41,13 +47,12 @@ export function useAttachmentsUploader<Types extends AttachmentsTypes = Attachme
   // Each upload keeps the target it was added for, so one queued or tried again after the target changed, such as on
   // another record's page, still goes where it was picked for.
   const [targets] = useState(() => new Map<string, UploadTarget>())
-  const adapter = useMemo(
-    () =>
-      attachmentsAdapter(client, (item) => targets.get(item.id) as UploadTarget, {
-        transport
-      }),
-    [client, targets, transport]
-  )
+  // Whether the queue is emptying for a reset, for the adapter, which comes before the uploader.
+  const [session] = useState(() => ({ resetting: false }))
+  const adapter = useMemo((): UploadAdapter<FileInfo> => {
+    const base = attachmentsAdapter(client, (item) => targets.get(item.id) as UploadTarget, { transport })
+    return { ...base, abort: async (context) => (session.resetting ? undefined : await base.abort?.(context)) }
+  }, [client, targets, transport, session])
   const engine = { ...uploadLimits(settings, { existing }), ...options, adapter }
   const uploader = useUploader<FileInfo>(engine)
   // `useUploader` hands UploadCN its options after rendering, and `Upload.Root` reads them while rendering, so the limits
@@ -70,6 +75,20 @@ export function useAttachmentsUploader<Types extends AttachmentsTypes = Attachme
       removed()
     }
   }, [uploader, targets, subjectType, subjectId, owner])
+  useEffect(
+    () =>
+      client.onReset(() => {
+        session.resetting = true
+        resetting.add(uploader)
+        try {
+          uploader.remove()
+        } finally {
+          session.resetting = false
+          resetting.delete(uploader)
+        }
+      }),
+    [client, uploader, session]
+  )
   useEffect(
     () =>
       uploader.on("success", ({ item }) => {
@@ -121,7 +140,7 @@ export function useDraftUploader<Types extends AttachmentsTypes = AttachmentsTyp
   useEffect(
     () =>
       uploader.on("remove", ({ item }) => {
-        if (item.status === "success" && item.result && !attaching.has(item.id)) {
+        if (item.status === "success" && item.result && !attaching.has(item.id) && !resetting.has(uploader)) {
           void client.deleteFile(item.result.id).catch(() => undefined)
         }
       }),
@@ -149,10 +168,12 @@ export function useDraftUploader<Types extends AttachmentsTypes = AttachmentsTyp
           for (const item of done) {
             attaching.delete(item.id)
           }
-          // A draft removed while it was being attached is deleted now, as removing it would have.
+          // A draft removed while it was being attached is deleted now, as removing it would have. One a reset cancelled
+          // was the previous person's, and goes without a word.
+          const cancelled = error instanceof BetterAppsClientError && error.code === "ABORTED"
           const left = new Set(uploader.getState().items.map((item) => item.id))
           for (const item of done) {
-            if (!left.has(item.id)) {
+            if (!cancelled && !left.has(item.id)) {
               void client.deleteFile((item.result as FileInfo).id).catch(() => undefined)
             }
           }

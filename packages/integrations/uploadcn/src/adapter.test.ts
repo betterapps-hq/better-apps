@@ -422,7 +422,7 @@ describe("uploadLimits", () => {
   const settings = { contentTypes: ["image/*"], maxSize: 1000, maxFiles: 3 }
 
   it("checks the types, the size and the places left on a record", () => {
-    expect(uploadLimits(null)).toEqual({})
+    expect(uploadLimits(null)).toEqual({ accept: [], maxSize: Infinity, maxFiles: Infinity })
     expect(uploadLimits(settings)).toEqual({ accept: ["image/*"], maxSize: 1000, maxFiles: Infinity })
     expect(uploadLimits(settings, { existing: 2 })).toEqual({ accept: ["image/*"], maxSize: 1000, maxFiles: 1 })
     expect(uploadLimits(settings, { existing: 5 })).toMatchObject({ maxFiles: 0 })
