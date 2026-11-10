@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "17431629-6442-4804-a5e7-582ccae5ab98",
+  "id": "b3556dd4-193e-487a-950f-72f5f745bd9d",
   "prevId": "593a003e-00ee-4399-8465-7e08f768ac04",
   "tables": {
     "invoice": {
@@ -790,6 +790,13 @@
           "notNull": true,
           "autoincrement": false,
           "default": false
+        },
+        "claim": {
+          "name": "claim",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
         },
         "held_at": {
           "name": "held_at",

@@ -131,6 +131,7 @@ export type AttachmentMove = {
     id: string;
     toOrgId: string;
     deleted: boolean;
+    claim: string;
     heldAt: Date;
 };
 

@@ -1,3 +1,4 @@
+import type { SQLInputValue } from "node:sqlite"
 import { createTestApp } from "@better-apps/testing"
 import {
   defineAction,
@@ -115,6 +116,44 @@ const moved = (threadId: string, toOrgId: string, commentIds: string[], fromOrgI
   type: "thread.moved",
   data: { thread: { id: threadId, orgId: toOrgId }, fromOrgId, commentIds }
 })
+
+// Runs `land` once, after a move reads its thread's turn and before the batch that writes it, outside that batch.
+function beforeTurnWrite(
+  setup: ReturnType<typeof withComments>,
+  land: (run: (sql: string, ...params: SQLInputValue[]) => void) => void
+) {
+  const { sqlite } = setup.database
+  const prepare = sqlite.prepare.bind(sqlite)
+  const exec = sqlite.exec.bind(sqlite)
+  let read = false
+  let landed = false
+  Object.assign(sqlite, {
+    prepare: (sql: string) => {
+      read ||= sql.startsWith("select") && sql.includes(`from "${moveModel}"`)
+      return prepare(sql)
+    },
+    exec: (sql: string) => {
+      if (read && !landed && sql === "BEGIN") {
+        landed = true
+        land((query, ...params) => void prepare(query).run(...params))
+      }
+      return exec(sql)
+    }
+  })
+  return () => landed
+}
+
+// Delivers again once a failed delivery's backoff has passed.
+async function deliverLater(setup: ReturnType<typeof withComments>) {
+  vi.useFakeTimers({ toFake: ["Date"] })
+  try {
+    vi.setSystemTime(Date.now() + 60_000)
+    await setup.deliver()
+    await setup.deliver()
+  } finally {
+    vi.useRealTimers()
+  }
+}
 
 /** A thread in acme with 15 comments of two files each, 30 in all, so a move takes two pages: 20, then 10. */
 async function busyThread(setup: ReturnType<typeof withComments>) {
@@ -323,6 +362,64 @@ describe("with comments", () => {
     expect([setup.count(attachmentModel), setup.count(fileModel)]).toEqual([0, 0])
     expect(setup.events("subject.moved")).toHaveLength(10)
     expect(setup.turn("t-big")).toEqual({ toOrgId: "", deleted: 1 })
+  })
+
+  it("stops an older move for good when one of its pages runs while its thread is elsewhere", async () => {
+    const setup = withComments()
+    const ids = await busyThread(setup)
+    setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
+    await setup.emit(moved("t-big", "globex", ids))
+    setup.threads.set("t-big", { orgId: "acme", comments: new Set(ids) })
+    await setup.emit(moved("t-big", "acme", ids, "globex"))
+    // The move to globex's next page runs while the thread is in acme, which stops it.
+    await setup.deliver()
+    expect(setup.inOrg("acme")).toEqual([30, 30])
+    setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
+    await setup.emit(moved("t-big", "globex", ids))
+    await setup.deliver()
+    await setup.deliver()
+    expect(setup.inOrg("globex")).toEqual([30, 30])
+  })
+
+  it("refuses a move whose thread is deleted between reading its turn and taking it", async () => {
+    const setup = withComments()
+    const ids = await busyThread(setup)
+    setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
+    const landed = beforeTurnWrite(setup, (run) => {
+      setup.threads.delete("t-big")
+      run(
+        `INSERT INTO ${moveModel} (id, toOrgId, deleted, claim, heldAt) VALUES (?, '', 1, 'deleted', ?)`,
+        JSON.stringify(["comments.thread", "t-big"]),
+        Date.now()
+      )
+    })
+    await setup.emit(moved("t-big", "globex", ids))
+    expect(landed()).toBe(true)
+    await deliverLater(setup)
+    expect(setup.inOrg("globex")).toEqual([0, 0])
+    expect(setup.turn("t-big")).toEqual({ toOrgId: "", deleted: 1 })
+  })
+
+  it("refuses a move that read its thread's turn before a newer move claimed it", async () => {
+    const setup = withComments()
+    const ids = await busyThread(setup)
+    setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
+    await setup.emit(moved("t-big", "globex", ids))
+    await setup.deliver()
+    await setup.deliver()
+    expect(setup.inOrg("globex")).toEqual([30, 30])
+    // The thread moves to initech, and before that move takes its turn, it moves back to globex, whose move claims the
+    // turn and finds nothing to move.
+    setup.threads.set("t-big", { orgId: "initech", comments: new Set(ids) })
+    const landed = beforeTurnWrite(setup, (run) => {
+      setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
+      run(`UPDATE ${moveModel} SET claim = 'newer'`)
+    })
+    await setup.emit(moved("t-big", "initech", ids, "globex"))
+    expect(landed()).toBe(true)
+    await deliverLater(setup)
+    expect(setup.inOrg("initech")).toEqual([0, 0])
+    expect(setup.inOrg("globex")).toEqual([30, 30])
   })
 
   it("continues a long cleanup in the next delivery run", async () => {

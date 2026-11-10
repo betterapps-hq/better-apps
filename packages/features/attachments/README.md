@@ -166,6 +166,6 @@ const drafts = useDraftAttachments("comments.comment")
 
 `attachmentFile` holds each file, `attachment` puts files on records, with a unique place per record so `maxFiles` holds
 even when uploads finish together, `attachmentRemoval` remembers removals for an hour so each is reported once, and
-`attachmentMove` holds where attachments expect each comments' thread they follow to be, until no move has written it
-for 30 days. Run `better-apps generate` from [`@better-apps/cli`](../../tooling/cli/README.md) to add them to your
-schema.
+`attachmentMove` holds where attachments expect each comments' thread they follow to be, with a new `claim` each time a
+move takes it, until no move or deletion has written it for 30 days. Run `better-apps generate` from
+[`@better-apps/cli`](../../tooling/cli/README.md) to add them to your schema.

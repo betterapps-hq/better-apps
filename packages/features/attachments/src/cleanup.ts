@@ -40,11 +40,15 @@ const cleanupReads = 10
 /** How many batches of removals one delivery of a cleanup writes. */
 const cleanupBatches = 3
 /**
- * One delivery of a move cleanup's share: up to 20 attachments, reading at most five lists of ids, in one batch. Taking
- * the turn takes up to five queries and checking it two. The batch takes three lookups, its updates, two statements that
- * hold the turn, up to four for withdrawn attachments, one for the files' organization and one for its events; then one
- * more, to clear withdrawn files' rows, or to read a lost turn. With the outbox's own three, that's at most 44 queries,
- * under D1's 50 per request on its free plan. A second batch would add a dozen more, so a delivery writes one.
+ * One delivery of a move cleanup's share: up to 20 attachments, reading at most five lists of ids, in one batch, tried
+ * once, so a failed batch leaves its page for the next run rather than reading it again. Taking the turn takes five
+ * queries, or checking it two. A batch of r attachments, w of them withdrawn, takes three lookups, two statements that
+ * hold the turn, four for withdrawn attachments, an update for each that moves, one for the files' organization, and an
+ * insert per eight of its events: a `subject.moved` per record that moves, and an `attachment.removed`,
+ * `subject.changed` and `file.deleted` per withdrawn one, so r + 2w events. Then one more: the withdrawn files' rows, or
+ * a read of a lost turn. Without withdrawn attachments, their files' lookup and those four statements go, so the most is
+ * with one: 10 + r + (r + 2) / 8, rounded up, so 33. With the outbox's own three, that's at most 46 queries, under D1's
+ * 50 per request on its free plan. A second batch would add a dozen more, so a delivery writes one.
  */
 const moveCleanup = { room: 20, reads: 5, batches: 1 } as const
 /** How long a record's move row is kept after a move last wrote it, which only needs to outlast moves under way. */
@@ -185,8 +189,10 @@ export function freeSlots(taken: ReadonlySet<number>, maxFiles: number, wanted: 
 /**
  * Moves a page of a record's attachments to another organization. One that's already there, or has no free place there,
  * is removed as `withdrawn`. The files the record keeps move with it. Each record the page touched gets `subject.moved`,
- * written with the page. A job that follows another record's move, such as a thread's, gets that move's turn, and stops,
- * reporting `superseded`, once a newer move or deletion of that record has taken it.
+ * written with the page. A job that follows another record's move, such as a thread's, is given that move's turn, and its
+ * page is tried once, so a delivery stays within its share of queries. When the page's batch fails, it reports `again` while
+ * the move still holds the turn, for the next run to read the page again, or `superseded` once a newer move or the
+ * record's deletion has taken it. Without a turn, a failed page is read again, up to three times.
  */
 async function movePage(
   config: Config,
@@ -195,10 +201,10 @@ async function movePage(
   find: (limit: number) => Promise<Attachment[]>,
   toOrgId: string,
   turn?: Turn
-): Promise<{ moved: number; superseded?: boolean } & BulkStep> {
+): Promise<MoveStep> {
   const { db } = writer
   const settings = settingsOf(config, subjectType)
-  return retried(async () => {
+  const page = async (): Promise<MoveStep> => {
     const rows = await find(movePageSize)
     if (rows.length === 0) {
       return { moved: 0, done: true }
@@ -276,15 +282,21 @@ async function movePage(
     try {
       await db.batch(writes)
     } catch (error) {
-      if (turn && !(await hasTurn(db, turn))) {
-        return { moved: 0, done: true, superseded: true }
+      if (!turn) {
+        throw error
       }
-      throw error
+      return (await hasTurn(db, turn))
+        ? { moved: 0, done: false, again: true }
+        : { moved: 0, done: true, superseded: true }
     }
     await purge(config, db, removal.doomed)
     return { moved: moves.length, done: rows.length < movePageSize }
-  })
+  }
+  return turn ? page() : retried(page)
 }
+
+/** One page of a move: what it moved, and whether a job's page should wait for the next run or stop. */
+type MoveStep = { moved: number; superseded?: boolean; again?: boolean } & BulkStep
 
 /** A move of a record that attachments follow: the record, and the organization it took the record to. */
 interface Turn {
@@ -303,25 +315,24 @@ async function hasTurn(db: Context["db"], turn: Turn): Promise<boolean> {
   return row !== null && !row.deleted && row.toOrgId === turn.toOrgId
 }
 
-/** Writes a record's turn row. */
+/** Writes a record's turn row, with a new claim. */
 const turnRow = (subject: SubjectRef, toOrgId: string, deleted: boolean): WriteOperation => ({
   type: "create",
   model: moveModel,
-  data: { id: turnId(subject), toOrgId, deleted, heldAt: new Date() }
+  data: { id: turnId(subject), toOrgId, deleted, claim: crypto.randomUUID(), heldAt: new Date() }
 })
 
-/** Deletes a record's turn row while it still reads as given. */
-const releaseTurn = (subject: SubjectRef, row: Pick<AttachmentMove, "toOrgId" | "deleted">): WriteOperation => ({
+/** Deletes a record's turn row only while it's the claim that was read, so a claim made since fails the batch. */
+const releaseClaim = (subject: SubjectRef, row: Pick<AttachmentMove, "claim">): WriteOperation => ({
   type: "deleteMany",
   model: moveModel,
   where: [
     { field: "id", value: turnId(subject) },
-    { field: "toOrgId", value: row.toOrgId },
-    { field: "deleted", value: row.deleted }
+    { field: "claim", value: row.claim }
   ]
 })
 
-/** Clears rows no move has written for `moveMemoryMs`, other than the given record's. */
+/** Clears rows nothing has written for `moveMemoryMs`, other than the given record's. */
 const pruneTurns = (subject: SubjectRef): WriteOperation => ({
   type: "deleteMany",
   model: moveModel,
@@ -332,13 +343,21 @@ const pruneTurns = (subject: SubjectRef): WriteOperation => ({
 })
 
 /**
- * Writes that fail their batch unless a move still holds its record's turn: its row is deleted and written again, and
- * once another move or the record's deletion has replaced it, the delete matches nothing and the write runs into the
- * newer row.
+ * Writes that fail their batch unless a move still holds its record's turn: its row is deleted while it names the move's
+ * organization and isn't deleted, and written again. Once another move or the record's deletion has replaced it, the
+ * delete matches nothing and the write runs into the newer row.
  */
 function holdTurn(turn: Turn): WriteOperation[] {
   return [
-    releaseTurn(turn.subject, { toOrgId: turn.toOrgId, deleted: false }),
+    {
+      type: "deleteMany",
+      model: moveModel,
+      where: [
+        { field: "id", value: turnId(turn.subject) },
+        { field: "toOrgId", value: turn.toOrgId },
+        { field: "deleted", value: false }
+      ]
+    },
     turnRow(turn.subject, turn.toOrgId, false)
   ]
 }
@@ -346,28 +365,28 @@ function holdTurn(turn: Turn): WriteOperation[] {
 /**
  * Takes a record's turn for a move, and returns whether it holds it. Only a move to where the record is now takes it,
  * since the move that committed last is the one that put it there, whenever its event was emitted or arrives; a move
- * whose record has moved on, or was deleted, takes none. Two moves to the same organization share the turn, so both run.
+ * whose record has moved on, or was deleted, takes none. Each claim writes the row again with a new `claim`, and only
+ * while the row is still the one it read, so a claim that read the row before another move's claim or the record's
+ * deletion fails, its delivery is retried, and it reads the record's organization again. Two moves to the same
+ * organization share the turn, since a page holds it by organization.
  */
 async function takeTurn(db: Context["db"], subjects: Context["subjects"], turn: Turn): Promise<boolean> {
-  return retried(async () => {
-    const [row, [orgId]] = await Promise.all([findTurn(db, turn.subject), orgsOf(subjects, [turn.subject], null)])
-    if (row?.deleted === true || orgId !== turn.toOrgId) {
-      return false
-    }
-    if (row?.toOrgId === turn.toOrgId) {
-      return true
-    }
-    // Another move or a deletion taking the turn meanwhile makes this batch fail, and the turn is read again.
-    await db.batch([
-      ...(row ? [releaseTurn(turn.subject, row)] : []),
-      turnRow(turn.subject, turn.toOrgId, false),
-      pruneTurns(turn.subject)
-    ])
-    return true
-  })
+  const [row, [orgId]] = await Promise.all([findTurn(db, turn.subject), orgsOf(subjects, [turn.subject], null)])
+  if (row?.deleted === true || orgId !== turn.toOrgId) {
+    return false
+  }
+  await db.batch([
+    ...(row ? [releaseClaim(turn.subject, row)] : []),
+    turnRow(turn.subject, turn.toOrgId, false),
+    pruneTurns(turn.subject)
+  ])
+  return true
 }
 
-/** Marks a record deleted, which stops any move of it for good, including one to no organization. */
+/**
+ * Marks a record deleted, which stops any move of it, including one to no organization, until the row is cleared after
+ * `moveMemoryMs`.
+ */
 async function endTurns(db: Context["db"], subject: SubjectRef): Promise<void> {
   await db.batch([
     { type: "deleteMany", model: moveModel, where: [{ field: "id", value: turnId(subject) }] },
@@ -539,6 +558,10 @@ export async function cleanUp(config: Config, writer: Writer, job: Cleanup, turn
       : movePage(config, writer, record.subjectType, find, toOrgId, turn))
     if ("superseded" in step && step.superseded === true) {
       return
+    }
+    if ("again" in step && step.again === true) {
+      // The page's batch failed, such as on an attachment that landed meanwhile: the next run reads it again.
+      break
     }
     room -= found
     batches += found > 0 ? 1 : 0

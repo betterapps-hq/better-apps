@@ -242,6 +242,7 @@ export const attachmentMove = sqliteTable(
     id: text("id").primaryKey(),
     toOrgId: text("to_org_id").default("").notNull(),
     deleted: integer("deleted", { mode: "boolean" }).default(false).notNull(),
+    claim: text("claim").notNull(),
     heldAt: integer("held_at", { mode: "timestamp_ms" }).notNull()
   },
   (table) => [index("attachment_move_by_time").on(table.heldAt)]
