@@ -67,14 +67,17 @@ export async function loadThread(context: Context, threadId: string): Promise<Co
   return thread
 }
 
-/** What the caller may do with a thread. A thread outside its subject's current organization can't be seen. */
-export async function threadAccess(config: Config, context: Context, thread: CommentThread) {
+/**
+ * What the caller may do with a thread. A thread outside its subject's current organization can't be seen. Reads pass
+ * the request, so a grant it carries counts; writes leave it out.
+ */
+export async function threadAccess(config: Config, context: Context, thread: CommentThread, request?: Request | null) {
   const rules = subjectOf(config.subjects, thread.subjectType)
   const caller = callerOf(context)
   const ref = { subjectType: thread.subjectType, subjectId: thread.subjectId }
   let access: Access = nothing
   if (caller.trusted || (await orgOf(context.subjects, caller, ref)) === thread.orgId) {
-    access = await accessTo(rules, context.subjects, caller, ref, thread.visibility)
+    access = await accessTo(rules, context.subjects, caller, ref, thread.visibility, request)
   }
   return { rules, caller, access }
 }

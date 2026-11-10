@@ -1,5 +1,6 @@
 // A test app with reactions on invoices, where each invoice belongs to an organization and may be locked, and on public
-// pages anyone can read. A `feed` feature records every reactions event it's delivered.
+// pages anyone can read. A `feed` feature records every reactions event it's delivered, and a `shares` feature lets a
+// request see the invoices its `x-share` header lists, the way a share link does.
 import { createTestApp, type TestUser } from "@better-apps/testing"
 import { defineFeature, type BetterAppsEvent, type EventHandler, type SubjectDefinition } from "better-apps"
 import { reactionEvents, reactions, type ReactionsOptions } from "../src/index.js"
@@ -37,6 +38,22 @@ export const options = {
   }
 } satisfies ReactionsOptions
 
+/** A request carrying a grant to see the given invoices, such as one a share link's visitor makes. */
+export function sharing(...invoiceIds: string[]): Request {
+  return new Request("https://app.test/", { headers: { "x-share": invoiceIds.join(",") } })
+}
+
+const shares = defineFeature({
+  id: "shares",
+  grants: {
+    canViewMany: (checks) =>
+      checks.map(
+        ({ subjectType, subjectId, request }) =>
+          subjectType === "invoice" && (request.headers.get("x-share") ?? "").split(",").includes(subjectId)
+      )
+  }
+})
+
 /** Creates the app. `extra` changes the reactions options. */
 export function setup(extra: Partial<ReactionsOptions> = {}) {
   const delivered: BetterAppsEvent[] = []
@@ -46,7 +63,7 @@ export function setup(extra: Partial<ReactionsOptions> = {}) {
     on: { reactions: Object.fromEntries(Object.keys(reactionEvents).map((type) => [type, record])) }
   })
   const feature = reactions({ ...options, ...extra } as typeof options)
-  const { app, database, identity } = createTestApp({ subjects, features: [feature, feed], users })
+  const { app, database, identity } = createTestApp({ subjects, features: [feature, feed, shares], users })
   const as = (userId: UserId) => ({ actor: identity.actor(userId) })
   const post = (action: string, body: unknown, userId?: UserId) =>
     app.handler(

@@ -56,6 +56,8 @@ export type {
 } from "./schema.js"
 export {
   defineSubject,
+  type GrantArgs,
+  type GrantCheck,
   type SubjectArgs,
   type SubjectCheck,
   type SubjectContext,

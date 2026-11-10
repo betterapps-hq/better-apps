@@ -95,7 +95,8 @@ const allowed = await app.subjects.canView(actor, { subjectType: "invoice", subj
 The grant is for seeing the record only, for signed-in people and signed-out visitors alike. Writes keep the app's and
 each feature's own rules. A link that's turned off, has expired or was removed grants nothing from the next request on,
 and nor does one whose record moved to another organization, or whose subject type's `grantView` is now `false`. Only
-the app's own read checks that pass the request count the grant: comments and reactions don't pass it yet.
+read checks that pass the request count the grant: the app's own, and reads in comments, reactions and mentions, which
+show the record's comments and reactions without letting the visitor add any.
 
 A link to an organization's record that grants access must be the organization's, so it doesn't depend on one member. A
 link outside any organization stands for its maker instead: each time it's asked, it grants access only while its maker

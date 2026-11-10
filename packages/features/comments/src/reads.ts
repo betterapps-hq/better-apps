@@ -1,6 +1,6 @@
 import { suggestMentions as suggestUsers } from "@better-apps/mentions"
 import type { Actor, BetterAppsEvent, IdentityUser, Where } from "better-apps"
-import { accessTo, canViewThread as canView, orgOf, requireView, subjectOf, visibleTo } from "./access.js"
+import { accessTo, canViewThread as canView, orgOf, requireView, subjectOf, viewThreads, visibleTo } from "./access.js"
 import { limits } from "./content.js"
 import { decodeCursor, encodeCursor } from "./cursor.js"
 import { CommentsError } from "./errors.js"
@@ -76,11 +76,11 @@ export async function listThreads(config: Config, context: Context): Promise<Thr
   const rules = subjectOf(config.subjects, subjectType)
   const caller = callerOf(context)
   const ref = { subjectType, subjectId }
-  const access = await accessTo(rules, context.subjects, caller, ref, "default")
+  const access = await accessTo(rules, context.subjects, caller, ref, "default", context.request)
   let visibilities: string[] = ["default"]
   if (caller.trusted) {
     visibilities = ["default", ...Object.keys(rules.visibility ?? {})]
-  } else if (caller.actor && access.view) {
+  } else if (caller.actor && access.view && !access.granted) {
     visibilities = await visibleTo(rules, { actor: caller.actor, subjectType, subjectId })
   }
   requireView(access)
@@ -122,7 +122,8 @@ export async function listThreads(config: Config, context: Context): Promise<Thr
   const threads = rows.slice(0, limit)
   const last = threads.at(-1)
   const cursor = rows.length > limit && last ? encodeCursor(last[orderField], last.id) : null
-  if (!caller.actor && !caller.trusted) {
+  // Someone who sees the threads only through a grant, such as a share link, sees them as a signed-out reader does.
+  if ((!caller.actor && !caller.trusted) || access.granted) {
     return { threads: threads.map(publicThread), cursor, users: {} }
   }
   const users = await lookupUsers(
@@ -135,7 +136,7 @@ export async function listThreads(config: Config, context: Context): Promise<Thr
 export async function getThread(config: Config, context: Context): Promise<ThreadWithComments> {
   const input = context.input as { threadId: string; cursor?: string | undefined; limit?: number | undefined }
   const thread = await loadThread(context, input.threadId)
-  const { caller, access } = await threadAccess(config, context, thread)
+  const { caller, access } = await threadAccess(config, context, thread, context.request)
   requireView(access)
   const limit = pageSize(input.limit, limits.commentsPerPage)
   const after = input.cursor === undefined ? undefined : decodeCursor(input.cursor)
@@ -153,7 +154,7 @@ export async function getThread(config: Config, context: Context): Promise<Threa
   const last = comments.at(-1)
   const cursor = rows.length > limit && last ? encodeCursor(last.createdAt, last.id) : null
   const users = await lookupUsers(context, [thread.createdBy, thread.resolvedBy ?? "", ...namedUsers(config, comments)])
-  if (!caller.actor && !caller.trusted) {
+  if ((!caller.actor && !caller.trusted) || access.granted) {
     return {
       thread: publicThread(thread),
       comments: comments.map((comment) => publicComment(config, comment, users)),
@@ -175,8 +176,23 @@ export async function countThreads(
   const subjectIds = [...new Set(input.subjectIds)]
   const { actor } = caller
   let allowed: readonly boolean[] = subjectIds.map(() => true)
+  // Subjects seen only through a grant the request carries, such as a share link, count their default threads.
+  const granted = new Set<string>()
   if (!caller.trusted) {
     allowed = await context.subjects.canViewMany(subjectIds.map((subjectId) => ({ actor, subjectType, subjectId })))
+    const refused = subjectIds.filter((_, index) => !allowed[index])
+    const { request } = context
+    if (request && refused.length > 0) {
+      const reached = await context.subjects.canViewMany(
+        refused.map((subjectId) => ({ actor, subjectType, subjectId, request }))
+      )
+      for (const [index, subjectId] of refused.entries()) {
+        if (reached[index]) {
+          granted.add(subjectId)
+        }
+      }
+      allowed = subjectIds.map((subjectId, index) => allowed[index] === true || granted.has(subjectId))
+    }
     if (!actor && !allowed.includes(true)) {
       throw new CommentsError("UNAUTHENTICATED", "Sign in to see these comments.")
     }
@@ -187,7 +203,7 @@ export async function countThreads(
     if (caller.trusted) {
       return allVisibilities
     }
-    return actor ? visibleTo(rules, { actor, subjectType, subjectId }) : ["default"]
+    return actor && !granted.has(subjectId) ? visibleTo(rules, { actor, subjectType, subjectId }) : ["default"]
   }
   const details = await Promise.all(
     viewable.map(async (subjectId) => ({
@@ -304,30 +320,77 @@ const threadEventTypes = new Set([
   "thread.deleted"
 ])
 
+/** Someone a live updates feature sends events to, with the request they connected with. */
+export interface LiveViewer {
+  /** Who's connected: a signed-in user, or `null` for a signed-out visitor. */
+  actor: Actor | null
+  /** Their request, so a grant it carries, such as a share link, counts as it does for reads. */
+  request?: Request | null | undefined
+}
+
 /**
  * Turns a server event into one a viewer's browser may see, for a live updates feature. It returns `null` when the
  * viewer can't see the thread, and leaves out previous bodies and anchors. Threads and comments keep the fields reads
  * return, so applying an event never blanks what a read showed. `comment.mentioned` only reaches the user it mentions.
+ * With the viewer's `request`, a grant it carries, such as a share link, counts as it does for reads.
  */
 export async function toClientEvent(config: Config, context: Context): Promise<ClientEvent | null> {
-  const { event, viewer } = context.input as { event: BetterAppsEvent; viewer: Actor | null }
+  const { event, viewer, request } = context.input as {
+    event: BetterAppsEvent
+    viewer: Actor | null
+    request?: Request | null | undefined
+  }
+  const [shown] = await clientEvents(config, context, event, [{ actor: viewer, request }])
+  return shown ?? null
+}
+
+/** `toClientEvent` for many viewers, in order, with their access checked together, such as by one grant call. */
+export async function toClientEvents(config: Config, context: Context): Promise<(ClientEvent | null)[]> {
+  const { event, viewers } = context.input as { event: BetterAppsEvent; viewers: readonly LiveViewer[] }
+  return clientEvents(config, context, event, viewers)
+}
+
+async function clientEvents(
+  config: Config,
+  context: Context,
+  event: BetterAppsEvent,
+  viewers: readonly LiveViewer[]
+): Promise<(ClientEvent | null)[]> {
+  const none = viewers.map(() => null)
   if (event.feature !== "comments" || (!commentEventTypes.has(event.type) && !threadEventTypes.has(event.type))) {
-    return null
+    return none
   }
   const data = event.data as ThreadEventData & Partial<CommentEventData> & { userId?: string }
-  if (event.type === "comment.mentioned" && viewer?.userId !== data.userId) {
-    return null
+  const reached = viewers.map(
+    ({ actor }) => event.type !== "comment.mentioned" || (actor !== null && actor.userId === data.userId)
+  )
+  const asked = viewers.flatMap((viewer, index) => (reached[index] ? [index] : []))
+  const views = await viewThreads(
+    config.subjects,
+    context.subjects,
+    asked.map((index) => ({
+      actor: viewers[index]?.actor ?? null,
+      thread: data.thread,
+      request: viewers[index]?.request
+    }))
+  )
+  const viewOf = new Map(asked.map((index, position) => [index, views[position] ?? null]))
+  // Someone who sees the thread only through a grant sees it as a signed-out reader does.
+  const hiddenFor = (index: number) => viewers[index]?.actor === null || viewOf.get(index) === "granted"
+  let hiddenComment = data.comment
+  if (data.comment && asked.some((index) => viewOf.get(index) && hiddenFor(index))) {
+    const users = await lookupUsers(context, namedUsers(config, [data.comment]))
+    hiddenComment = publicComment(config, data.comment, users)
   }
-  if (!(await canView(config.subjects, context.subjects, viewer, data.thread))) {
-    return null
-  }
-  const thread = viewer ? data.thread : publicThread(data.thread)
-  let comment = data.comment
-  if (comment && !viewer) {
-    const users = await lookupUsers(context, namedUsers(config, [comment]))
-    comment = publicComment(config, comment, users)
-  }
-  return comment && commentEventTypes.has(event.type)
-    ? ({ id: event.id, type: event.type, thread, comment } as ClientEvent)
-    : ({ id: event.id, type: event.type, thread } as ClientEvent)
+  return viewers.map((_, index) => {
+    if (!viewOf.get(index)) {
+      return null
+    }
+    const hidden = hiddenFor(index)
+    const thread = hidden ? publicThread(data.thread) : data.thread
+    const comment = hidden ? hiddenComment : data.comment
+    return comment && commentEventTypes.has(event.type)
+      ? ({ id: event.id, type: event.type, thread, comment } as ClientEvent)
+      : ({ id: event.id, type: event.type, thread } as ClientEvent)
+  })
 }

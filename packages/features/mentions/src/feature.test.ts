@@ -78,10 +78,22 @@ const noteMentions = defineMentionSource({
   }
 })
 
+// Lets a request see the notes its x-share header lists, the way a share link does.
+const shares = defineFeature({
+  id: "shares",
+  grants: {
+    canViewMany: (checks) =>
+      checks.map(
+        ({ subjectType, subjectId, request }) =>
+          subjectType === "note" && (request.headers.get("x-share") ?? "").split(",").includes(subjectId)
+      )
+  }
+})
+
 function setup() {
   hidden.clear()
   const { app, identity, database } = createTestApp({
-    features: [notes, mentions({ sources: [noteMentions] })],
+    features: [notes, mentions({ sources: [noteMentions] }), shares],
     users
   })
   const emit = (type: string, data: unknown) => app.api.notes.emit({ type, data })
@@ -139,6 +151,18 @@ describe("mentions", () => {
     ])
     hidden.add("acme/n3")
     expect((await list("ada")).mentions.map((mention) => mention.subjectId).sort()).toEqual(["acme/n1", "acme/n2"])
+  })
+
+  it("lists mentions in records a grant the request carries reaches, such as a share link", async () => {
+    const { app, identity, write, list } = setup()
+    await write("acme/n1", "x", ["ada"])
+    await write("acme/n2", "x", ["ada"])
+    hidden.add("acme/n1")
+    hidden.add("acme/n2")
+    const request = new Request("https://app.test/", { headers: { "x-share": "acme/n2" } })
+    const page = await app.api.mentions.listMentions(undefined, { actor: identity.actor("ada"), request })
+    expect(page.mentions.map((mention) => mention.subjectId)).toEqual(["acme/n2"])
+    expect((await list("ada")).mentions).toEqual([])
   })
 
   it("lists only the organization the user is acting in", async () => {

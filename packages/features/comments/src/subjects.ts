@@ -1,5 +1,5 @@
-import type { Actor, DatabaseAdapter, SubjectContext, SubjectDefinition } from "better-apps"
-import { canViewThreads } from "./access.js"
+import type { Actor, DatabaseAdapter, SubjectContext, SubjectDefinition, SubjectGrants } from "better-apps"
+import { canViewThreads, viewThreads } from "./access.js"
 import { chunks, type Config } from "./runtime.js"
 import { commentModel, threadModel, type Comment, type CommentThread } from "./schema.js"
 
@@ -81,5 +81,43 @@ export function commentSubjects(config: Config): Record<string, SubjectDefinitio
   return {
     [commentSubjectTypes.thread]: subjectOfThreads(config, threadsById),
     [commentSubjectTypes.comment]: subjectOfThreads(config, threadsOfComments)
+  }
+}
+
+/**
+ * Lets a request see a thread and its comments, such as their reactions, when a grant it carries, such as a share link,
+ * lets it see the thread's subject. Like reads, it reaches only default threads in their subject's current organization.
+ */
+export function commentGrants(config: Config): SubjectGrants {
+  const finders: Record<string, FindThreads> = {
+    [commentSubjectTypes.thread]: threadsById,
+    [commentSubjectTypes.comment]: threadsOfComments
+  }
+  return {
+    async canViewMany(checks, _args, context) {
+      const answers = checks.map(() => false)
+      await Promise.all(
+        Object.entries(finders).map(async ([subjectType, find]) => {
+          const indexes = checks.flatMap((check, index) => (check.subjectType === subjectType ? [index] : []))
+          if (indexes.length === 0) {
+            return
+          }
+          const threads = await find(
+            context.db,
+            indexes.map((index) => checks[index]?.subjectId ?? "")
+          )
+          const pairs = indexes.flatMap((index) => {
+            const check = checks[index]
+            const thread = threads.get(check?.subjectId ?? "")
+            return check && thread ? [{ index, actor: null, thread, request: check.request }] : []
+          })
+          const views = await viewThreads(config.subjects, context.subjects, pairs)
+          for (const [position, { index }] of pairs.entries()) {
+            answers[index] = views[position] !== null
+          }
+        })
+      )
+      return answers
+    }
   }
 }

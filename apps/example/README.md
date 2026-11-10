@@ -45,8 +45,9 @@ Then open <http://127.0.0.1:4190>. `build` and `preview` run the production buil
   invoice's **Share** button opens a dialog that creates a link at `/s/{code}`, optionally one that lets anyone with it
   view the invoice without signing in, and lists the invoice's links with how often each was opened. Each can be copied,
   turned off and on, or deleted. Invoices are for signed-in people, so the invoice page checks
-  `app.subjects.canView(null, ref, { request })` for signed-out visitors, which a link that grants access allows. The
-  dialog is `src/invoice-share.tsx`, the links are set up in `src/features.ts`, and `src/routes/s/$.ts` serves them.
+  `app.subjects.canView(null, ref, { request })` for signed-out visitors, which a link that grants access allows. Such a
+  visitor also reads the invoice's comments and their reactions, without a way to add any. The dialog is
+  `src/invoice-share.tsx`, the links are set up in `src/features.ts`, and `src/routes/s/$.ts` serves them.
 - **Notes**, at `/notes`, is a tiny feature in `src/features.ts`. Its loader calls a server function that calls
   `api.notes.list()` as the request's user, and the form posts to `/api/apps/notes/add` from the browser.
 - **Domains** from [`@better-apps/domains`](../../packages/features/domains/README.md), at `/settings/domains`, give the
@@ -69,8 +70,8 @@ Then open <http://127.0.0.1:4190>. `build` and `preview` run the production buil
   sign-in page has a button for each. Ada owns the workspace, so she moderates comments: she can delete any comment or
   thread, move any pin and remove reactions (`src/people.server.ts`). On the first start the app also writes a few
   conversations on the sample invoices as the demo people, with mentions and reactions, from
-  `src/db/seed-comments.server.ts`. Comments are for signed-in people. Signing in or out reloads the page, so nothing
-  loaded for one person stays in the browser.
+  `src/db/seed-comments.server.ts`. Comments are for signed-in people, and visitors with a share link can read them.
+  Signing in or out reloads the page, so nothing loaded for one person stays in the browser.
 - `src/start.ts` only lets same-origin requests call server functions.
 
 ## Interface
