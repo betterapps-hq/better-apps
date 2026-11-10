@@ -2,7 +2,8 @@
 
 Short links, such as `https://app.example/s/k3Jd9xQa`, to records an app owns or to any URL. A user or an organization
 owns each link. A link to a record can also let anyone who has it see the record. Opening a link redirects and counts
-the click. The [spec](docs/spec.md) covers the design in full.
+the click, which is kept for clicks over time, and can tell the page which link opened it. The [spec](docs/spec.md)
+covers the design in full.
 
 ## Usage
 
@@ -57,6 +58,9 @@ with a catch-all route at `/s` in TanStack Start.
   grants access to a record on another host fails, since the grant couldn't reach it.
 - `notFound({ request, code })` answers links that don't exist, are turned off or have expired. A plain 404 page, by
   default. It isn't told which, so visitors can't tell which codes were links once.
+- `source: { param, urls?, grants? }` adds the link's code to the address it redirects to, such as
+  `?via=intro-linkedin`, so the page knows which link opened it. See
+  [Which link opened a page](#which-link-opened-a-page).
 
 ## Owners and permissions
 
@@ -115,14 +119,17 @@ back on, or giving it a later expiry, checks again that the caller can see and s
 - `create({ target, code?, owner?, grantsView?, expiresAt? })`, where `target` is `{ url }` or
   `{ subjectType, subjectId }`, returns the new link.
 - `get({ code })` returns a link.
-- `list({ subjectType?, subjectId?, owner?, cursor?, limit? })` pages through the links the caller manages, newest
-  first: 20 by default, up to 50. Those are the links made in their current organization that they manage, and their own
-  made outside any, such as before they joined one. Pass `subjectType` and `subjectId` for one record's, and `owner` for
-  only the caller's own, `user`, or their organization's, `org`.
+- `list({ subjectType?, subjectId?, owner?, sort?, cursor?, limit? })` pages through the links the caller manages,
+  newest first: 20 by default, up to 50. Those are the links made in their current organization that they manage, and
+  their own made outside any, such as before they joined one. Pass `subjectType` and `subjectId` for one record's,
+  `owner` for only the caller's own, `user`, or their organization's, `org`, and `sort: "clicks"` for the most opened
+  first, such as for top links.
 - `update({ code, url?, grantsView?, enabled?, expiresAt? })` changes a link and returns it. `url` is for URL links,
   `grantsView: false` ends the access a link gives, `enabled: false` turns a link off, and `expiresAt: null` clears its
   expiry. Each change is checked like `create`.
 - `remove({ code })` removes a link and returns `{ removed }`. Its code is free again.
+- `clicksByDay`, `clickTotals` and the server-only `recordClicks` read and record clicks, as
+  [Clicks over time](#clicks-over-time) shows.
 - Each link comes back with its `code`, `shortUrl`, `owner` as `{ type, id }`, `orgId`, `createdBy`, `target`,
   `grantsView`, `enabled`, `expiresAt`, `clicks`, `lastClickedAt`, `createdAt` and `updatedAt`.
 - Errors are `ShortLinksError`s: `UNAUTHENTICATED`, `FORBIDDEN` when a rule refuses, `NOT_FOUND` for links and records
@@ -132,8 +139,49 @@ back on, or giving it a later expiry, checks again that the caller can see and s
 
 `GET {path}/{code}` reads the link by its code, then answers `302 Found` to its target with
 `Cache-Control: private, no-store`, so a change to the link takes effect at once. Each `GET` adds a click and sets
-`lastClickedAt` in one statement, after the response, through the request's `waitUntil`; without one, the response
-waits. `HEAD` requests don't count. Every `GET` does, including link previews chat apps fetch.
+`lastClickedAt` in one statement, and keeps the click as a row of its own in the same batch, after the response, through
+the request's `waitUntil`; without one, the response waits. `HEAD` requests don't count. Every `GET` does, including
+link previews chat apps fetch. A click row holds the link and the time, and nothing about who opened it.
+
+## Clicks over time
+
+Two actions count clicks over a range of calendar days, `from` and `to` as `YYYY-MM-DD`, both included, up to 366 days,
+from 1980 on, in an IANA `timeZone`, `UTC` by default. Each is for the links' managers and trusted server code, like
+`get`:
+
+```ts
+const { days, total } = await app.api.shortLinks.clicksByDay(
+  { code: "intro-linkedin", from: "2026-10-12", to: "2026-11-10", timeZone: "Europe/Paris" },
+  { actor }
+)
+// days: [{ date: "2026-10-12", clicks: 14 }, ...], one per day, days without clicks included.
+
+const { links } = await app.api.shortLinks.clickTotals(
+  { codes: page.links.map((link) => link.code), from: "2026-10-12", to: "2026-11-10", timeZone: "Europe/Paris" },
+  { actor }
+)
+// links: [{ code: "intro-linkedin", clicks: 412 }, ...], for up to 50 codes, in the order asked.
+```
+
+`clickTotals` leaves out codes of no link and links the caller doesn't manage. Lifetime counts are each link's `clicks`,
+and `list({ sort: "clicks" })` lists the most opened links first.
+
+`recordClicks({ code, at })`, server only, records up to 500 clicks at given times, such as a demo's history, from 1980
+to now. It adds them to `clicks` and moves `lastClickedAt` to the latest of them, in one batch with their rows, so a
+seeded link's counter and chart agree, and returns the link.
+
+## Which link opened a page
+
+With `source: { param: "via" }`, a link to a record redirects to its page with its code added, such as
+`/book/intro?tab=times&via=intro-linkedin`. The page reads it from its own address to record where the visit came from,
+such as a booking's source. It works whichever host the page is on, unlike a cookie on the link's host.
+
+- Links to web addresses carry it only where `urls({ url })` returns `true`, such as the app's own sites, or everywhere
+  with `urls: true`. By default they don't, so codes don't reach other sites.
+- Links that grant access carry it only with `grants: true`, since their code is all it takes to see the record, and it
+  would show in the page's address, history, logs and analytics. An app that turns it on can keep the code, such as in a
+  cookie of its own, and redirect to the address without it.
+- A link that sends the visitor on to another host, as a link that grants access can, adds the code only on that host.
 
 ## Organizations' domains
 
@@ -215,8 +263,8 @@ connectLinkDomains(app.api.domains)
 
 Call `app.api.shortLinks.removeSubject({ subjectType, subjectId })` when a record is deleted, and
 `removeOwner({ owner: { type, id } })` when a person or an organization leaves. Both are server only, remove every
-matching link in one statement, written in one batch with their event, and return `{ removed }`. Until then, a link to a
-deleted record still redirects, and the app's page answers for the missing record.
+matching link in one statement, written in one batch with their event, and return `{ removed }`. The links' clicks go
+with them. Until then, a link to a deleted record still redirects, and the app's page answers for the missing record.
 
 ## Events
 
@@ -242,6 +290,8 @@ await links.update({ code: link.code, enabled: false })
 - `create` puts the new link first in the loaded lists it belongs in. `update` and `remove` show in every list. A list
   that was loading when one of them answered keeps the change, even when its answer was read before it.
 - Dates arrive as `Date`s.
+- The store's lists are newest first. For top links and charts, call the actions on the Better Apps client, such as
+  `client.shortLinks.list({ sort: "clicks", limit: 5 })` and `client.shortLinks.clicksByDay(range)`.
 - `reset()` empties the store and cancels calls under way, for when someone else signs in without a page load.
 
 `@better-apps/short-links/react` has hooks over the same store, with no UI:
@@ -255,5 +305,7 @@ const { links, state, cursor, loadMore, client } = useLinks({ subjectType: "invo
 ## Tables
 
 `shortLink` holds the links, with a unique index on `code`, indexes on the owner and on the organization, each with the
-creation time, for lists, and one on the record and creation time for a record's links and their cleanup. Run
-`better-apps generate` from [`@better-apps/cli`](../../tooling/cli/README.md) to add it to your schema.
+creation time, for lists, and one on the record and creation time for a record's links and their cleanup.
+`shortLinkClick` holds a row per click, with a foreign key to its link, so removing a link removes its clicks, and an
+index on the link and the click's 15-minute slot for clicks over time. Run `better-apps generate` from
+[`@better-apps/cli`](../../tooling/cli/README.md) to add them to your schema.

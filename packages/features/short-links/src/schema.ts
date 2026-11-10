@@ -3,6 +3,9 @@ import type { FeatureSchema } from "better-apps"
 /** The model of the short links table. */
 export const linkModel = "shortLink"
 
+/** The model of the clicks table: one row per click. */
+export const clickModel = "shortLinkClick"
+
 /** A short link as the table stores it. */
 export type LinkRow = {
   id: string
@@ -28,7 +31,26 @@ export type LinkRow = {
   updatedAt: Date
 }
 
-/** The short links table. Opening a link is one read through the unique index on its code. */
+/**
+ * One click on a link. It holds when the link was opened and nothing about who opened it: no IP address or user agent.
+ * Removing the link removes its clicks.
+ */
+export type ClickRow = {
+  id: string
+  /** The link opened. */
+  linkId: string
+  clickedAt: Date
+  /**
+   * The start of the 15-minute slot the click fell in, in UTC. Every time zone's offset is a whole number of 15
+   * minutes, so a slot is never split across two days in any zone, and clicks per day group by slot in one query.
+   */
+  slot: Date
+}
+
+/**
+ * The short links tables. Opening a link is one read through the unique index on its code. Clicks reference their link,
+ * so removing links, one at a time or in one statement for a record or an owner, removes their clicks too.
+ */
 export const shortLinksSchema: FeatureSchema = {
   [linkModel]: {
     fields: {
@@ -52,5 +74,14 @@ export const shortLinksSchema: FeatureSchema = {
       { fields: ["orgId", "createdAt"], name: "short_link_by_org" },
       { fields: ["subjectType", "subjectId", "createdAt"], name: "short_link_by_subject" }
     ]
+  },
+  [clickModel]: {
+    fields: {
+      linkId: { type: "string", references: { model: linkModel, field: "id", onDelete: "cascade" } },
+      clickedAt: { type: "date" },
+      slot: { type: "date" }
+    },
+    // Serves a link's clicks over a range, and removing them with their link.
+    indexes: [{ fields: ["linkId", "slot"], name: "short_link_click_by_link" }]
   }
 }

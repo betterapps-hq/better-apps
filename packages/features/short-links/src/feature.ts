@@ -11,26 +11,33 @@ import {
   type SubjectGrants,
   type SubjectRef,
   type StandardSchemaV1,
-  type Where
+  type Where,
+  type WriteOperation
 } from "better-apps"
 import { z } from "zod"
 import { codeLimits, generateCode, isValidCode, normalizeCode } from "./codes.js"
 import { grantCodes, grantCookie, isUnder, reachesHost, type CookieSettings } from "./cookie.js"
+import { dayLimits, maxRangeDays, rangeOf, slotOf } from "./days.js"
 import { ShortLinksError } from "./errors.js"
 import { shortLinkEvents } from "./events.js"
 import { isOpen, ownerKey, toLink, type ShortLink } from "./link.js"
 import type {
+  ClicksByDayInput,
+  ClickTotalsInput,
   CreateLinkInput,
   LinkHosts,
   LinkRules,
+  LinkSort,
+  LinkSource,
   LinkSubject,
   ListLinksInput,
   OwnerType,
+  RecordClicksInput,
   ShortLinksOptions,
   SubjectTypeOf,
   UpdateLinkInput
 } from "./options.js"
-import { linkModel, shortLinksSchema, type LinkRow } from "./schema.js"
+import { clickModel, linkModel, shortLinksSchema, type ClickRow, type LinkRow } from "./schema.js"
 
 /** A page of links, newest first. */
 export interface LinkPage {
@@ -39,11 +46,31 @@ export interface LinkPage {
   cursor: string | null
 }
 
+/** One link's clicks on each day of a range, in a time zone. */
+export interface ClicksByDay {
+  /** Every day of the range, in order, including days without clicks. */
+  days: { date: string; clicks: number }[]
+  /** The clicks over the whole range. */
+  total: number
+}
+
+/** Links' clicks over a range of days. */
+export interface ClickTotals {
+  /** The links asked for that the caller manages, in the order asked, each with its clicks over the range. */
+  links: { code: string; clicks: number }[]
+  /** Their clicks together. */
+  total: number
+}
+
 /** Size limits. */
 export const limits = {
   linksPerPage: 20,
   maxLinksPerPage: 50,
   urlLength: 2048,
+  /** The longest range clicks are counted over, in days. */
+  maxRangeDays,
+  /** The most clicks `recordClicks` records in one call. */
+  maxRecordedClicks: 500,
   ...codeLimits
 } as const
 
@@ -61,6 +88,7 @@ interface Config {
   codeLength: number
   cookie: CookieSettings
   notFound: NonNullable<ShortLinksOptions["notFound"]>
+  source: LinkSource | undefined
 }
 
 const refusedSchemes = new Set(["javascript:", "data:", "vbscript:", "file:"])
@@ -118,6 +146,10 @@ function resolve(options: ShortLinksOptions): Config {
       throw new Error(`\`baseUrl\`'s host must be under the cookie's domain, "${domain}", or browsers drop the cookie.`)
     }
   }
+  const source = options.source
+  if (source !== undefined && !/^[\w\-.]{1,64}$/.test(source.param)) {
+    throw new Error(`The source parameter "${source.param}" must be 1 to 64 letters, digits, _, - and .`)
+  }
   return {
     subjects: options.subjects ?? {},
     validateUrl: options.validateUrl,
@@ -127,7 +159,8 @@ function resolve(options: ShortLinksOptions): Config {
     hosts,
     codeLength,
     cookie: { name: cookieName, maxAge: cookieMaxAge, domain },
-    notFound: options.notFound ?? notFoundPage
+    notFound: options.notFound ?? notFoundPage,
+    source
   }
 }
 
@@ -382,6 +415,11 @@ const url = z.string().min(1).max(limits.urlLength)
 const owner = z.enum(["user", "org"])
 const date = z.coerce.date()
 const subject = z.object({ subjectType, subjectId })
+const days = {
+  from: z.string().min(1).max(10),
+  to: z.string().min(1).max(10),
+  timeZone: z.string().min(1).max(64).optional()
+}
 const inputs = {
   create: z.object({
     target: z.union([z.object({ url }).strict(), subject.strict()]),
@@ -395,6 +433,7 @@ const inputs = {
     subjectType: subjectType.optional(),
     subjectId: subjectId.optional(),
     owner: owner.optional(),
+    sort: z.enum(["newest", "clicks"]).optional(),
     cursor: z.string().min(1).max(512).optional(),
     limit: z.number().int().min(1).max(limits.maxLinksPerPage).optional()
   }),
@@ -406,7 +445,10 @@ const inputs = {
     expiresAt: date.nullable().optional()
   }),
   subject,
-  removeOwner: z.object({ owner: z.object({ type: owner, id: z.string().min(1).max(255) }) })
+  removeOwner: z.object({ owner: z.object({ type: owner, id: z.string().min(1).max(255) }) }),
+  clicksByDay: z.object({ code, ...days }),
+  clickTotals: z.object({ codes: z.array(code).min(1).max(limits.maxLinksPerPage), ...days }),
+  recordClicks: z.object({ code, at: z.array(date).min(1).max(limits.maxRecordedClicks) })
 }
 
 type Parsed<Input> = Omit<Input, "expiresAt"> & { expiresAt?: Date | null | undefined }
@@ -517,19 +559,33 @@ async function get(config: Config, context: Context): Promise<ShortLink> {
   return present(prefixer(config, context.request), await requireLink(config, context, wanted))
 }
 
-function encodeCursor(row: LinkRow): string {
-  return btoa(JSON.stringify([row.createdAt.toISOString(), row.id]))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "")
+/** The sort keys of each order, the first ones first. */
+const sortKeys: Record<LinkSort, readonly ("clicks" | "createdAt" | "id")[]> = {
+  newest: ["createdAt", "id"],
+  clicks: ["clicks", "createdAt", "id"]
 }
 
-function decodeCursor(cursor: string): { createdAt: Date; id: string } {
+/** A cursor after a row: its values of the order's sort keys. */
+function encodeCursor(row: LinkRow, sort: LinkSort): string {
+  const values = sortKeys[sort].map((key) => (key === "createdAt" ? row.createdAt.toISOString() : row[key]))
+  return btoa(JSON.stringify(values)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
+}
+
+function decodeCursor(cursor: string, sort: LinkSort): Partial<Pick<LinkRow, "clicks" | "createdAt" | "id">> {
   try {
-    const [time, id] = JSON.parse(atob(cursor.replace(/-/g, "+").replace(/_/g, "/"))) as unknown[]
+    const values = JSON.parse(atob(cursor.replace(/-/g, "+").replace(/_/g, "/"))) as unknown[]
+    const keys = sortKeys[sort]
+    const [clicks, time, id] = keys.length === 3 ? values : [0, ...values]
     const createdAt = new Date(String(time))
-    if (typeof time === "string" && typeof id === "string" && !Number.isNaN(createdAt.getTime())) {
-      return { createdAt, id }
+    if (
+      Array.isArray(values) &&
+      values.length === keys.length &&
+      Number.isSafeInteger(clicks) &&
+      typeof time === "string" &&
+      typeof id === "string" &&
+      !Number.isNaN(createdAt.getTime())
+    ) {
+      return keys.length === 3 ? { clicks: clicks as number, createdAt, id } : { createdAt, id }
     }
   } catch {
     // Reported below.
@@ -579,14 +635,12 @@ async function list(config: Config, context: Context): Promise<LinkPage> {
     throw new ShortLinksError("INVALID_INPUT", "Server code without an actor lists one record's links at a time.")
   }
   const limit = input.limit ?? limits.linksPerPage
-  const after = input.cursor === undefined ? undefined : decodeCursor(input.cursor)
+  const sort = input.sort ?? "newest"
+  const after = input.cursor === undefined ? undefined : decodeCursor(input.cursor, sort)
   const rows = await context.db.findMany<LinkRow>({
     model: linkModel,
     where,
-    sortBy: [
-      { field: "createdAt", direction: "desc" },
-      { field: "id", direction: "desc" }
-    ],
+    sortBy: sortKeys[sort].map((field) => ({ field, direction: "desc" as const })),
     after,
     limit: limit + 1
   })
@@ -595,7 +649,7 @@ async function list(config: Config, context: Context): Promise<LinkPage> {
   const last = page.at(-1)
   return {
     links: await Promise.all(page.map(async (row) => present(prefix, row))),
-    cursor: rows.length > limit && last ? encodeCursor(last) : null
+    cursor: rows.length > limit && last ? encodeCursor(last, sort) : null
   }
 }
 
@@ -723,7 +777,10 @@ async function open(config: Config, context: RouteContext): Promise<Response> {
     const path = await rules.url({ subjectType: type, subjectId: id, orgId: row.orgId === "" ? null : row.orgId })
     location = new URL(path, request.url).href
   }
-  const headers = new Headers({ location, "cache-control": "private, no-store" })
+  const headers = new Headers({
+    location: await withSource(config, row, location),
+    "cache-control": "private, no-store"
+  })
   if (row.grantsView) {
     if (config.hosts && !reachesHost(request.url, location, config.cookie.domain)) {
       // The cookie set on this host wouldn't reach the record, so the link opens where it does: on the app's own host,
@@ -738,16 +795,165 @@ async function open(config: Config, context: RouteContext): Promise<Response> {
     headers.set("set-cookie", grantCookie(request, config.cookie, row.code))
   }
   if (request.method === "GET") {
-    context.waitUntil(
-      db.incrementOne({
-        model: linkModel,
-        where: [{ field: "id", value: row.id }],
-        increment: { clicks: 1 },
-        set: { lastClickedAt: new Date() }
-      })
-    )
+    const clickedAt = new Date()
+    context.waitUntil(db.batch(clickWrites(row.id, [clickedAt], clickedAt)))
   }
   return new Response(null, { status: 302, headers })
+}
+
+/**
+ * The address a link redirects to, with its code in `source.param`, so the page knows which link opened it. Links that
+ * grant access carry it only with `source.grants`, since their code is all it takes to see the record. Links to web
+ * addresses carry it only where `source.urls` allows, and only to http and https ones. The rest of the query stays as
+ * it was written, since servers differ in how they read `+`, `;` and bare names.
+ */
+async function withSource(config: Config, row: LinkRow, location: string): Promise<string> {
+  const { source } = config
+  if (!source || (row.grantsView && source.grants !== true)) {
+    return location
+  }
+  const url = new URL(location)
+  if (row.url !== null) {
+    const allowed =
+      (url.protocol === "https:" || url.protocol === "http:") &&
+      (typeof source.urls === "function"
+        ? (await source.urls({ url: new URL(location) })) === true
+        : source.urls === true)
+    if (!allowed) {
+      return location
+    }
+  }
+  const kept = url.search
+    .slice(1)
+    .split("&")
+    .filter((pair) => pair !== "" && pair.split("=")[0] !== source.param)
+  url.search = [...kept, `${source.param}=${encodeURIComponent(row.code)}`].join("&")
+  return url.href
+}
+
+/**
+ * Records clicks on a link, in one batch: its counter and last click, then a row per click, so the counter and the rows
+ * always agree. The adapter splits the rows into statements under the database's limit of bound parameters.
+ */
+function clickWrites(linkId: string, times: readonly Date[], lastClickedAt: Date): WriteOperation[] {
+  const rows: ClickRow[] = times.map((clickedAt) => ({
+    id: crypto.randomUUID(),
+    linkId,
+    clickedAt,
+    slot: slotOf(clickedAt)
+  }))
+  return [
+    {
+      type: "incrementOne",
+      model: linkModel,
+      where: [{ field: "id", value: linkId }],
+      increment: { clicks: times.length },
+      set: { lastClickedAt }
+    },
+    { type: "createMany", model: clickModel, data: rows }
+  ]
+}
+
+/** A link's clicks on each day of a range, in the range's time zone, in one query. */
+async function clicksByDay(config: Config, context: Context): Promise<ClicksByDay> {
+  const input = context.input as ClicksByDayInput
+  const row = await requireLink(config, context, input.code)
+  const range = rangeOf(input)
+  // Each 15-minute slot falls on one day in every zone, so the slots' counts add up to each day's.
+  const groups = await context.db.countGroups({
+    model: clickModel,
+    where: [{ field: "linkId", value: row.id }, ...within(range)],
+    groupBy: ["slot"]
+  })
+  const counts = new Map(range.dates.map((date) => [date, 0]))
+  for (const { group, count } of groups) {
+    const date = range.zone.dateOf(new Date(group.slot as Date).getTime())
+    const current = counts.get(date)
+    if (current !== undefined) {
+      counts.set(date, current + count)
+    }
+  }
+  const days = [...counts].map(([date, clicks]) => ({ date, clicks }))
+  return { days, total: days.reduce((sum, day) => sum + day.clicks, 0) }
+}
+
+/** Clicks in a range of days. */
+function within(range: { start: Date; end: Date }): Where[] {
+  return [
+    { field: "slot", operator: "gte", value: range.start },
+    { field: "slot", operator: "lt", value: range.end }
+  ]
+}
+
+/**
+ * Links' clicks over a range of days: one read for the links, 90 codes to a query, and one count, 90 links to a query.
+ * Links the caller doesn't manage, and codes of no link, are left out, so they look alike.
+ */
+async function clickTotals(config: Config, context: Context): Promise<ClickTotals> {
+  const input = context.input as ClickTotalsInput
+  if (!context.actor && !isTrusted(context)) {
+    throw new ShortLinksError("UNAUTHENTICATED", "Sign in to see your links.")
+  }
+  const range = rangeOf(input)
+  const codes = [...new Set(input.codes.filter((wanted) => isValidCode(wanted)).map((wanted) => normalizeCode(wanted)))]
+  const read = await Promise.all(
+    chunks(codes).map(async (list) =>
+      context.db.findMany<LinkRow>({ model: linkModel, where: [{ field: "code", operator: "in", value: list }] })
+    )
+  )
+  const rows = read.flat()
+  const managed = await Promise.all(rows.map(async (row) => manages(config, context, row)))
+  const byCode = new Map(rows.filter((_, index) => managed[index]).map((row) => [row.code, row]))
+  const counted = await Promise.all(
+    chunks([...byCode.values()].map((row) => row.id)).map(async (ids) =>
+      context.db.countGroups({
+        model: clickModel,
+        where: [{ field: "linkId", operator: "in", value: ids }, ...within(range)],
+        groupBy: ["linkId"]
+      })
+    )
+  )
+  const clicksOf = new Map(counted.flat().map(({ group, count }) => [group.linkId as string, count]))
+  const links = codes.flatMap((wanted) => {
+    const row = byCode.get(wanted)
+    return row ? [{ code: row.code, clicks: clicksOf.get(row.id) ?? 0 }] : []
+  })
+  return { links, total: links.reduce((sum, link) => sum + link.clicks, 0) }
+}
+
+/**
+ * Records clicks at given times, such as a demo's history, keeping the counter and last click in step with them. It's
+ * for trusted server code, so it trusts the times it's given, as long as none is later than now.
+ */
+async function recordClicks(config: Config, context: Context): Promise<ShortLink> {
+  const input = context.input as Omit<RecordClicksInput, "at"> & { at: Date[] }
+  const row = await requireLink(config, context, input.code)
+  const times = input.at.map((time) => time.getTime())
+  const latest = Math.max(...times)
+  if (latest > context.now.getTime()) {
+    throw new ShortLinksError("INVALID_INPUT", "Clicks can't be recorded later than now.")
+  }
+  // Clicks per day need whole 15-minute offsets, which every zone has had since 1980.
+  if (Math.min(...times) < Date.parse(`${dayLimits.first}T00:00:00Z`)) {
+    throw new ShortLinksError("INVALID_INPUT", `Clicks can be recorded from ${dayLimits.first} on.`)
+  }
+  const lastClickedAt = new Date(Math.max(latest, row.lastClickedAt?.getTime() ?? latest))
+  const gone = () => new ShortLinksError("NOT_FOUND", "That link doesn't exist, or you can't manage it.")
+  let updated: unknown
+  try {
+    const written = await context.db.batch(clickWrites(row.id, input.at, lastClickedAt))
+    updated = written[0]
+  } catch (error) {
+    // A link removed since it was read fails the click rows' foreign key, and the batch rolls back.
+    if (!(await context.db.findOne({ model: linkModel, where: [{ field: "id", value: row.id }], select: ["id"] }))) {
+      throw gone()
+    }
+    throw error
+  }
+  if (!updated || typeof updated !== "object") {
+    throw gone()
+  }
+  return present(prefixer(config, context.request), updated as LinkRow)
 }
 
 /**
@@ -975,7 +1181,10 @@ export function shortLinks<const Options extends ShortLinksOptions>(options: Opt
         inputs.removeOwner,
         removeOwner,
         true
-      )
+      ),
+      clicksByDay: action<ClicksByDayInput, ClicksByDay>(inputs.clicksByDay, clicksByDay),
+      clickTotals: action<ClickTotalsInput, ClickTotals>(inputs.clickTotals, clickTotals),
+      recordClicks: action<RecordClicksInput, ShortLink, true>(inputs.recordClicks, recordClicks, true)
     }
   })
 }
