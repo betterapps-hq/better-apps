@@ -149,6 +149,11 @@ export interface DomainHostsApi {
     getPrimary(input: {
         orgId: string | null;
     }): Promise<Domain | null>;
+    list(input: {
+        orgId: string | null;
+    }): Promise<{
+        domains: readonly Domain[];
+    }>;
     lookup(input: {
         hostname: string;
     }): Promise<HostnameMatch | null>;

@@ -179,6 +179,7 @@ export interface LinkPage {
 export type LinkRow = {
     id: string;
     code: string;
+    scope: string;
     owner: string;
     orgId: string;
     createdBy: string;
@@ -289,8 +290,7 @@ export interface RecordClicksInput {
 // @public
 export interface ResolveHostArgs {
     hostname: string;
-    // (undocumented)
-    request: Request;
+    request: Request | null;
 }
 
 // @public
@@ -315,7 +315,7 @@ export interface ShortLink {
         type: OwnerType;
         id: string;
     };
-    shortUrl: string;
+    shortUrl: string | null;
     // (undocumented)
     target: ShortLinkTarget;
     // (undocumented)
@@ -414,9 +414,9 @@ export function shortLinks<const Options extends ShortLinksOptions>(options?: Op
             serverOnly?: false | undefined;
         };
         get: ActionDefinition<StandardSchemaV1<{
-        code: string;
+        id: string;
         }, {
-        code: string;
+        id: string;
         }>, ShortLink> & {
             serverOnly?: false | undefined;
         };
@@ -427,9 +427,9 @@ export function shortLinks<const Options extends ShortLinksOptions>(options?: Op
             serverOnly?: false | undefined;
         };
         remove: ActionDefinition<StandardSchemaV1<{
-        code: string;
+        id: string;
         }, {
-        code: string;
+        id: string;
         }>, {
         removed: boolean;
         }> & {
@@ -530,11 +530,11 @@ export type SubjectTypeOf<Options extends ShortLinksOptions> = Options["subjects
 // @public
 export interface UpdateLinkInput {
     // (undocumented)
-    code: string;
-    // (undocumented)
     enabled?: boolean | undefined;
     expiresAt?: Date | string | null | undefined;
     grantsView?: false | undefined;
+    // (undocumented)
+    id: string;
     url?: string | undefined;
 }
 

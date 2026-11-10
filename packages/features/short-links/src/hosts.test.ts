@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test"
-import { cookieOf, options, setup } from "../test/app.js"
+import { cookieOf, expectCode, options, setup } from "../test/app.js"
 import { shortLinks, type LinkHosts, type LinkRules, type ShortLink } from "./index.js"
 
 const inv1 = { subjectType: "invoice", subjectId: "inv-1" } as const
@@ -36,15 +36,20 @@ function hostsFor(seen: { hosts: string[]; orgs: (string | null)[] } = { hosts: 
   }
 }
 
-/** Opens a link on a host, the way a browser does, with the cookie it holds. */
+/** How many clicks the app has recorded, one row each. */
+const clickCount = (t: ReturnType<typeof setup>) =>
+  (t.database.sqlite.prepare(`SELECT COUNT(*) AS count FROM "shortLinkClick"`).get() as { count: number }).count
+
+/** Opens a link on a host, the way a browser does, with the cookie it holds, and counts the clicks it recorded. */
 async function openOn(t: ReturnType<typeof setup>, host: string, code: string, cookie?: string) {
+  const before = clickCount(t)
   const kept: Promise<unknown>[] = []
   const response = await t.app.handler(
     new Request(`https://${host}/s/${code}`, { headers: cookie ? { cookie } : {} }),
     { waitUntil: (promise) => kept.push(promise) }
   )
   await Promise.all(kept)
-  return { response }
+  return { response, clicks: clickCount(t) - before }
 }
 
 describe("organizations' domains", () => {
@@ -60,17 +65,18 @@ describe("organizations' domains", () => {
     const onDomain = await openOn(t, "links.acme.test", link.code)
     expect(onDomain.response.status).toBe(302)
     expect(onDomain.response.headers.get("location")).toBe(docs.url)
-    // The app's own host opens every link, such as ones shared before the domain was set up.
-    expect((await openOn(t, "app.test", link.code)).response.status).toBe(302)
+    // The link's code is Acme's, so the app's own host, whose codes are the app's, doesn't open it.
+    expect((await openOn(t, "app.test", link.code)).response.status).toBe(404)
     // A host with a trailing dot is the same host.
     expect((await openOn(t, "links.acme.test.", link.code)).response.status).toBe(302)
-    expect(seen.hosts).toEqual(["links.acme.test", "app.test", "links.acme.test"])
+    // `create` asked once whether the origin's host is Acme's, before each link opened.
+    expect(seen.hosts).toEqual(["links.acme.test", "links.acme.test", "app.test", "links.acme.test"])
     await t.api.create({ target: { url: "https://docs.test/two" } }, t.as("ada"))
     seen.orgs.length = 0
     const { links } = await t.api.list({}, t.as("ada"))
-    expect(links.map((entry) => new URL(entry.shortUrl).host)).toEqual(["links.acme.test", "links.acme.test"])
+    expect(links.map((entry) => new URL(entry.shortUrl ?? "").host)).toEqual(["links.acme.test", "links.acme.test"])
     expect(seen.orgs).toEqual(["acme"])
-    expect((await t.api.get({ code: link.code }, t.as("ada"))).clicks).toBe(3)
+    expect((await t.api.get({ id: link.id }, t.as("ada"))).clicks).toBe(2)
   })
 
   it("answer another organization's link, and any link on a host they don't know, as a missing one", async () => {
@@ -83,7 +89,7 @@ describe("organizations' domains", () => {
       expect(response.status).toBe(404)
       expect(await response.text()).toBe(await missing.response.clone().text())
     }
-    expect((await t.api.get({ code: link.code }, t.as("ada"))).clicks).toBe(0)
+    expect((await t.api.get({ id: link.id }, t.as("ada"))).clicks).toBe(0)
   })
 
   it("keep a person's links on the app's host, even when an action is called from a domain", async () => {
@@ -116,7 +122,7 @@ describe("organizations' domains", () => {
     expect(adas.shortUrl).toBe(`https://links.acme.test/s/${adas.code}`)
   })
 
-  it("open a link that grants access on the record's host when the cookie can't reach it from the domain", async () => {
+  it("make a link that grants access in the app's scope when the cookie can't reach the record from the domain", async () => {
     const t = setup({
       baseUrl: "https://app.test",
       hosts: hostsFor(),
@@ -124,13 +130,13 @@ describe("organizations' domains", () => {
     })
     const link = await t.api.create({ target: inv1, grantsView: true }, t.as("ada"))
     expect(link.shortUrl).toBe(`https://app.test/s/${link.code}`)
-    // Opened on the domain anyway, it goes to the same link on the app's host, which sets the cookie there.
+    // Opened on Acme's domain anyway, it goes to the same link on the app's host, which sets the cookie there.
     const onDomain = await openOn(t, "links.acme.test", link.code)
     expect(onDomain.response.headers.get("location")).toBe(`https://app.test/s/${link.code}`)
     expect(onDomain.response.headers.get("set-cookie")).toBeNull()
     const onAppHost = await openOn(t, "app.test", link.code)
     // The click counts once, where the cookie was set.
-    expect((await t.api.get({ code: link.code }, t.as("ada"))).clicks).toBe(1)
+    expect((await t.api.get({ id: link.id }, t.as("ada"))).clicks).toBe(1)
     expect(onAppHost.response.headers.get("location")).toBe("https://app.test/invoices/inv-1")
     expect(cookieOf(onAppHost.response)).toBe(`better-apps-links=${link.code}`)
     // Records the domain serves itself are reached from it, so such links are shared there.
@@ -139,7 +145,7 @@ describe("organizations' domains", () => {
     expect(there.shortUrl).toBe(`https://links.acme.test/s/${there.code}`)
     const opened = await openOn(local, "links.acme.test", there.code)
     expect(opened.response.headers.get("location")).toBe("https://links.acme.test/invoices/inv-1")
-    expect(opened.response.headers.get("set-cookie")).toContain(there.code)
+    expect(cookieOf(opened.response)).toBe(`better-apps-links=${there.code}~${btoa("acme").replace(/=+$/, "")}`)
   })
 
   it("share a link that grants access on a subdomain whose cookie domain reaches the app's host", async () => {
@@ -169,20 +175,23 @@ describe("organizations' domains", () => {
     expect(onDomain.response.headers.get("location")).toBe("https://links.acme.test/invoices/inv-1")
     expect(onDomain.response.headers.get("set-cookie")).toContain(local.code)
     expect(onDomain.response.headers.get("set-cookie")).not.toContain("Domain=")
-    const onAppHost = await openOn(t, "app.test", local.code)
-    expect(onAppHost.response.headers.get("set-cookie")).toContain("; Domain=app.test;")
-    // A record on the app's host is one hop away from the domain, and no further.
-    const remote = setup({
+  })
+
+  it("send a link in the app's scope from another of the app's hosts to baseUrl, one hop and no further", async () => {
+    // A workspace's domain in an app without organizations opens the app's links, but no cookie domain covers it.
+    const t = setup({
       baseUrl: "https://app.test",
       cookie: { domain: "app.test" },
-      hosts: hostsFor(),
-      subjects: { ...options.subjects, invoice: onApp }
+      subjects: { ...options.subjects, invoice: onApp },
+      hosts: { resolve: ({ hostname }) => (["app.test", "go.workspace.test"].includes(hostname) ? "app" : null) }
     })
-    const link = await remote.api.create({ target: inv1, grantsView: true }, remote.as("ada"))
+    const link = await t.api.create({ target: inv1, grantsView: true }, t.as("ada"))
     expect(link.shortUrl).toBe(`https://app.test/s/${link.code}`)
-    const hop = await openOn(remote, "links.acme.test", link.code)
+    const hop = await openOn(t, "go.workspace.test", link.code)
     expect(hop.response.headers.get("location")).toBe(`https://app.test/s/${link.code}`)
-    const landed = await openOn(remote, "app.test", link.code)
+    expect(hop.response.headers.get("set-cookie")).toBeNull()
+    expect(hop.clicks).toBe(0)
+    const landed = await openOn(t, "app.test", link.code)
     expect(landed.response.headers.get("location")).toBe("https://app.test/invoices/inv-1")
     expect(landed.response.headers.get("set-cookie")).toContain("; Domain=app.test;")
   })
@@ -199,7 +208,12 @@ describe("organizations' domains", () => {
       subjects: { ...options.subjects, invoice: billing },
       hosts: {
         resolve: ({ hostname }) =>
-          ({ "app.test": "app" as const, "billing.acme.test": { orgId: "acme" } })[hostname] ?? null,
+          ({
+            "app.test": "app" as const,
+            "billing.acme.test": { orgId: "acme" },
+            "links.acme.test": { orgId: "acme" },
+            "links.globex.test": { orgId: "globex" }
+          })[hostname] ?? null,
         origin: ({ orgId }) => origins[orgId ?? ""] ?? null
       }
     })
@@ -208,9 +222,12 @@ describe("organizations' domains", () => {
     const opened = await openOn(t, "billing.acme.test", link.code)
     expect(opened.response.headers.get("location")).toBe("https://billing.acme.test/invoices/inv-1")
     expect(opened.response.headers.get("set-cookie")).toContain(link.code)
-    // Opened on the app's host, which can't reach the billing domain, it goes to the same link there.
-    const onApp = await openOn(t, "app.test", link.code)
-    expect(onApp.response.headers.get("location")).toBe(`https://billing.acme.test/s/${link.code}`)
+    // Opened on Acme's other domain, which can't reach the billing domain, it goes to the same link there.
+    const onOther = await openOn(t, "links.acme.test", link.code)
+    expect(onOther.response.headers.get("location")).toBe(`https://billing.acme.test/s/${link.code}`)
+    expect(onOther.clicks).toBe(0)
+    // The app's host doesn't open Acme's codes.
+    expect((await openOn(t, "app.test", link.code)).response.status).toBe(404)
     // Globex's links are shared on a domain that doesn't serve its invoices, and the app's host doesn't either, so a link
     // that grants access is refused.
     const refused = t.api.create(
@@ -231,13 +248,12 @@ describe("organizations' domains", () => {
       },
       hosts: {
         resolve: ({ hostname }) =>
-          ({ "go.example.test": "app" as const, "links.acme.test": { orgId: "acme" } })[hostname] ?? null,
-        origin: ({ orgId }) => (orgId === "acme" ? "https://links.acme.test" : null)
+          ({ "go.example.test": "app" as const, "go.workspace.test": "app" as const })[hostname] ?? null
       }
     })
     const link = await t.api.create({ target: inv1, grantsView: true }, t.as("ada"))
     expect(link.shortUrl).toBe(`https://go.example.test/s/${link.code}`)
-    const hop = await openOn(t, "links.acme.test", link.code)
+    const hop = await openOn(t, "go.workspace.test", link.code)
     expect(hop.response.headers.get("location")).toBe(`https://go.example.test/s/${link.code}`)
     expect((await openOn(t, "app.example.test", link.code)).response.status).toBe(404)
     const landed = await openOn(t, "go.example.test", link.code)
@@ -247,21 +263,67 @@ describe("organizations' domains", () => {
 
   it("ask each record's url once per call when writing short URLs", async () => {
     const asked: string[] = []
-    const invoice: LinkRules = {
-      ...options.subjects.invoice,
-      url: ({ subjectId }) => {
-        asked.push(subjectId)
-        return `/invoices/${subjectId}`
+    const asking = (rules: LinkRules): LinkRules => ({
+      ...rules,
+      url: (args) => {
+        asked.push(args.subjectId)
+        return rules.url(args)
       }
-    }
-    const t = setup({ baseUrl: "https://app.test", hosts: hostsFor(), subjects: { ...options.subjects, invoice } })
-    for (const target of [inv1, inv1, inv1, { subjectType: "invoice", subjectId: "inv-2" } as const]) {
+    })
+    const t = setup({
+      baseUrl: "https://app.test",
+      // Links outside any organization are shared on a host of the app's when the cookie reaches the record from there.
+      hosts: {
+        ...hostsFor(),
+        origin: ({ orgId }) => (orgId === null ? "https://app.test" : `https://${domainOf[orgId] ?? ""}`)
+      },
+      subjects: {
+        ...options.subjects,
+        invoice: asking(options.subjects.invoice),
+        document: asking(options.subjects.document)
+      }
+    })
+    for (const target of [inv1, inv1, { subjectType: "invoice", subjectId: "inv-2" } as const]) {
       await t.api.create({ target, grantsView: true }, t.as("ada"))
     }
+    const doc = { subjectType: "document", subjectId: "doc-1" } as const
+    for (const target of [doc, doc]) {
+      await t.api.create({ target, grantsView: true }, t.as("solo"))
+    }
     asked.length = 0
-    const { links } = await t.api.list({}, t.as("ada"))
-    expect(links).toHaveLength(4)
+    expect((await t.api.list({}, t.as("ada"))).links).toHaveLength(3)
     expect([...asked].sort()).toEqual(["inv-1", "inv-2"])
+    asked.length = 0
+    expect((await t.api.list({}, t.as("solo"))).links).toHaveLength(2)
+    expect(asked).toEqual(["doc-1"])
+  })
+
+  it("give a link that grants access no short URL while its organization's origin can't give the cookie to the record", async () => {
+    // Acme's subdomain shares the cookie with the app's host, where invoices are. Its own domain can't.
+    let origin = "https://acme.app.test"
+    const t = setup({
+      baseUrl: "https://app.test",
+      subjects: { ...options.subjects, invoice: onApp },
+      cookie: { domain: "app.test" },
+      hosts: {
+        resolve: ({ hostname }) =>
+          ({
+            "app.test": "app" as const,
+            "acme.app.test": { orgId: "acme" },
+            "links.acme.test": { orgId: "acme" }
+          })[hostname] ?? null,
+        origin: ({ orgId }) => (orgId === "acme" ? origin : null)
+      }
+    })
+    const link = await t.api.create({ target: inv1, grantsView: true }, t.as("ada"))
+    expect(link.shortUrl).toBe(`https://acme.app.test/s/${link.code}`)
+    origin = "https://links.acme.test"
+    expect((await t.api.get({ id: link.id }, t.as("ada"))).shortUrl).toBeNull()
+    // A link that doesn't grant access is shared on the new domain as usual.
+    const plain = await t.api.create({ target: docs }, t.as("ada"))
+    expect(plain.shortUrl).toBe(`https://links.acme.test/s/${plain.code}`)
+    origin = "https://acme.app.test"
+    expect((await t.api.get({ id: link.id }, t.as("ada"))).shortUrl).toBe(`https://acme.app.test/s/${link.code}`)
   })
 
   it("open every link on every host without hosts", async () => {
@@ -287,5 +349,238 @@ describe("organizations' domains", () => {
     await expect(slashless.api.create({ target: docs }, slashless.as("ada"))).rejects.toThrow(
       "isn't an http or https origin"
     )
+  })
+})
+
+/** Hosts whose organizations' domains can change while a test runs, the way they do when one is set up or removed. */
+function changingHosts(domains: Record<string, string>): LinkHosts {
+  return {
+    resolve: ({ hostname }) => {
+      if (hostname === "app.test") {
+        return "app"
+      }
+      const orgId = Object.keys(domains).find((org) => domains[org] === hostname)
+      return orgId === undefined ? null : { orgId }
+    },
+    origin: ({ orgId }) => {
+      const domain = orgId === null ? undefined : domains[orgId]
+      return domain === undefined ? null : `https://${domain}`
+    }
+  }
+}
+
+const pricing = (url: string) => ({ target: { url }, code: "pricing" })
+
+describe("codes on organizations' domains", () => {
+  it("let two organizations have the same code, each on its own domain", async () => {
+    const t = setup({ baseUrl: "https://app.test", hosts: hostsFor() })
+    const acmes = await t.api.create(pricing("https://acme.test/pricing"), t.as("ada"))
+    const globexs = await t.api.create(pricing("https://globex.test/pricing"), t.as("gus"))
+    expect([acmes.shortUrl, globexs.shortUrl]).toEqual([
+      "https://links.acme.test/s/pricing",
+      "https://links.globex.test/s/pricing"
+    ])
+    const onAcme = await openOn(t, "links.acme.test", "Pricing")
+    expect(onAcme.response.headers.get("location")).toBe("https://acme.test/pricing")
+    const onGlobex = await openOn(t, "links.globex.test", "pricing")
+    expect(onGlobex.response.headers.get("location")).toBe("https://globex.test/pricing")
+    expect((await t.api.get({ id: acmes.id }, t.as("ada"))).clicks).toBe(1)
+    expect((await t.api.get({ id: globexs.id }, t.as("gus"))).clicks).toBe(1)
+  })
+
+  it("say a code is taken only within the caller's scope", async () => {
+    const t = setup({ baseUrl: "https://app.test", hosts: hostsFor() })
+    await t.api.create(pricing("https://acme.test/pricing"), t.as("ada"))
+    // Taken among Acme's codes, in any case.
+    await expectCode(t.api.create(pricing("https://acme.test/again"), t.as("ada")), "CONFLICT")
+    await expectCode(t.api.create({ target: docs, code: "PRICING" }, t.as("ada")), "CONFLICT")
+    // Acme's code tells Globex and the app's own scope nothing.
+    await t.api.create(pricing("https://globex.test/pricing"), t.as("gus"))
+    const solos = await t.api.create(pricing("https://solo.test/pricing"), t.as("solo"))
+    expect(solos.shortUrl).toBe("https://app.test/s/pricing")
+    // A member's own link is in the app's scope, where Solo has the code.
+    await expectCode(t.api.create(pricing("https://acme.test/mine"), t.as("cy")), "CONFLICT")
+  })
+
+  it("open only the app's codes on the app's host", async () => {
+    const t = setup({ baseUrl: "https://app.test", hosts: hostsFor() })
+    await t.api.create(pricing("https://acme.test/pricing"), t.as("ada"))
+    const missing = await openOn(t, "app.test", "missing1")
+    const acmes = await openOn(t, "app.test", "pricing")
+    expect(acmes.response.status).toBe(404)
+    expect(acmes.clicks).toBe(0)
+    expect(await acmes.response.text()).toBe(await missing.response.text())
+    await t.api.create(pricing("https://solo.test/pricing"), t.as("solo"))
+    const solos = await openOn(t, "app.test", "pricing")
+    expect(solos.response.headers.get("location")).toBe("https://solo.test/pricing")
+    // And a domain opens only its organization's codes, not the app's.
+    expect((await openOn(t, "links.globex.test", "pricing")).response.status).toBe(404)
+  })
+
+  it("keep links made before an organization's domain was ready on the app's host", async () => {
+    const domains: Record<string, string> = {}
+    const t = setup({ baseUrl: "https://app.test", hosts: changingHosts(domains) })
+    const before = await t.api.create(pricing("https://acme.test/before"), t.as("ada"))
+    expect(before.shortUrl).toBe("https://app.test/s/pricing")
+    domains.acme = "links.acme.test"
+    // The link keeps its code and its short URL, and both the app's host and the new domain open it.
+    expect((await t.api.get({ id: before.id }, t.as("ada"))).shortUrl).toBe("https://app.test/s/pricing")
+    expect((await openOn(t, "app.test", "pricing")).response.headers.get("location")).toBe("https://acme.test/before")
+    expect((await openOn(t, "links.acme.test", "pricing")).response.headers.get("location")).toBe(
+      "https://acme.test/before"
+    )
+    // A new link on the domain can't take the code and hide the older link there.
+    await expect(t.api.create(pricing("https://acme.test/after"), t.as("ada"))).rejects.toMatchObject({
+      code: "CONFLICT"
+    })
+    expect((await openOn(t, "links.acme.test", "pricing")).response.headers.get("location")).toBe(
+      "https://acme.test/before"
+    )
+    // A member's own link on the app's host doesn't hold its code on Acme's domain.
+    const own = await t.api.create({ target: { url: "https://ada.test" }, code: "mine", owner: "user" }, t.as("ada"))
+    expect(own.shortUrl).toBe("https://app.test/s/mine")
+    const acmes = await t.api.create({ target: { url: "https://acme.test/mine" }, code: "mine" }, t.as("ada"))
+    expect(acmes.shortUrl).toBe("https://links.acme.test/s/mine")
+  })
+
+  it("open nothing on an organization's domain for its turned-off link, even with an older link of the app's code", async () => {
+    const domains: Record<string, string> = { acme: "links.acme.test" }
+    const t = setup({ baseUrl: "https://app.test", hosts: changingHosts(domains) })
+    const onDomain = await t.api.create(pricing("https://acme.test/domain"), t.as("ada"))
+    // While the domain is gone, a link with the same code goes in the app's scope.
+    delete domains.acme
+    const onApp = await t.api.create(pricing("https://acme.test/app"), t.as("ada"))
+    expect(onApp.shortUrl).toBe("https://app.test/s/pricing")
+    domains.acme = "links.acme.test"
+    expect((await openOn(t, "links.acme.test", "pricing")).response.headers.get("location")).toBe(
+      "https://acme.test/domain"
+    )
+    await t.api.update({ id: onDomain.id, enabled: false }, t.as("ada"))
+    const off = await openOn(t, "links.acme.test", "pricing")
+    expect(off.response.status).toBe(404)
+    expect(off.clicks).toBe(0)
+    expect((await openOn(t, "app.test", "pricing")).response.headers.get("location")).toBe("https://acme.test/app")
+  })
+
+  it("keep a link that grants access working when its record moves to the organization's new domain", async () => {
+    // Acme's invoices move to its own billing domain once that's ready, as in a white-label app.
+    const domains: Record<string, string> = {}
+    const invoice: LinkRules = {
+      ...options.subjects.invoice,
+      url: ({ subjectId, orgId }) =>
+        orgId !== null && domains[orgId] !== undefined
+          ? `https://${domains[orgId]}/invoices/${subjectId}`
+          : `https://app.test/invoices/${subjectId}`
+    }
+    const t = setup({
+      baseUrl: "https://app.test",
+      hosts: changingHosts(domains),
+      subjects: { ...options.subjects, invoice }
+    })
+    const link = await t.api.create({ target: inv1, grantsView: true }, t.as("ada"))
+    expect(link.shortUrl).toBe(`https://app.test/s/${link.code}`)
+    domains.acme = "billing.acme.test"
+    // The app's host can't give the billing domain the cookie, so it sends the visitor on, and the domain opens the link.
+    const onApp = await openOn(t, "app.test", link.code)
+    expect(onApp.response.headers.get("location")).toBe(`https://billing.acme.test/s/${link.code}`)
+    expect(onApp.clicks).toBe(0)
+    const onDomain = await openOn(t, "billing.acme.test", link.code)
+    expect(onDomain.response.headers.get("location")).toBe("https://billing.acme.test/invoices/inv-1")
+    expect(cookieOf(onDomain.response)).toBe(`better-apps-links=${link.code}`)
+    expect(onDomain.clicks).toBe(1)
+    // The cookie holds the link with the app's codes, and grants the invoice.
+    const visitor = new Request("https://billing.acme.test/invoices/inv-1", {
+      headers: { cookie: cookieOf(onDomain.response) }
+    })
+    expect(await t.app.subjects.canView(null, inv1, { request: visitor })).toBe(true)
+  })
+
+  it("keep an organization's links in the app's scope when origin names a host that resolve doesn't give it", async () => {
+    const seen = { hosts: [] as string[], orgs: [] as (string | null)[] }
+    const t = setup({
+      baseUrl: "https://app.test",
+      hosts: { ...hostsFor(seen), origin: ({ orgId }) => (orgId === "acme" ? "https://app.test" : null) }
+    })
+    const link = await t.api.create(pricing("https://acme.test/pricing"), t.as("ada"))
+    const again = await t.api.create({ target: docs }, t.as("ada"))
+    // Asked once for the call each link was made in.
+    expect(seen.hosts).toEqual(["app.test", "app.test"])
+    expect([link.shortUrl, again.shortUrl]).toEqual(["https://app.test/s/pricing", `https://app.test/s/${again.code}`])
+    expect((await openOn(t, "app.test", "pricing")).response.status).toBe(302)
+    // Server code without a request is asked about too, with no request.
+    const resolved: (Request | null)[] = []
+    const server = setup({
+      baseUrl: "https://app.test",
+      hosts: {
+        ...hostsFor(),
+        resolve: (args) => {
+          resolved.push(args.request)
+          return hostsFor().resolve(args)
+        }
+      }
+    })
+    const made = await server.api.create({ target: docs }, server.as("ada"))
+    expect(made.shortUrl).toBe(`https://links.acme.test/s/${made.code}`)
+    expect(resolved).toEqual([null])
+  })
+
+  it("keep an organization's links in the app's scope when origin names another organization's host or a pending one", async () => {
+    for (const host of ["links.globex.test", "pending.acme.test"]) {
+      const t = setup({
+        baseUrl: "https://app.test",
+        hosts: { ...hostsFor(), origin: ({ orgId }) => (orgId === "acme" ? `https://${host}` : null) }
+      })
+      const link = await t.api.create(pricing("https://acme.test/pricing"), t.as("ada"))
+      expect(link.shortUrl).toBe("https://app.test/s/pricing")
+      expect((await openOn(t, "app.test", "pricing")).response.headers.get("location")).toBe(
+        "https://acme.test/pricing"
+      )
+      expect((await openOn(t, host, "pricing")).response.status).toBe(404)
+    }
+  })
+
+  it("open an organization's links nowhere while it has no ready domain, and on whichever it has next", async () => {
+    const domains: Record<string, string> = { acme: "links.acme.test" }
+    const t = setup({ baseUrl: "https://app.test", hosts: changingHosts(domains) })
+    const link = await t.api.create(pricing("https://acme.test/pricing"), t.as("ada"))
+    delete domains.acme
+    expect((await t.api.get({ id: link.id }, t.as("ada"))).shortUrl).toBeNull()
+    expect((await openOn(t, "links.acme.test", "pricing")).response.status).toBe(404)
+    expect((await openOn(t, "app.test", "pricing")).response.status).toBe(404)
+    // Meanwhile Acme's new links go in the app's scope, where the code is free too.
+    const meanwhile = await t.api.create(pricing("https://acme.test/meanwhile"), t.as("ada"))
+    expect(meanwhile.shortUrl).toBe("https://app.test/s/pricing")
+    domains.acme = "go.acme.test"
+    expect((await t.api.get({ id: link.id }, t.as("ada"))).shortUrl).toBe("https://go.acme.test/s/pricing")
+    expect((await openOn(t, "go.acme.test", "pricing")).response.headers.get("location")).toBe(
+      "https://acme.test/pricing"
+    )
+    expect((await openOn(t, "app.test", "pricing")).response.headers.get("location")).toBe(
+      "https://acme.test/meanwhile"
+    )
+  })
+
+  it("let one person manage two links with the same code, by their ids", async () => {
+    const t = setup({ baseUrl: "https://app.test", hosts: hostsFor() })
+    const orgs = await t.api.create(pricing("https://acme.test/pricing"), t.as("ada"))
+    const own = await t.api.create({ ...pricing("https://ada.test/pricing"), owner: "user" }, t.as("ada"))
+    expect([orgs.shortUrl, own.shortUrl]).toEqual(["https://links.acme.test/s/pricing", "https://app.test/s/pricing"])
+    expect((await t.api.list({}, t.as("ada"))).links.map((link) => link.id).sort()).toEqual([orgs.id, own.id].sort())
+    await t.api.update({ id: own.id, enabled: false }, t.as("ada"))
+    expect((await t.api.get({ id: orgs.id }, t.as("ada"))).enabled).toBe(true)
+    expect((await openOn(t, "links.acme.test", "pricing")).response.status).toBe(302)
+    expect((await openOn(t, "app.test", "pricing")).response.status).toBe(404)
+    expect(await t.api.remove({ id: orgs.id }, t.as("ada"))).toEqual({ removed: true })
+    expect((await t.api.get({ id: own.id }, t.as("ada"))).code).toBe("pricing")
+  })
+
+  it("keep every code unique across the app, and open it on every host, without hosts", async () => {
+    const t = setup({ baseUrl: "https://app.test" })
+    const acmes = await t.api.create(pricing("https://acme.test/pricing"), t.as("ada"))
+    expect(acmes.shortUrl).toBe("https://app.test/s/pricing")
+    await expectCode(t.api.create(pricing("https://globex.test/pricing"), t.as("gus")), "CONFLICT")
+    for (const host of ["app.test", "links.acme.test", "links.globex.test"]) {
+      expect((await openOn(t, host, "pricing")).response.headers.get("location")).toBe("https://acme.test/pricing")
+    }
   })
 })

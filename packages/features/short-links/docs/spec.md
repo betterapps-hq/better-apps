@@ -12,27 +12,30 @@ It needs two things from core `better-apps`, described in [Core support](#core-s
 
 Two tables. `shortLink` holds the links:
 
-| Field           | Type           | Holds                                                                                                  |
-| --------------- | -------------- | ------------------------------------------------------------------------------------------------------ |
-| `code`          | string, unique | The code in the short URL, in lowercase, since codes aren't case-sensitive.                            |
-| `owner`         | string         | `user:{userId}` or `org:{orgId}`, so a list of a person's and their organization's links is one query. |
-| `orgId`         | string         | The organization the link was made in, or `""` outside any.                                            |
-| `createdBy`     | string         | The user who made it.                                                                                  |
-| `url`           | string, null   | The target of a URL link.                                                                              |
-| `subjectType`   | string, null   | The target of a record link: its subject type.                                                         |
-| `subjectId`     | string, null   | The target of a record link: its id.                                                                   |
-| `grantsView`    | boolean        | Whether opening the link lets anyone who has it see the record.                                        |
-| `enabled`       | boolean        | Whether the link opens. Turning it off keeps its code and counts.                                      |
-| `expiresAt`     | date, null     | When it stops opening, or never.                                                                       |
-| `expiryToken`   | string, null   | Matches the scheduled `link.expired` of the current `expiresAt`, as [Events](#events) describes.       |
-| `clicks`        | number         | How many times it was opened.                                                                          |
-| `lastClickedAt` | date, null     | When it was last opened.                                                                               |
-| `createdAt`     | date           |                                                                                                        |
-| `updatedAt`     | date           |                                                                                                        |
+| Field           | Type         | Holds                                                                                                  |
+| --------------- | ------------ | ------------------------------------------------------------------------------------------------------ |
+| `code`          | string       | The code in the short URL, in lowercase, since codes aren't case-sensitive. Unique within its `scope`. |
+| `scope`         | string       | Whose codes it's among: `""` for the app's, or an organization's id for one made on its domains.       |
+| `owner`         | string       | `user:{userId}` or `org:{orgId}`, so a list of a person's and their organization's links is one query. |
+| `orgId`         | string       | The organization the link was made in, or `""` outside any.                                            |
+| `createdBy`     | string       | The user who made it.                                                                                  |
+| `url`           | string, null | The target of a URL link.                                                                              |
+| `subjectType`   | string, null | The target of a record link: its subject type.                                                         |
+| `subjectId`     | string, null | The target of a record link: its id.                                                                   |
+| `grantsView`    | boolean      | Whether opening the link lets anyone who has it see the record.                                        |
+| `enabled`       | boolean      | Whether the link opens. Turning it off keeps its code and counts.                                      |
+| `expiresAt`     | date, null   | When it stops opening, or never.                                                                       |
+| `expiryToken`   | string, null | Matches the scheduled `link.expired` of the current `expiresAt`, as [Events](#events) describes.       |
+| `clicks`        | number       | How many times it was opened.                                                                          |
+| `lastClickedAt` | date, null   | When it was last opened.                                                                               |
+| `createdAt`     | date         |                                                                                                        |
+| `updatedAt`     | date         |                                                                                                        |
 
 Indexes:
 
-- The unique index on `code` serves opening a link, which is one read.
+- The unique index on `(code, scope)` keeps codes unique within each scope. It serves opening a link, which is one read,
+  and a second on an organization's domain only when the first misses, and reading the links a grant cookie holds by
+  their codes.
 - `(owner, createdAt)` serves lists of a person's or an organization's links, newest first.
 - `(orgId, createdAt)` serves a manager's list of every link made in their organization.
 - `(subjectType, subjectId, createdAt)` serves a record's links and removing them when the record goes.
@@ -90,9 +93,9 @@ shortLinks({
 - `baseUrl` is where the short URLs the actions return start, such as a shorter domain that serves the same app. The
   request's origin, by default. `hosts` needs it. It's an `http` or `https` URL, which may have a path but no
   credentials, query or fragment, since short URLs follow it with the path and code.
-- `hosts` opens links on organizations' own domains and shares them there, as
-  [Organizations' domains](#organizations-domains) describes. Without it, every host that serves the app opens every
-  link.
+- `hosts` opens links on organizations' own domains and shares them there, where each organization has codes of its own,
+  as [Organizations' domains](#organizations-domains) describes. Without it, every host that serves the app opens every
+  link, and codes are unique across the app.
 - `codeLength` is the length of generated codes, from 6 to 32: 8 by default.
 - `cookie` names the cookie that holds access grants, `better-apps-links` by default, and how long it lasts, in seconds:
   30 days by default. Its `domain` lets links on one host grant access on another under it, such as links on
@@ -147,9 +150,12 @@ shortLinks({
   10¹⁸ codes: a generated code is at least that long, whatever `codeLength` says, and a custom one, up to 51 characters,
   gets them after a `-`, as in `invoice-1042-k3j9x0a1bz7q`. A readable code alone, such as `invoice-1042`, would make
   the record as good as public.
-- Codes are unique across the app. A custom code that's taken returns `CONFLICT`. A code with a random part that
-  collides is replaced with another, up to three times, before `CONFLICT`. A collision is told apart from other failed
-  writes by reading the code back.
+- Codes are unique within their scope: the app's, which every link is in without `hosts`, or an organization's, for
+  links it makes on its domains, as [Codes on organizations' domains](#codes-on-organizations-domains) describes. A
+  custom code that's taken in the link's scope returns `CONFLICT`, which tells the caller nothing about other scopes'
+  codes. In an organization's scope, a code its own link has in the app's scope is taken too, since its domains open
+  that link for the code. A code with a random part is tried up to three times, with a new one each time it's taken,
+  before `CONFLICT`. A collision is told apart from other failed writes by reading the code back in the same scope.
 - A link's code never changes. A different code is a different link.
 
 ## URL targets
@@ -165,14 +171,16 @@ A link to a record can let anyone who has it see the record: `grantsView: true`,
 rule must allow for the person making the link. Access can't be turned on for an existing link, only off, since its code
 may not have the random part such a link needs.
 
-1. Opening such a link sets an HTTP-only cookie, `Secure` over HTTPS, with `SameSite=Lax`, that holds the code. The
-   cookie keeps the codes of the last 20 such links opened.
+1. Opening such a link sets an HTTP-only cookie, `Secure` over HTTPS, with `SameSite=Lax`. It holds the link's code and,
+   for a link in an organization's scope, the scope, as `code~scope` with the scope in base64url. The cookie keeps the
+   last 20 such links opened, or fewer when 20 would make it longer than 3,800 characters.
 2. The feature declares a core access grant (see [Access grants](#access-grants)). Core asks it once per check about
    every request in the check, such as one per live viewer. It reads their links by code, 90 codes to a query, or by
    record when the check names fewer records than that takes, and reads nothing when no checked subject type has
-   `grantView` on. It grants viewing a record to a request when a link in that request's cookie points to it, is turned
-   on, hasn't expired, its subject type's `grantView` isn't `false`, and the record's organization, looked up once per
-   record, is still the link's and owns it.
+   `grantView` on. A link counts only for a cookie entry with both its code and its scope, so `pricing-k3j9x0a1bz7q` in
+   one organization's scope never matches the same code in another's. It grants viewing a record to a request when a
+   link in that request's cookie points to it, is turned on, hasn't expired, its subject type's `grantView` isn't
+   `false`, and the record's organization, looked up once per record, is still the link's and owns it.
 3. Read checks that pass the request, such as `app.subjects.canView(actor, ref, { request })`, then allow the record,
    for signed-in people and signed-out visitors alike.
 
@@ -193,7 +201,7 @@ Whose access a link stands for depends on where it was made:
 - An organization's link stands for the organization and outlives the member who made it. A `canShare` or `grantView`
   check per record, such as an invoice's own "shareable" setting, runs when the link is made or turned back on, not on
   each request, so unsetting it doesn't end the access existing links give. The app ends it with
-  `update({ code, grantsView: false })` on those links, or `removeSubject`.
+  `update({ id, grantsView: false })` on those links, or `removeSubject`.
 
 The cookie only reaches the link's host, or every host under `cookie.domain`. Making a link that grants access fails
 with `INVALID_INPUT` when the record's page is on a host the cookie wouldn't reach from the host the link is shared on,
@@ -280,28 +288,34 @@ link's host wouldn't, such as when the page is on an organization's domain and t
   without it.
 - When a link sends the visitor on to another host, as a link that grants access can, that hop carries no code. The link
   on the next host adds it.
+- With `hosts`, a code is unique only within its scope, as
+  [Codes on organizations' domains](#codes-on-organizations-domains) describes. So two links to the same page, such as
+  an organization's link on its domain and a member's own on the app's host, can add the same code. The code labels the
+  visit with the link's code, not with one link.
 
 ## Opening a link
 
 `GET {path}/{code}`:
 
-1. With `hosts`, asks `resolve` whose links the request's host opens. A host that opens none gets `notFound` without
-   reading the link.
-2. Reads the link by code: one read through the unique index.
-3. A link that doesn't exist, is turned off, has expired, or isn't one the host opens gets `notFound`.
+1. With `hosts`, asks `resolve` whose links the request's host opens: the app's scope or an organization's. A host that
+   opens none gets `notFound` without reading the link. Without `hosts`, every host opens the app's scope.
+2. Reads the link by its code in that scope: one read through the unique index. On an organization's domain, a miss
+   reads the organization's own link with that code in the app's scope, as
+   [Which host opens which links](#which-host-opens-which-links) describes.
+3. A code neither read finds, or a link that's turned off or has expired, gets `notFound`.
 4. A record link's target is its subject type's `url`, for a subject type the feature still has. A URL link's is its
    URL.
 5. Answers `302 Found` with the target as `Location`, with the code added when `source` says so, and
    `Cache-Control: private, no-store`, so turning a link off or changing it takes effect at once. A link that grants
-   access also sets the cookie. With `hosts`, when that cookie couldn't reach the record from this host, it answers
-   `302 Found` to the same link where the cookie does reach it instead, without the cookie or a click: on `baseUrl` when
-   the cookie reaches the record from there, and on the record's host otherwise.
+   access also sets the cookie. With `hosts`, when that cookie couldn't reach the record from this host, it can answer
+   `302 Found` to the same link where the cookie does reach it instead, without the cookie or a click, as
+   [Links that grant access](#links-that-grant-access) describes.
 6. Records the click and writes the open's events after the response.
 
 ## Expiry and turning a link off
 
 - `expiresAt` must be later than now when set. `update` can change it or clear it with `null`.
-- `update({ code, enabled: false })` turns a link off and `enabled: true` turns it back on. A link that's off keeps its
+- `update({ id, enabled: false })` turns a link off and `enabled: true` turns it back on. A link that's off keeps its
   code, owner and counts.
 - An expired or turned-off link opens nothing and grants nothing. Both still show in lists, so their managers can turn
   them on again or extend them.
@@ -312,7 +326,8 @@ link's host wouldn't, such as when the page is on an organization's domain and t
 
 - `create({ target, code?, owner?, grantsView?, expiresAt? })`, where `target` is `{ url }` or
   `{ subjectType, subjectId }`, returns the new link.
-- `get({ code })` returns one link.
+- `get({ id })` returns one link. The actions that manage a link take its `id`, since a code is only unique within its
+  scope, so one person can manage two links with the same code.
 - `list({ subjectType?, subjectId?, owner?, sort?, cursor?, limit? })` pages through links newest first, 20 by default,
   up to 50: a record's links, or every link, that the caller manages. Those are the links made in their current
   organization that they manage, and their own made outside any, such as before they joined one. `owner` narrows it to
@@ -320,9 +335,9 @@ link's host wouldn't, such as when the page is on an organization's domain and t
   newest, such as for top links. Clicks keep coming while someone pages, so a link can move between pages, and a cursor
   works only with the order it came from. No index covers this order, so the database sorts the caller's links for each
   page, which suits the hundreds of links an organization has, not millions.
-- `update({ code, url?, grantsView?, enabled?, expiresAt? })` changes a link and returns it. `grantsView` only takes
+- `update({ id, url?, grantsView?, enabled?, expiresAt? })` changes a link and returns it. `grantsView` only takes
   `false`.
-- `remove({ code })` removes a link and returns `{ removed }`.
+- `remove({ id })` removes a link and returns `{ removed }`.
 - `removeSubject({ subjectType, subjectId })`, server only, removes a record's links in one statement and returns
   `{ removed }`.
 - `removeOwner({ owner: { type, id } })`, server only, removes a person's or an organization's links in one statement
@@ -332,13 +347,16 @@ link's host wouldn't, such as when the page is on an organization's domain and t
 - `recordClicks({ id, at })`, server only, records clicks at given times and returns the link, as
   [Recorded clicks](#recorded-clicks) describes.
 
-Each link comes back as a `ShortLink`: its `code`, its `shortUrl`, its `owner` as `{ type, id }`, `orgId`, `createdBy`,
-its `target`, `grantsView`, `enabled`, `expiresAt`, `clicks`, `lastClickedAt`, `createdAt` and `updatedAt`. `shortUrl`
-is `baseUrl`, or the request's origin, followed by the path and code. For server code with neither, it's the path alone.
+Each link comes back as a `ShortLink`: its `id`, `code`, `shortUrl`, its `owner` as `{ type, id }`, `orgId`,
+`createdBy`, its `target`, `grantsView`, `enabled`, `expiresAt`, `clicks`, `lastClickedAt`, `createdAt` and `updatedAt`.
+`shortUrl` is `baseUrl`, or the request's origin, followed by the path and code. For server code with neither, it's the
+path alone. With `hosts`, it's on a host that opens the link, as [Short URLs](#short-urls) describes, and `null` for a
+link in an organization's scope while `hosts.origin` returns `null` for the organization, or while the cookie wouldn't
+reach the record the link grants access to from the host `origin` gives.
 
 Errors are `ShortLinksError`s: `UNAUTHENTICATED`, `FORBIDDEN` when a rule refuses, `NOT_FOUND` for links and records the
 caller can't see or manage, `INVALID_INPUT` for a code, URL, target, owner or expiry that isn't allowed, and `CONFLICT`
-for a code that's taken.
+for a code that's taken in the link's scope.
 
 ## Events
 
@@ -367,9 +385,9 @@ reading the visitor would cost a lookup on every open.
   cookie emits only `link.clicked`.
 - `link.notFound` is a code that didn't open on a host that opens links. It carries the `host`, `orgId`, the
   organization whose domain the host is, or `null` for the app's own host, the `code` as the visitor gave it, up to 64
-  characters, and `requestedAt`. It's the same whether the code is unknown, turned off, expired, another organization's,
-  or a record link of a subject type the feature no longer has, so it says nothing about whose code it is or whether
-  it's a link on another host. A host that opens no links emits nothing.
+  characters, and `requestedAt`. It's the same whether the code is unknown, turned off, expired, in another scope, or a
+  record link of a subject type the feature no longer has, so it says nothing about whose code it is or whether it's a
+  link on another host. A host that opens no links emits nothing.
 
 `expiry.scheduled` is short links' own event, which they subscribe to. Subscribers to `link.expired` don't need it.
 
@@ -381,10 +399,10 @@ Events nobody subscribes to aren't written, as with every feature.
 - `link.clicked` is emitted for every open by default. `events.clickRate` samples them instead: at 0.1, about 1 open in
   10 emits it. Each event carries `sampleRate`, so a subscriber estimates opens as events divided by `sampleRate`. Exact
   totals stay in `clicks`. Sampling needs no storage or scheduled job, which batching clicks into one event would.
-- An open's events go in the batch that counts its click. On D1, an open is one read before the response, then one batch
-  after it, and each delivered event adds two statements, one to claim it and one to remove it, besides what its
-  subscribers do. That's well under D1's limit of 50 queries a request. Event rows go in one insert, split to stay under
-  100 bound parameters a statement.
+- An open's events go in the batch that counts its click. On D1, an open is one read before the response, or two on an
+  organization's domain when the first misses, then one batch after it, and each delivered event adds two statements,
+  one to claim it and one to remove it, besides what its subscribers do. That's well under D1's limit of 50 queries a
+  request. Event rows go in one insert, split to stay under 100 bound parameters a statement.
 - `link.granted` is emitted once per visitor and link, until their cookie forgets it, after 30 days by default or 20
   newer links.
 - `link.notFound` is limited to `events.notFoundPerMinute` a host each minute, 10 by default. It's counted in memory, so
@@ -435,23 +453,52 @@ linkHosts.connect(app.api.domains)
 `hosts` needs `baseUrl`, the app's own origin, which `resolve` calls `"app"`. An action can be called from an
 organization's domain, and the request's origin there doesn't open everyone's links.
 
+### Codes on organizations' domains
+
+On the app's own host, codes are unique across the app, so `/s/pricing` there is one link. An organization with a ready
+domain has codes of its own on it: once Acme's domain is ready, the links Acme makes are shared there, and their codes
+only need to be unique among Acme's. Globex can have `pricing` on its own domain at the same time. No two organizations
+share a domain, so `/s/pricing` is still one link on each host. An organization's domains, such as a subdomain and one
+of its own, share its codes.
+
+A link's scope is set when it's made and never changes:
+
+- An organization's own link, made while `origin` returns the organization's domain, is in the organization's scope,
+  unless it grants access to a record the cookie wouldn't reach from that domain. Its `scope` is the organization's id.
+- Every other link is in the app's scope: a member's own links, links made outside any organization, an organization's
+  links made before its domain was ready, and links that grant access from the app's host. Its `scope` is `""`.
+
+So a domain appearing or going away never moves a link, and a host opens one link at most for a code:
+
+- When an organization's domain becomes ready, its links made before then keep their codes and their short URLs on the
+  app's host, which still opens them. Its domains open them too, for a code its own codes don't have, so a link that
+  sends visitors on to a record now on the domain keeps working. New links go on the domain, with codes those older
+  links don't have.
+- When `origin` returns `null` for an organization, such as when it has no ready domain left, the links in its scope
+  open only on whichever domains `resolve` still gives it, and their `shortUrl` is `null` until `origin` names a domain
+  again. The app's host never opens them, since another organization's link, or one in the app's scope, may have the
+  same code. New links go in the app's scope meanwhile.
+- A hostname that passes to another organization, such as a released subdomain someone else takes, opens the new
+  holder's codes from then on. A short URL the old holder shared there opens the new holder's link with that code, if it
+  has one, and nothing otherwise.
+
 ### Which host opens which links
 
 `resolve({ hostname, request })` runs for each link opened. `hostname` is the request URL's, lowercase and without its
 port or a trailing dot, so `Links.Acme.com.:443` is `links.acme.com`. Headers such as `X-Forwarded-Host` play no part.
 It returns:
 
-- `"app"`: the app's own host, which opens every link, such as ones shared before the organization had a domain.
-- `{ orgId }`: a domain the organization verified, which opens only the links that organization owns. A link a member
-  owns, even one made in the organization, stays on the app's host, and so does every link made outside any
-  organization.
+- `"app"`: the app's own host, which opens the links in the app's scope.
+- `{ orgId }`: a domain the organization verified, which opens the links in that organization's scope. For a code its
+  scope doesn't have, it also opens the organization's own link with that code in the app's scope, such as one made
+  before the domain was ready, with a second read only on that miss. Members' links and other organizations' never open
+  there.
 - `null`: any other host, such as a domain that's pending or failed, or one the app has never heard of. It opens none,
   and the link isn't read.
 
-A link the host doesn't open answers as a missing one does, through `notFound`, which isn't told why. So
-`links.acme.com` never opens Globex's links and gives nothing away about which codes Globex has when they're opened.
-Codes stay unique across the app, so a code means the same link on every host that opens it, and opening one is still
-one read.
+Opening a link is one read of its code in the host's scope, and on a domain a second only when the first misses. A code
+the host doesn't open answers as a missing link does, through `notFound`, which isn't told why. So `links.acme.com`
+never opens Globex's links and gives nothing away about which codes Globex has.
 
 An app without organizations, such as one whose workspace has its own domains, can return `"app"` for its workspace's
 ready domains, so they open every link. `domainHosts` does.
@@ -465,12 +512,23 @@ route at `path`, every host already reaches the link route.
 
 ### Short URLs
 
-`origin({ orgId })` gives the origin of an organization's short URLs, such as `https://links.acme.com`, or `null` for
-`baseUrl`. Links made outside any organization ask with `orgId` `null`. A person's own links made in an organization
-always use `baseUrl` without asking, since only the app's host opens them. It runs once per organization in a call, so
-`list` asks once for a page of one organization's links. It should name a host that opens the organization's links: its
-domain, or a host `resolve` calls `"app"`. An app's share dialog, and anything else that shows `shortUrl`, then shows
-the organization's primary domain once it's ready, and the app's host before then.
+`origin({ orgId })` gives the origin of an organization's ready domain, such as `https://links.acme.com`, or `null` for
+none. It decides which links go in the organization's scope: `create` asks `resolve` about its host, once per
+organization in a call, and makes the link in the organization's scope only when `resolve` gives the organization that
+host. Otherwise, such as for an origin on one of the app's hosts, the link goes in the app's scope. Links made outside
+any organization ask with `orgId` `null`, for a host `resolve` calls `"app"`, or `null` for `baseUrl`. It runs once per
+organization in a call, so `list` asks once for a page of one organization's links.
+
+- A link in an organization's scope is shared on the domain `origin` gives, such as the organization's primary one.
+  While `origin` returns `null`, its `shortUrl` is `null`. So is that of such a link that grants access while the cookie
+  wouldn't reach its record from that domain, such as after `origin` moves from a subdomain under `cookie.domain` to one
+  of the organization's own domains. No other host would grant the access.
+- A link made outside any organization is shared on `origin({ orgId: null })` when it returns a host, and on `baseUrl`
+  otherwise.
+- Every other link is in the app's scope and shared on `baseUrl`.
+
+An app's share dialog, and anything else that shows `shortUrl`, then shows the organization's domain for links made
+since it was ready, and the app's host for links made before.
 
 ### Links that grant access
 
@@ -479,25 +537,30 @@ The grant cookie is set on the host that opens the link, and browsers only send 
 since browsers drop a cookie for a domain that doesn't cover the host setting it.
 
 - A subdomain such as `acme.yourapp.com`, with records on `app.yourapp.com`, works with
-  `cookie: { domain: "yourapp.com" }`: the link is shared on the subdomain and grants access on the app's host.
+  `cookie: { domain: "yourapp.com" }`: the link is made in the organization's scope, shared on the subdomain, and grants
+  access on the app's host.
 - A domain of the organization's own, such as `links.acme.com`, can't share a cookie with `app.yourapp.com`. A link that
-  grants access to a record there keeps its short URL on the app's host. Opened on the domain anyway, it sends the
-  visitor to the same link on `baseUrl`, which opens every link, when the cookie reaches the record from there, and on
-  the record's host otherwise. That host sets the cookie and counts the click. It's never the one the link was opened
-  on, so a link sends a visitor on once at most. The record's host only opens the link when `resolve` says it does.
-- A record the domain serves itself is reached from the domain, so such links are shared there. That's a record whose
-  `url` returns a path the app serves on every host, or an absolute URL on the domain, such as a white-label app's
-  `https://billing.acme.com/invoices/1` with `origin` returning `https://billing.acme.com`.
+  grants access to a record there is made in the app's scope and shared on the app's host.
+- A record the domain serves itself is reached from the domain, so such links are made in the organization's scope and
+  shared there. That's a record whose `url` returns a path the app serves on every host, or an absolute URL on the
+  domain, such as a white-label app's `https://billing.acme.com/invoices/1` with `origin` returning
+  `https://billing.acme.com`.
 - A record that neither the organization's domain nor `baseUrl` reaches can't have a link that grants access: `create`
   refuses it with `INVALID_INPUT`.
 
+A link opened on a host whose cookie wouldn't reach the record sends the visitor on to the same link where it does,
+without the cookie or a click. That host sets the cookie and counts the click. It's never the one the link was opened
+on, so a link sends a visitor on once at most.
+
+- A link in the app's scope goes to `baseUrl` when the cookie reaches the record from there, and to the record's host
+  otherwise. The record's host opens the link when `resolve` calls it the app's, or when it's a domain of the
+  organization that owns the link.
+- A link in an organization's scope goes to the domain `origin` gives when the cookie reaches the record from there,
+  such as from one of its own domains to its subdomain. Otherwise it opens where it is, and its cookie doesn't reach the
+  record.
+
 Writing the short URL of a link that grants access asks the record's `url`, to see which host reaches it. It's asked
 once per record in a call, so `list` asks once per record on the page, however many of its links there are.
-
-### Known limits
-
-- Codes are unique across the app, not per domain. Two organizations can't both have a custom code such as `pricing`,
-  and the second to ask gets `CONFLICT`, which tells it the code is taken.
 
 ## Core support
 

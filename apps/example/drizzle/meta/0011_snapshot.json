@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "d662cbfa-8c14-4eef-a848-6e8a04c7ddd7",
+  "id": "7188e9ae-38d0-48d8-b513-5060cdb1c30a",
   "prevId": "593a003e-00ee-4399-8465-7e08f768ac04",
   "tables": {
     "invoice": {
@@ -1536,6 +1536,14 @@
           "notNull": true,
           "autoincrement": false
         },
+        "scope": {
+          "name": "scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
         "owner": {
           "name": "owner",
           "type": "text",
@@ -1602,13 +1610,6 @@
           "notNull": false,
           "autoincrement": false
         },
-        "expiry_token": {
-          "name": "expiry_token",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "clicks": {
           "name": "clicks",
           "type": "integer",
@@ -1640,9 +1641,9 @@
         }
       },
       "indexes": {
-        "short_link_code_unique": {
-          "name": "short_link_code_unique",
-          "columns": ["code"],
+        "short_link_code": {
+          "name": "short_link_code",
+          "columns": ["code", "scope"],
           "isUnique": true
         },
         "short_link_by_owner": {

@@ -65,7 +65,7 @@ describe("link.clicked", () => {
     expect((await openOn(t, "app.test", link.code, { method: "HEAD" })).status).toBe(302)
     expect(await openOn(t, "app.test", "missing1", { method: "HEAD" })).toHaveProperty("status", 404)
     expect(t.events()).toHaveLength(delivered)
-    expect((await t.api.get({ code: link.code }, t.as("ada"))).clicks).toBe(1)
+    expect((await t.api.get({ id: link.id }, t.as("ada"))).clicks).toBe(1)
   })
 
   it("carries the visitor's country from Cloudflare and the site they came from, without the page", async () => {
@@ -94,7 +94,7 @@ describe("link.clicked", () => {
     await openOn(none, "app.test", link.code)
     await openOn(none, "app.test", link.code)
     expect(none.events("link.clicked")).toEqual([])
-    expect((await none.api.get({ code: link.code }, none.as("ada"))).clicks).toBe(2)
+    expect((await none.api.get({ id: link.id }, none.as("ada"))).clicks).toBe(2)
 
     const some = setup({ events: { clickRate: 0.25 } })
     const sampled = await some.api.create({ target: docs }, some.as("ada"))
@@ -107,7 +107,7 @@ describe("link.clicked", () => {
       expect.objectContaining({ sampleRate: 0.25 }),
       expect.objectContaining({ sampleRate: 0.25 })
     ])
-    expect((await some.api.get({ code: sampled.code }, some.as("ada"))).clicks).toBe(4)
+    expect((await some.api.get({ id: sampled.id }, some.as("ada"))).clicks).toBe(4)
   })
 
   it("says when a link that grants access sent the visitor on to another host, which counts the click", async () => {
@@ -128,7 +128,7 @@ describe("link.clicked", () => {
       expect.objectContaining({ host: "links.acme.test", outcome: "hopped", forwardedTo: "app.test" }),
       expect.objectContaining({ host: "app.test", outcome: "granted", forwardedTo: null })
     ])
-    expect((await t.api.get({ code: link.code }, t.as("ada"))).clicks).toBe(1)
+    expect((await t.api.get({ id: link.id }, t.as("ada"))).clicks).toBe(1)
     // Only the counted open writes a click row, so the rows match the count.
     expect(t.database.sqlite.prepare(`SELECT "linkId" FROM "shortLinkClick"`).all()).toHaveLength(1)
   })
@@ -162,7 +162,7 @@ describe("link.notFound", () => {
   it("is the same for unknown, turned off and expired codes, and says nothing about the link", async () => {
     const t = setup()
     const off = await t.api.create({ target: docs }, t.as("ada"))
-    await t.api.update({ code: off.code, enabled: false }, t.as("ada"))
+    await t.api.update({ id: off.id, enabled: false }, t.as("ada"))
     const expired = await t.api.create({ target: docs, expiresAt: new Date(Date.now() + hour) }, t.as("ada"))
     t.database.sqlite.prepare("UPDATE shortLink SET expiresAt = ? WHERE code = ?").run(Date.now() - 1000, expired.code)
     for (const code of ["missing1", off.code, expired.code]) {
@@ -233,7 +233,7 @@ describe("link.milestone", () => {
     for (const { clicks, link: shown } of reached) {
       expect(shown).toMatchObject({ id: link.id, clicks, shortUrl: `https://app.test/s/${link.code}` })
     }
-    expect((await t.api.get({ code: link.code }, t.as("ada"))).clicks).toBe(8)
+    expect((await t.api.get({ id: link.id }, t.as("ada"))).clicks).toBe(8)
   })
 
   it("defaults to 1, 10, 100, 1,000 and 10,000 clicks, and an empty list emits none", async () => {
@@ -291,28 +291,28 @@ describe("link.expired", () => {
 
   it("follows a changed expiry, and the old one does nothing", async () => {
     const { t, link, at, runAt, start } = await expiring()
-    await t.api.update({ code: link.code, expiresAt: at(3) }, t.as("ada"))
+    await t.api.update({ id: link.id, expiresAt: at(3) }, t.as("ada"))
     expect(await runAt(later(start, 2))).toEqual([])
     expect(await runAt(later(start, 3))).toEqual([link.code])
 
     // Moved and moved back, it still expires once.
     const back = await expiring()
-    await back.t.api.update({ code: back.link.code, expiresAt: back.at(2) }, back.t.as("ada"))
-    await back.t.api.update({ code: back.link.code, expiresAt: back.at(1) }, back.t.as("ada"))
+    await back.t.api.update({ id: back.link.id, expiresAt: back.at(2) }, back.t.as("ada"))
+    await back.t.api.update({ id: back.link.id, expiresAt: back.at(1) }, back.t.as("ada"))
     expect(await back.runAt(later(back.start, 3))).toEqual([back.link.code])
   })
 
   it("isn't emitted once the expiry is cleared or the link removed, and a link turned off still expires", async () => {
     const cleared = await expiring()
-    await cleared.t.api.update({ code: cleared.link.code, expiresAt: null }, cleared.t.as("ada"))
+    await cleared.t.api.update({ id: cleared.link.id, expiresAt: null }, cleared.t.as("ada"))
     expect(await cleared.runAt(later(cleared.start, 2))).toEqual([])
 
     const removed = await expiring()
-    await removed.t.api.remove({ code: removed.link.code }, removed.t.as("ada"))
+    await removed.t.api.remove({ id: removed.link.id }, removed.t.as("ada"))
     expect(await removed.runAt(later(removed.start, 2))).toEqual([])
 
     const off = await expiring()
-    await off.t.api.update({ code: off.link.code, enabled: false }, off.t.as("ada"))
+    await off.t.api.update({ id: off.link.id, enabled: false }, off.t.as("ada"))
     expect(await off.runAt(later(off.start, 2))).toEqual([off.link.code])
   })
 

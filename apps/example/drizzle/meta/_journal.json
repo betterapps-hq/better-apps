@@ -82,8 +82,15 @@
     {
       "idx": 11,
       "version": "6",
-      "when": 1794315763312,
-      "tag": "0011_short_link_expiry",
+      "when": 1794315806146,
+      "tag": "0011_short_link_scopes",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1794335111819,
+      "tag": "0012_short_link_expiry",
       "breakpoints": true
     }
   ]
