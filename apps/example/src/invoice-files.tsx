@@ -5,7 +5,7 @@ import {
   type AttachedFile,
   type AttachmentSettings
 } from "@better-apps/attachments/react"
-import type { FileInfo } from "@better-apps/uploadcn"
+import { isUnderWay, type FileInfo } from "@better-apps/uploadcn"
 import { useAttachmentsUploader, useDraftUploader } from "@better-apps/uploadcn/react"
 import {
   Attachment,
@@ -135,15 +135,15 @@ const uploadMessages: Partial<UploadMessages> = {
 
 /**
  * What every upload root here takes. A root says it's busy while files upload, and screen readers may hold back what a
- * live region inside a busy element says, so these never do. Each upload in a list says it's busy itself.
+ * live region inside a busy element says, so these never do. Each upload in a list says it's busy itself. A root with
+ * one place left would take a single file and replace what's queued, so these always take several, and UploadCN
+ * refuses those past the limit.
  */
-const rootProps = { messages: uploadMessages, "aria-busy": false } as const
+const rootProps = { messages: uploadMessages, "aria-busy": false, multiple: true } as const
 
 /** Uploads that take one of a record's places: all but those refused or stopped. */
 const placesTaken = (state: UploaderState<FileInfo>) =>
   state.items.filter((item) => item.status !== "rejected" && item.status !== "cancelled").length
-
-const underWay = new Set<UploadStatus>(["validating", "queued", "uploading", "processing", "scanning"])
 
 const cardStates = {
   idle: "idle",
@@ -188,7 +188,7 @@ function UploadIcon({ item }: { item: UploadItem }) {
   if (item.status === "error" || item.status === "rejected") {
     return <TriangleAlertIcon />
   }
-  if (!underWay.has(item.status)) {
+  if (!isUnderWay(item)) {
     return item.type.startsWith("image/") ? <FileIcon /> : <FileTextIcon />
   }
   return <Spinner />
@@ -393,7 +393,7 @@ export function FilesPanel({ invoiceId }: { invoiceId: string }) {
   )
 
   function letGo(item: UploadItem) {
-    if (underWay.has(item.status)) {
+    if (isUnderWay(item)) {
       announce(`Stopped uploading ${item.name}`)
     }
     // The upload's buttons go with it, so focus moves to what stays.
@@ -469,7 +469,7 @@ export function FilesPanel({ invoiceId }: { invoiceId: string }) {
         )}
         <UploadRows
           label="Uploads"
-          removeLabel={(item) => (underWay.has(item.status) ? `Stop uploading ${item.name}` : `Dismiss ${item.name}`)}
+          removeLabel={(item) => (isUnderWay(item) ? `Stop uploading ${item.name}` : `Dismiss ${item.name}`)}
           onRemove={letGo}
         />
         {state === "loading" && files.length === 0 && (

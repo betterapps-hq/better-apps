@@ -89,6 +89,25 @@ describe("useDraftUploader", () => {
     await waitFor(() => expect(liveFiles()).toBe(0))
   })
 
+  it("keeps drafts picked while the record saved, for the next one", async () => {
+    const { wrapper, options, liveFiles, holdAnswer } = rendered()
+    const { result } = renderHook(() => useDraftUploader("comment", options), { wrapper })
+    await act(() => result.current.uploader.add([pick("one", "one.txt")]))
+    await waitFor(() => expect(result.current.busy).toBe(false))
+    const release = holdAnswer("attach")
+    let attaching: Promise<void> = Promise.resolve()
+    act(() => {
+      attaching = result.current.attachTo("c-1")
+    })
+    await act(() => result.current.uploader.add([pick("two", "two.txt")]))
+    await waitFor(() => expect(result.current.busy).toBe(false))
+    release()
+    await act(() => attaching)
+    expect(result.current.uploader.getState().items.map((item) => item.name)).toEqual(["two.txt"])
+    await pause()
+    expect(liveFiles()).toBe(2)
+  })
+
   it("leaves nothing to attach when no draft finished, and takes as many drafts as the record does", async () => {
     const { wrapper, options, calls } = rendered()
     const { result } = renderHook(() => useDraftUploader("invoice", options), { wrapper })

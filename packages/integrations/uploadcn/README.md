@@ -18,7 +18,7 @@ import { Upload } from "@uploadcn/react"
 function InvoiceFiles({ invoiceId }: { invoiceId: string }) {
   const uploader = useAttachmentsUploader({ subjectType: "invoice", subjectId: invoiceId })
   return (
-    <Upload.Root uploader={uploader}>
+    <Upload.Root uploader={uploader} multiple>
       <Upload.Trigger>Add files</Upload.Trigger>
       <Upload.List>
         <Upload.Item>
@@ -65,8 +65,8 @@ It only takes the subject types of the client's app.
   check them. The file's `FileInfo` becomes the item's `result`.
 - `uploadLimits(settings, { existing })` gives UploadCN the subject type's media types, which also limit the file
   picker, its size limit, and the places left on a record that holds `existing` files. The hooks keep these current as
-  the settings load and the record's list changes. Drafts get all of their record's places, and files on their own get
-  no count.
+  the settings load and the record's list changes. A record whose list hasn't loaded and drafts get all of their
+  record's places, and files on their own get no count.
 - Failures are UploadCN errors with attachments' message, and attachments' code in `details.code`:
   - A refusal that won't change, such as a type the record doesn't take, is `rejected` and never retried.
   - A full record or too many drafts fail without an automatic retry, so they can be tried again by hand once there's
@@ -75,15 +75,19 @@ It only takes the subject types of the client's app.
     hand.
 - An attempt after a failure keeps the prepared upload in the item's resume state, unless its address closes within 30
   seconds, and doesn't send bytes that already arrived. A send that storage refuses, such as to an address that expired,
-  starts over with a new address, and the old pending file is deleted.
+  starts over with a new address, and the old pending file is deleted. A finish the server refuses deletes the pending
+  file, so trying again by hand starts over, and one it found gone, such as after the sweep, starts over at once.
 - Cancelling or removing an unfinished upload deletes its file, and takes it off its record first when its bytes got
-  there.
+  there. A file the server prepared just as its upload stopped is deleted too.
 - `useAttachmentsUploader(target, options)` returns an UploadCN uploader. Options go to UploadCN's `useUploader` and win
   over the limits. On a record, a finished upload leaves the queue once it's on the record's list. Drafts and files on
   their own stay in the queue.
 - `useDraftUploader(subjectType, options)` returns `{ uploader, busy, attachTo, clear }`. `attachTo(subjectId)` puts the
-  drafts that finished on the saved record, then empties the queue. `clear()` empties it. Removing a draft that finished
-  deletes it, so it doesn't wait for the sweep.
+  drafts that finished on the saved record, then takes every draft the queue held off it. Drafts picked meanwhile stay.
+  `clear()` empties the queue. Removing a draft that finished deletes it, so it doesn't wait for the sweep.
+- Pass `multiple` to `Upload.Root`. Without it, a root takes a single file when one place is left, and a pick replaces
+  every upload in the queue, stopping those under way.
+- `isUnderWay(item)` says whether an upload is still checked, waiting, sending or being processed.
 - UploadCN's own checks, such as for a file that's too large, use UploadCN's wording, which its options don't change.
   `Upload.Root`'s `messages` change its status labels, announcements and action labels.
 

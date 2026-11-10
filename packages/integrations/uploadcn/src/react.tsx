@@ -6,7 +6,7 @@ import { useStore } from "@better-apps/react"
 import type { Transport, Uploader } from "@uploadcn/core"
 import { useUploader, useUploadSelector, type UseUploaderOptions } from "@uploadcn/react"
 import { useCallback, useEffect, useMemo, useRef } from "react"
-import { attachmentsAdapter, uploadLimits } from "./index.js"
+import { attachmentsAdapter, isUnderWay, uploadLimits } from "./index.js"
 
 export interface AttachmentsUploaderOptions extends Omit<UseUploaderOptions<FileInfo>, "adapter"> {
   /** Sends a file's bytes, as `attachmentsAdapter` takes it. */
@@ -31,8 +31,9 @@ export function useAttachmentsUploader<Types extends AttachmentsTypes = Attachme
   const owner = "owner" in target ? target.owner : undefined
   const key = subjectType !== undefined && subjectId !== undefined ? subjectKey(subjectType, subjectId) : null
   const existing = useStore(client.store, (state) => {
+    // A record whose list hasn't loaded gets all its places until it does, which the server still checks.
     if (key !== null) {
-      return state.subjects[key]?.files.length
+      return state.subjects[key]?.files.length ?? 0
     }
     // Drafts go on a record that doesn't exist yet, so it has no files. Files on their own have no record to fill.
     return subjectType === undefined ? undefined : 0
@@ -59,7 +60,10 @@ export interface DraftUploader {
   uploader: Uploader<FileInfo>
   /** Whether a draft is still uploading, so its record shouldn't be saved yet. */
   busy: boolean
-  /** Puts the drafts that finished on the saved record, then empties the queue. */
+  /**
+   * Puts the drafts that finished on the saved record, then takes every draft the queue held off it. Drafts picked
+   * meanwhile stay.
+   */
   attachTo(subjectId: string): Promise<void>
   /** Empties the queue: drafts that finished are deleted, and those still uploading stop. */
   clear(): void
@@ -87,12 +91,11 @@ export function useDraftUploader<Types extends AttachmentsTypes = AttachmentsTyp
       }),
     [client, uploader]
   )
-  const busy = useUploadSelector(uploader, (state) =>
-    state.items.some((item) => ["validating", "queued", "uploading", "processing", "scanning"].includes(item.status))
-  )
+  const busy = useUploadSelector(uploader, (state) => state.items.some(isUnderWay))
   const attachTo = useCallback(
     async (subjectId: string) => {
-      const done = uploader.getState().items.filter((item) => item.status === "success" && item.result)
+      const { items } = uploader.getState()
+      const done = items.filter((item) => item.status === "success" && item.result)
       if (done.length > 0) {
         await client.attach(
           { subjectType, subjectId },
@@ -102,7 +105,8 @@ export function useDraftUploader<Types extends AttachmentsTypes = AttachmentsTyp
       for (const item of done) {
         attached.current.add(item.id)
       }
-      uploader.remove()
+      // Drafts picked while the record saved stay, for the next one.
+      uploader.remove(items.map((item) => item.id))
     },
     [client, subjectType, uploader]
   )

@@ -68,6 +68,9 @@ export interface AttachmentsUploads<SubjectType extends string = string> {
 export { FileInfo }
 
 // @public
+export function isUnderWay(item: Pick<UploadItem, "status">): boolean;
+
+// @public
 export function uploadErrorOf(error: unknown): UploadError;
 
 // @public

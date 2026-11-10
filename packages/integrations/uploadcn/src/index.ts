@@ -11,6 +11,7 @@ import {
   type TransportResponse,
   type UploadAdapter,
   type UploadItem,
+  type UploadStatus,
   type ValidationOptions
 } from "@uploadcn/core"
 import { BetterAppsClientError } from "better-apps/client"
@@ -51,15 +52,27 @@ export interface AttachmentsAdapterOptions {
 const renewEarlyMs = 30_000
 
 // Refusals a second try won't change. A full record or too many drafts may free up, so those can be tried again by hand.
-const refusals = new Set(["INVALID_INPUT", "PAYLOAD_TOO_LARGE", "FORBIDDEN", "NOT_FOUND", "UNAUTHORIZED"])
+const refusals = new Set(["INVALID_INPUT", "PAYLOAD_TOO_LARGE", "FORBIDDEN", "NOT_FOUND", "UNAUTHENTICATED"])
 
 function isResumeState(value: unknown): value is AttachmentsResumeState {
+  const state = value as Partial<AttachmentsResumeState> | null
   return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as AttachmentsResumeState).fileId === "string" &&
-    typeof (value as AttachmentsResumeState).url === "string"
+    typeof state === "object" &&
+    state !== null &&
+    typeof state.fileId === "string" &&
+    typeof state.url === "string" &&
+    typeof state.expiresAt === "number" &&
+    typeof state.sent === "boolean" &&
+    typeof state.target === "object" &&
+    state.target !== null
   )
+}
+
+const underWay = new Set<UploadStatus>(["validating", "queued", "uploading", "processing", "scanning"])
+
+/** Whether an upload is still under way: checked, waiting, sending or being processed. */
+export function isUnderWay(item: Pick<UploadItem, "status">): boolean {
+  return underWay.has(item.status)
 }
 
 /**
@@ -87,6 +100,15 @@ export function uploadErrorOf(error: unknown): UploadError {
   }
   const retryable = error.code === "CONFLICT" || error.status === 429 || error.status >= 500
   return new UploadError(error.message, { ...options, code: "http", retryable })
+}
+
+/** Cleans up without failing: what's being deleted may be gone already, and the sweep deletes what's left. */
+async function quietly(cleanup: Promise<unknown>): Promise<void> {
+  try {
+    await cleanup
+  } catch {
+    // Nothing to do.
+  }
 }
 
 /** Whether a failed send's address is no use for another attempt, such as one that expired or was refused. */
@@ -133,7 +155,7 @@ export function attachmentsAdapter<SubjectType extends string = string>(
       // A prepared upload that's no use is prepared again, so its pending file goes now rather than at the sweep.
       const drop = ({ fileId }: AttachmentsResumeState) => {
         saveResumeState(null)
-        client.deleteFile(fileId).catch(() => undefined)
+        void quietly(client.deleteFile(fileId))
       }
       let state = isResumeState(resumeState) ? resumeState : null
       if (state && !state.sent && state.expiresAt - Date.now() < renewEarlyMs) {
@@ -142,7 +164,13 @@ export function attachmentsAdapter<SubjectType extends string = string>(
       }
       try {
         if (!state) {
-          const prepared = await client.prepareUpload(file, targetOf(item), { name: item.name, signal })
+          // Preparing isn't stopped midway, so a file the server made for an upload stopped meanwhile is known and
+          // deleted. UploadCN keeps no state after a stop, so `abort` couldn't.
+          const prepared = await client.prepareUpload(file, targetOf(item), { name: item.name })
+          if (signal.aborted) {
+            void quietly(client.deleteFile(prepared.file.id))
+            throw abortError(signal.reason)
+          }
           state = {
             fileId: prepared.file.id,
             url: prepared.upload.url,
@@ -177,12 +205,29 @@ export function attachmentsAdapter<SubjectType extends string = string>(
           { signal }
         )
       } catch (error) {
-        const failure = uploadErrorOf(error)
-        // An upload that expired, or bytes that didn't arrive, start over with a new address.
-        if (state && error instanceof BetterAppsClientError && error.code === "CONFLICT") {
-          drop(state)
+        if (!state || !(error instanceof BetterAppsClientError)) {
+          throw uploadErrorOf(error)
         }
-        throw failure
+        // An upload that expired, or bytes that didn't arrive, start over with a new address.
+        if (error.code === "CONFLICT") {
+          drop(state)
+          throw uploadErrorOf(error)
+        }
+        // A finish the server refused leaves nothing to finish, so the pending file goes and trying again by hand starts
+        // over. One the server found gone, such as after the sweep, starts over at once.
+        if (state.sent && error.status >= 400 && error.status < 500 && error.status !== 429) {
+          drop(state)
+          if (error.code === "NOT_FOUND") {
+            throw new UploadError(error.message, {
+              code: "http",
+              status: error.status,
+              retryable: true,
+              details: { code: error.code },
+              cause: error
+            })
+          }
+        }
+        throw uploadErrorOf(error)
       }
     },
     async abort({ resumeState }) {
@@ -193,9 +238,9 @@ export function attachmentsAdapter<SubjectType extends string = string>(
       // Bytes that arrived may have put the file on its record before the upload stopped.
       if (sent && target.subjectType !== undefined && target.subjectId !== undefined) {
         const subject = { subjectType: target.subjectType as SubjectType, subjectId: target.subjectId }
-        await client.detach(subject, fileId).catch(() => undefined)
+        await quietly(client.detach(subject, fileId))
       }
-      await client.deleteFile(fileId).catch(() => undefined)
+      await quietly(client.deleteFile(fileId))
     }
   }
 }

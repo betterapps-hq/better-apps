@@ -6,6 +6,7 @@ import { describe, expect, it } from "vite-plus/test"
 import { inv1, pick, setup } from "../test/app.js"
 import {
   attachmentsAdapter,
+  isUnderWay,
   uploadErrorOf,
   uploadLimits,
   type AttachmentsResumeState,
@@ -148,6 +149,74 @@ describe("attachmentsAdapter", () => {
     expect(item?.error?.message).toMatch(/up to 1/)
   })
 
+  it("starts over by hand after the server refused the finish, which deleted the pending file", async () => {
+    const view = setup()
+    view.failCalls("completeUpload", 400, { code: "LIMIT_EXCEEDED" })
+    const uploader = uploaderFor(view, inv1)
+    await uploader.add([pick("hello")])
+    const [failed] = await settled(uploader)
+    expect(failed?.status).toBe("error")
+    expect(failed?.resumeState).toBeNull()
+    uploader.retry(failed?.id)
+    await until(() => uploader.getItem(failed?.id as string)?.status === "success")
+    expect([count(view.calls, "createUpload"), view.sends.length]).toEqual([2, 2])
+  })
+
+  it("starts over with a new address when the finish says the upload expired", async () => {
+    const view = setup()
+    view.failCalls("completeUpload", 409, { code: "CONFLICT" })
+    const uploader = uploaderFor(view, inv1)
+    await uploader.add([pick("hello")])
+    const [item] = await settled(uploader)
+    expect(item?.status).toBe("success")
+    expect([count(view.calls, "createUpload"), view.sends.length]).toEqual([2, 2])
+    await until(() => view.liveFiles() === 1)
+  })
+
+  it("refuses bytes storage says are too large, with the upload route's own message", async () => {
+    const view = setup()
+    const message = "That file is larger than this record takes."
+    view.failSends({ status: 413, body: JSON.stringify({ error: { code: "PAYLOAD_TOO_LARGE", message } }) })
+    const uploader = uploaderFor(view, inv1)
+    await uploader.add([pick("hello")])
+    const [item] = await settled(uploader)
+    expect(item?.status).toBe("rejected")
+    expect(item?.error).toMatchObject({ code: "rejected", status: 413, message })
+  })
+
+  it("starts over at once when the finish finds the upload gone, such as after the sweep", async () => {
+    const view = setup()
+    view.failCalls("completeUpload", 404, { code: "NOT_FOUND" })
+    const uploader = uploaderFor(view, inv1)
+    await uploader.add([pick("hello")])
+    const [item] = await settled(uploader)
+    expect(item?.status).toBe("success")
+    expect(count(view.calls, "createUpload")).toBe(2)
+  })
+
+  it("refuses a signed-out upload for good", async () => {
+    const view = setup()
+    view.failCalls("createUpload", 401, { code: "UNAUTHENTICATED" })
+    const uploader = uploaderFor(view, inv1)
+    await uploader.add([pick("hello")])
+    const [item] = await settled(uploader)
+    expect(item?.status).toBe("rejected")
+    expect(count(view.calls, "createUpload")).toBe(1)
+  })
+
+  it("deletes a file the server prepared just as its upload stopped", async () => {
+    const view = setup()
+    const release = view.holdAnswer("createUpload")
+    const uploader = uploaderFor(view, inv1)
+    const [item] = await uploader.add([pick("hello")])
+    await until(() => count(view.calls, "createUpload") === 1)
+    await until(() => view.liveFiles() === 1)
+    uploader.cancel(item?.id)
+    release()
+    await until(() => view.liveFiles() === 0)
+    expect(view.sends).toEqual([])
+  })
+
   it("deletes a cancelled upload the server knew of", async () => {
     const view = setup()
     view.stallSends(true)
@@ -177,15 +246,13 @@ describe("attachmentsAdapter", () => {
     })
   })
 
-  it("deletes a refused upload's pending file once it's removed from the queue", async () => {
+  it("deletes the pending file of an upload whose finish was refused", async () => {
     const view = setup()
     view.failCalls("completeUpload", 403, { code: "FORBIDDEN" })
     const uploader = uploaderFor(view, inv1)
-    const [item] = await uploader.add([pick("hello")])
+    await uploader.add([pick("hello")])
     const [refused] = await settled(uploader)
     expect(refused?.status).toBe("rejected")
-    expect(view.liveFiles()).toBe(1)
-    uploader.remove(item?.id)
     await until(() => view.liveFiles() === 0)
     expect(view.storage.objects.size).toBe(0)
   })
@@ -249,6 +316,19 @@ describe("uploadErrorOf", () => {
     const own = new UploadError("Offline.", { code: "offline" })
     expect(uploadErrorOf(own)).toBe(own)
     expect(uploadErrorOf(new Error("Odd."))).toBeInstanceOf(UploadError)
+  })
+})
+
+describe("isUnderWay", () => {
+  it("says whether an upload is still going", () => {
+    expect(["queued", "uploading", "processing"].map((status) => isUnderWay({ status } as UploadItem))).toEqual([
+      true,
+      true,
+      true
+    ])
+    expect(["success", "error", "rejected", "cancelled"].some((status) => isUnderWay({ status } as UploadItem))).toBe(
+      false
+    )
   })
 })
 

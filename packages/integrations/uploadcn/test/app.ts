@@ -74,15 +74,15 @@ export function setup({
     }
   })
   const sends: string[] = []
-  const sendStatuses: number[] = []
+  const sendStatuses: { status: number; body: string }[] = []
   let stall = false
   // Bytes go where the server said, half then all of them, so progress shows. A stalled send waits until it's aborted.
   // Signed sends need the node test environment: happy-dom's Request drops the signed content-length header.
   const transport: Transport = async (request) => {
     sends.push(request.url)
-    const status = sendStatuses.shift()
-    if (status !== undefined) {
-      return { status, headers: new Headers(), body: "" }
+    const failure = sendStatuses.shift()
+    if (failure !== undefined) {
+      return { ...failure, headers: new Headers() }
     }
     const bytes = new Uint8Array(await (request.body as Blob).arrayBuffer())
     request.onUploadProgress?.(Math.floor(bytes.length / 2), bytes.length)
@@ -118,8 +118,11 @@ export function setup({
     calls,
     sends,
     liveFiles,
-    /** Answers the next sends to storage with these statuses instead of storing the bytes. */
-    failSends: (...statuses: number[]) => sendStatuses.push(...statuses),
+    /** Answers the next sends with these statuses instead of storing the bytes, with an empty body or the one given. */
+    failSends: (...failures: (number | { status: number; body: string })[]) =>
+      sendStatuses.push(
+        ...failures.map((failure) => (typeof failure === "number" ? { status: failure, body: "" } : failure))
+      ),
     /** Answers the next calls of an action with this server error, without the server seeing them. */
     failCalls: (action: string, status: number, { code = "INTERNAL_ERROR", times = 1 } = {}) =>
       failures.set(
