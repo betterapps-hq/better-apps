@@ -14,15 +14,24 @@ export interface OpenedLink {
   host: string
 }
 
-/** What `link.clicked` carries: one open of a link, with `GET`. */
+/**
+ * How an open went: `opened` redirected to the target, `granted` also set the access cookie, and `hopped` sent the
+ * visitor on to the same link on another host, since the cookie couldn't reach the record from this one.
+ */
+export type ClickOutcome = "opened" | "granted" | "hopped"
+
+/** What `link.clicked` carries: one open of a link, with `GET`. It holds no IP address or user agent. */
 export interface LinkClick extends OpenedLink {
-  /** Whether it set the access cookie, for a link that lets people see a record. */
-  granted: boolean
+  outcome: ClickOutcome
   /**
-   * The host it sent the visitor on to, for a link that lets people see a record whose cookie can't reach the record
-   * from `host`, or `null`. That host's open is a click of its own, and only that one counts in `clicks`.
+   * The host a `hopped` open sent the visitor on to, or `null`. That host's open is a click of its own, and only that one
+   * counts in `clicks`.
    */
   forwardedTo: string | null
+  /** The visitor's country, such as `DE`, from Cloudflare's `request.cf`, or `null` elsewhere. */
+  country: string | null
+  /** The site the visitor came from, such as `https://news.example`: the origin of the `Referer`, or `null`. */
+  referrer: string | null
   clickedAt: Date
   /** The share of opens that emit `link.clicked`, so each event stands for about `1 / sampleRate` opens. */
   sampleRate: number

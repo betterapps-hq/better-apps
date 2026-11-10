@@ -23,13 +23,13 @@ async function openOn(
   t: ReturnType<typeof setup>,
   host: string,
   code: string,
-  { cookie, method = "GET" }: { cookie?: string; method?: string } = {}
+  { cookie, referer, method = "GET" }: { cookie?: string; referer?: string; method?: string } = {}
 ) {
   const kept: Promise<unknown>[] = []
-  const response = await t.app.handler(
-    new Request(`https://${host}/s/${code}`, { method, headers: cookie ? { cookie } : {} }),
-    { waitUntil: (promise) => kept.push(promise) }
-  )
+  const headers = { ...(cookie ? { cookie } : {}), ...(referer ? { referer } : {}) }
+  const response = await t.app.handler(new Request(`https://${host}/s/${code}`, { method, headers }), {
+    waitUntil: (promise) => kept.push(promise)
+  })
   await Promise.all(kept)
   return response
 }
@@ -53,8 +53,10 @@ describe("link.clicked", () => {
         orgId: "acme",
         subject: inv1,
         host: "app.test",
-        granted: false,
+        outcome: "opened",
         forwardedTo: null,
+        country: null,
+        referrer: null,
         clickedAt: expect.any(String),
         sampleRate: 1
       }
@@ -64,6 +66,26 @@ describe("link.clicked", () => {
     expect(await openOn(t, "app.test", "missing1", { method: "HEAD" })).toHaveProperty("status", 404)
     expect(t.events()).toHaveLength(delivered)
     expect((await t.api.get({ code: link.code }, t.as("ada"))).clicks).toBe(1)
+  })
+
+  it("carries the visitor's country from Cloudflare and the site they came from, without the page", async () => {
+    const t = setup()
+    const link = await t.api.create({ target: docs }, t.as("ada"))
+    const kept: Promise<unknown>[] = []
+    const request = new Request(`https://app.test/s/${link.code}`, {
+      headers: { referer: "https://news.example/story/42?ref=front" }
+    })
+    Object.assign(request, { cf: { country: "DE" } })
+    await t.app.handler(request, { waitUntil: (promise) => kept.push(promise) })
+    await Promise.all(kept)
+    for (const referer of ["android-app://com.example", "not a url"]) {
+      await openOn(t, "app.test", link.code, { referer })
+    }
+    expect(dataOf(t, "link.clicked")).toEqual([
+      expect.objectContaining({ country: "DE", referrer: "https://news.example" }),
+      expect.objectContaining({ country: null, referrer: null }),
+      expect.objectContaining({ country: null, referrer: null })
+    ])
   })
 
   it("is sampled by clickRate, while every click still counts", async () => {
@@ -103,8 +125,8 @@ describe("link.clicked", () => {
     await openOn(t, "links.acme.test", link.code)
     await openOn(t, "app.test", link.code)
     expect(dataOf(t, "link.clicked")).toEqual([
-      expect.objectContaining({ host: "links.acme.test", granted: false, forwardedTo: "app.test" }),
-      expect.objectContaining({ host: "app.test", granted: true, forwardedTo: null })
+      expect.objectContaining({ host: "links.acme.test", outcome: "hopped", forwardedTo: "app.test" }),
+      expect.objectContaining({ host: "app.test", outcome: "granted", forwardedTo: null })
     ])
     expect((await t.api.get({ code: link.code }, t.as("ada"))).clicks).toBe(1)
   })
@@ -129,7 +151,7 @@ describe("link.granted", () => {
       expect.objectContaining({ linkId: link.id })
     ])
     expect(dataOf(t, "link.clicked")).toEqual(
-      Array.from({ length: 3 }, () => expect.objectContaining({ granted: true }))
+      Array.from({ length: 3 }, () => expect.objectContaining({ outcome: "granted" }))
     )
   })
 })

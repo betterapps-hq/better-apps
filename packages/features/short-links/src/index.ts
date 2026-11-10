@@ -2,6 +2,7 @@ export { codeLimits, generateCode, isValidCode } from "./codes.js"
 export { ShortLinksError, type ShortLinksErrorCode } from "./errors.js"
 export {
   shortLinkEvents,
+  type ClickOutcome,
   type LinkClick,
   type LinkGrant,
   type LinkNotFound,

@@ -18,6 +18,9 @@ import type { SubjectArgs } from 'better-apps';
 import { SubjectGrants } from 'better-apps';
 
 // @public
+export type ClickOutcome = "opened" | "granted" | "hopped";
+
+// @public
 export const codeLimits: {
     readonly minGenerated: 6;
     readonly maxGenerated: 32;
@@ -65,8 +68,11 @@ export const limits: {
 export interface LinkClick extends OpenedLink {
     // (undocumented)
     clickedAt: Date;
+    country: string | null;
     forwardedTo: string | null;
-    granted: boolean;
+    // (undocumented)
+    outcome: ClickOutcome;
+    referrer: string | null;
     sampleRate: number;
 }
 

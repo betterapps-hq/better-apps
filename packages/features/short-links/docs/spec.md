@@ -263,10 +263,15 @@ Opening a link emits these, only for `GET`, never `HEAD`, and writes them after 
 reading the visitor would cost a lookup on every open.
 
 - `link.clicked` is one open. It carries the link's `linkId`, `owner`, `orgId` and `subject`, which is `null` for a URL
-  link, the `host` it opened on, `granted`, whether it set the access cookie, `forwardedTo`, `clickedAt` and
-  `sampleRate`. A link that grants access, opened on a host whose cookie can't reach the record, sends the visitor on to
-  a host where it does, emits `link.clicked` with that host in `forwardedTo`, and counts no click. The open on the other
-  host emits its own and counts. So to count opens, skip the ones with `forwardedTo`.
+  link, the `host` it opened on, its `outcome`, `forwardedTo`, `country`, `referrer`, `clickedAt` and `sampleRate`. It
+  holds no IP address or user agent.
+  - `outcome` is `opened` for a redirect to the target, and `granted` when it also set the access cookie. A link that
+    grants access, opened on a host whose cookie can't reach the record, sends the visitor on to the same link on a host
+    where it does: its `outcome` is `hopped`, `forwardedTo` names that host, and it counts no click. The open on the
+    other host emits its own and counts. So to count opens, skip the `hopped` ones.
+  - `country` is the two-letter country Cloudflare puts in `request.cf`, such as `DE`, or `null` elsewhere.
+  - `referrer` is the site the visitor came from: the origin of an `http` or `https` `Referer`, such as
+    `https://news.example`, without its path or query, or `null`.
 - `link.granted` is a link that grants access setting its cookie for a visitor whose cookie didn't hold it. It carries
   the same link fields as `link.clicked`, with the `host` and `grantedAt`. A visitor who opens the link again with the
   cookie emits only `link.clicked`.

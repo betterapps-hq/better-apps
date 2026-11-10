@@ -49,14 +49,41 @@ export function opened(row: LinkRow, host: string): OpenedLink {
   }
 }
 
-export function click(
-  settings: EventSettings,
+/** A click as `link.clicked` carries it, without its `sampleRate`: built once per counted open. */
+export type ClickRecord = Omit<LinkClick, "sampleRate">
+
+/** The country Cloudflare puts on a request, such as `DE`, or `null` elsewhere. */
+function countryOf(request: Request): string | null {
+  const country = (request as { cf?: { country?: unknown } }).cf?.country
+  return typeof country === "string" && /^[A-Z0-9]{2}$/.test(country) ? country : null
+}
+
+/** The site the visitor came from: the origin of an http or https `Referer`, without its path or query, or `null`. */
+function referrerOf(request: Request): string | null {
+  const referer = request.headers.get("referer")
+  if (referer === null || !URL.canParse(referer)) {
+    return null
+  }
+  const url = new URL(referer)
+  return url.protocol === "http:" || url.protocol === "https:" ? url.origin : null
+}
+
+/** A counted open of a link, with no IP address or user agent. */
+export function clickOf(
   row: LinkRow,
+  request: Request,
   host: string,
   at: Date,
-  { granted, forwardedTo }: Pick<LinkClick, "granted" | "forwardedTo">
-): LinkClick {
-  return { ...opened(row, host), granted, forwardedTo, clickedAt: at, sampleRate: settings.clickRate }
+  { outcome, forwardedTo }: Pick<LinkClick, "outcome" | "forwardedTo">
+): ClickRecord {
+  return {
+    ...opened(row, host),
+    outcome,
+    forwardedTo,
+    country: countryOf(request),
+    referrer: referrerOf(request),
+    clickedAt: at
+  }
 }
 
 export function grant(row: LinkRow, host: string, at: Date): LinkGrant | null {

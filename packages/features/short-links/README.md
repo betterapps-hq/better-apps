@@ -198,9 +198,10 @@ deleted record still redirects, and the app's page answers for the missing recor
 `link.created`, `link.updated` and `link.removed` carry the link. `subject.removed` carries the record and
 `owner.removed` the owner whose links went. Opening a link with `GET`, never `HEAD`, emits these after the response:
 
-- `link.clicked`: an open, with the link's id, owner, organization and record, the host, whether it set the access
-  cookie, the host it sent the visitor on to, if any, and the time. `events.clickRate` samples them for busy apps, such
-  as `0.1` for 1 open in 10, and each carries its `sampleRate`.
+- `link.clicked`: an open, with the link's id, owner, organization and record, the host, the `outcome` (`opened`,
+  `granted` or `hopped`), the visitor's country from Cloudflare, the site they came from and the time. It holds no IP
+  address or user agent. `events.clickRate` samples them for busy apps, such as `0.1` for 1 open in 10, and each carries
+  its `sampleRate`.
 - `link.granted`: a link that grants access set its cookie for a visitor whose cookie didn't hold it.
 - `link.notFound`: a code didn't open on a host, with the host, its organization and the code. It's the same for an
   unknown, turned off, expired or other organization's code. `events.notFoundPerMinute` limits each host, 10 a minute by

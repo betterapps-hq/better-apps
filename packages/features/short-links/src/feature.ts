@@ -15,7 +15,16 @@ import {
   type Where
 } from "better-apps"
 import { z } from "zod"
-import { click, eventSettings, grant, passed, perMinuteLimit, sampled, type EventSettings } from "./activity.js"
+import {
+  clickOf,
+  eventSettings,
+  grant,
+  passed,
+  perMinuteLimit,
+  sampled,
+  type ClickRecord,
+  type EventSettings
+} from "./activity.js"
 import { codeLimits, generateCode, isValidCode, normalizeCode } from "./codes.js"
 import { grantCodes, grantCookie, isUnder, reachesHost, type CookieSettings } from "./cookie.js"
 import { ShortLinksError } from "./errors.js"
@@ -810,9 +819,14 @@ async function open(config: Config, opener: Opener, context: RouteContext): Prom
     const path = await rules.url({ subjectType: type, subjectId: id, orgId: row.orgId === "" ? null : row.orgId })
     location = new URL(path, request.url).href
   }
-  const sample = counted && sampled(config.events)
+  /** Emits `link.clicked` for the opens `events.clickRate` samples. */
+  const clicked = (click: ClickRecord) => {
+    if (sampled(config.events)) {
+      emit("link.clicked", { ...click, sampleRate: config.events.clickRate })
+    }
+  }
   const headers = new Headers({ location, "cache-control": "private, no-store" })
-  let granted = false
+  let outcome: ClickRecord["outcome"] = "opened"
   if (row.grantsView) {
     if (config.hosts && !reachesHost(request.url, location, config.cookie.domain)) {
       // The cookie set on this host wouldn't reach the record, so the link opens where it does: on the app's own host,
@@ -822,12 +836,12 @@ async function open(config: Config, opener: Opener, context: RouteContext): Prom
       const there = reachesHost(app, location, config.cookie.domain)
         ? `${app}/${code}`
         : new URL(`${config.path}/${code}`, location).href
-      if (sample) {
-        emit("link.clicked", click(config.events, row, host, now, { granted: false, forwardedTo: new URL(there).host }))
+      if (counted) {
+        clicked(clickOf(row, request, host, now, { outcome: "hopped", forwardedTo: new URL(there).host }))
       }
       return new Response(null, { status: 302, headers: { location: there, "cache-control": "private, no-store" } })
     }
-    granted = true
+    outcome = "granted"
     // A visitor whose cookie already holds the link was given access before.
     const fresh = !grantCodes(request, config.cookie.name).includes(row.code)
     headers.set("set-cookie", grantCookie(request, config.cookie, row.code))
@@ -837,10 +851,9 @@ async function open(config: Config, opener: Opener, context: RouteContext): Prom
     }
   }
   if (counted) {
-    if (sample) {
-      emit("link.clicked", click(config.events, row, host, now, { granted, forwardedTo: null }))
-    }
-    context.waitUntil(countClick(config, context, row))
+    const click = clickOf(row, request, host, now, { outcome, forwardedTo: null })
+    clicked(click)
+    context.waitUntil(countClick(config, context, row, click))
   }
   return new Response(null, { status: 302, headers })
 }
@@ -850,14 +863,14 @@ async function open(config: Config, opener: Opener, context: RouteContext): Prom
  * count passed. Each count comes back from one click's increment alone, so each milestone is emitted once, however
  * many clicks land at the same moment.
  */
-async function countClick(config: Config, context: RouteContext, row: LinkRow): Promise<void> {
+async function countClick(config: Config, context: RouteContext, row: LinkRow, click: ClickRecord): Promise<void> {
   const [counted] = await context.db.batch([
     {
       type: "incrementOne",
       model: linkModel,
       where: [{ field: "id", value: row.id }],
       increment: { clicks: 1 },
-      set: { lastClickedAt: context.now }
+      set: { lastClickedAt: click.clickedAt }
     }
   ])
   const updated = counted as LinkRow | null
