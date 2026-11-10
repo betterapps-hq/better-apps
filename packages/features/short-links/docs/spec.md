@@ -72,7 +72,7 @@ shortLinks({
   in it, and who makes its URL links. Every member, by default. Who shares records is up to `canShare`.
 - `path` is where links open, `/s` by default. It can't be directly under the app's `basePath`, where a link's URL would
   look like an action's.
-- `baseUrl` is the origin of the short URLs the actions return, such as a shorter domain that serves the same app. The
+- `baseUrl` is where the short URLs the actions return start, such as a shorter domain that serves the same app. The
   request's origin, by default. `hosts` needs it. It's an `http` or `https` URL, which may have a path but no
   credentials, query or fragment, since short URLs follow it with the path and code.
 - `hosts` opens links on organizations' own domains and shares them there, as

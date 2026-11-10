@@ -46,8 +46,8 @@ with a catch-all route at `/s` in TanStack Start.
   Without it, any URL is allowed, but not `javascript:`, `data:`, `vbscript:` and `file:` ones.
 - `canManage({ actor, orgId })` says who manages an organization's links, the ones it owns and the ones its members made
   in it, and who makes its URL links: every member, by default. Who shares records is up to `canShare`.
-- `path` is where links open, `/s` by default. `baseUrl`, such as `https://go.example.com`, is the origin of the short
-  URLs actions return: the request's, by default.
+- `path` is where links open, `/s` by default. `baseUrl`, such as `https://go.example.com`, is where the short URLs
+  actions return start, before the path and code: the request's origin, by default.
 - `hosts` opens links on organizations' own domains, each only its organization's, and shares them there. It needs
   `baseUrl`. See [Organizations' domains](#organizations-domains).
 - `codeLength` sets the length of generated codes, from 6 to 32: 8 by default.

@@ -114,7 +114,7 @@ export interface ShortLinksOptions {
   /** Where links open, `/s` by default, so a link is `/s/{code}`. */
   path?: string | undefined
   /**
-   * The origin of the short URLs actions return, such as `https://go.example.com`, without credentials, a query or a
+   * Where the short URLs actions return start, such as `https://go.example.com`, without credentials, a query or a
    * fragment. The request's, by default. Required with `hosts`.
    */
   baseUrl?: string | undefined
