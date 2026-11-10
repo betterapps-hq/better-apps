@@ -312,12 +312,12 @@ export async function removeUser(config: Config, context: Context): Promise<{ re
     // in both lists.
     const ownedIds = new Set(owned.map((file) => file.id))
     const files = [...owned, ...unkept.filter((file) => !ownedIds.has(file.id))]
-    await deleteFiles(config, context, files, "userRemoved")
+    const removed = await deleteFiles(config, context, files, "userRemoved")
     const done = owned.length + unkept.length < userPageSize
     if (done) {
       context.emit("user.removed", { userId })
     }
-    return { removed: files.length, done }
+    return { removed, done }
   })
 }
 

@@ -49,6 +49,38 @@ describe("uploads onto a record", () => {
     }
   })
 
+  it("finish only for whoever has them, when moveUser hands them over meanwhile", async () => {
+    const { app, api, as, send } = setup()
+    const created = await api.createUpload(
+      { ...bookAcme, name: "a.txt", contentType: "text/plain", size: 3 },
+      as("solo")
+    )
+    await send(created.upload, "abc")
+    const batch = app.db.batch.bind(app.db)
+    let reached!: () => void
+    const atBatch = new Promise<void>((resolve) => (reached = resolve))
+    let release!: () => void
+    const mayGo = new Promise<void>((resolve) => (release = resolve))
+    let calls = 0
+    // The finish read the upload before the move, and writes after it.
+    app.db.batch = async (operations) => {
+      calls += 1
+      if (calls === 1) {
+        reached()
+        await mayGo
+      }
+      return batch(operations)
+    }
+    const finishing = api.completeUpload({ fileId: created.file.id }, as("solo"))
+    await atBatch
+    await api.moveUser({ userId: "solo", toUserId: "bob" })
+    release()
+    await expect(finishing).rejects.toMatchObject({ code: "NOT_FOUND" })
+    app.db.batch = batch
+    const { attachment } = await api.completeUpload({ fileId: created.file.id }, as("bob"))
+    expect(attachment).toMatchObject({ id: created.file.id, attachedBy: "bob" })
+  })
+
   it("go straight to storage when it signs uploads", async () => {
     const { upload, storage } = setup({}, { signedUploads: true })
     const { file } = await upload("bob", inv1, text("direct"))
@@ -564,6 +596,13 @@ describe("drafts", () => {
     expect(
       events("attachment.added").map((event) => (event.data as { file: { subjectType: string } }).file.subjectType)
     ).toEqual(["booking", null])
+    // Acme's files, and an Acme member's own, aren't Solo's, even on a booking in Acme.
+    for (const other of [await upload("bob", {}), await upload("bob", { owner: "user" })]) {
+      expect(other.file.orgId).toBe("acme")
+      await expect(api.attach({ ...bookAcme, fileIds: [other.file.id] }, solo)).rejects.toMatchObject({
+        code: "NOT_FOUND"
+      })
+    }
   })
 
   it("go on records from trusted server code acting for no one, credited to no one", async () => {
@@ -1207,7 +1246,7 @@ describe("records that change", () => {
     await atBatch
     await api.attach({ ...bookAcme, fileIds: [file.id] }, as("solo"))
     release()
-    await removing
+    expect(await removing).toEqual({ removed: 0, done: true })
     app.db.batch = batch
     expect(await api.getFile({ fileId: file.id }, as("bob"))).toMatchObject({ status: "ready", orgId: "acme" })
     expect(storage.objects.has(`attachments/${file.id}`)).toBe(true)
@@ -1232,6 +1271,35 @@ describe("records that change", () => {
     expect((await api.listOwnFiles({ owner: "user" }, as("bob"))).files.map((file) => file.id)).toEqual([own.file.id])
     expect(await api.detach({ ...bookAcme, fileId: attached.file.id }, as("bob"))).toEqual({ removed: true })
     expect(await api.moveUser({ userId: "bob", toUserId: "bob" })).toEqual({ files: 0, attachments: 0 })
+  })
+
+  it("keep a draft that an attach put on a record while it was being deleted", async () => {
+    const { app, api, as, upload, storage, events } = setup()
+    const { file } = await upload("solo", { subjectType: "booking" })
+    const batch = app.db.batch.bind(app.db)
+    let reached!: () => void
+    const atBatch = new Promise<void>((resolve) => (reached = resolve))
+    let release!: () => void
+    const mayGo = new Promise<void>((resolve) => (release = resolve))
+    let calls = 0
+    // The delete read the draft before the attach, and writes after it.
+    app.db.batch = async (operations) => {
+      calls += 1
+      if (calls === 1) {
+        reached()
+        await mayGo
+      }
+      return batch(operations)
+    }
+    const deleting = api.deleteFile({ fileId: file.id }, as("solo"))
+    await atBatch
+    await api.attach({ ...bookAcme, fileIds: [file.id] }, as("solo"))
+    release()
+    expect(await deleting).toEqual({ deleted: false })
+    app.db.batch = batch
+    expect(storage.objects.has(`attachments/${file.id}`)).toBe(true)
+    expect(events("file.deleted")).toEqual([])
+    expect(await api.getFile({ fileId: file.id }, as("bob"))).toMatchObject({ status: "ready" })
   })
 
   it("lose a person's unfinished uploads when the person is removed, an organization's too, a page a call", async () => {

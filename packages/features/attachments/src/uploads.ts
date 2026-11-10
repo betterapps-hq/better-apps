@@ -241,7 +241,9 @@ export async function completeUpload(config: Config, context: Context): Promise<
     where: [
       { field: "id", value: file.id },
       { field: "status", value: "pending" },
-      { field: "expiresAt", operator: "gt", value: now }
+      { field: "expiresAt", operator: "gt", value: now },
+      // An upload `moveUser` handed to another user meanwhile is theirs to finish.
+      { field: "createdBy", value: file.createdBy }
     ],
     update: {
       orgId,

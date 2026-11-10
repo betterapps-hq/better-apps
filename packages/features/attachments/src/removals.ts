@@ -185,19 +185,19 @@ export async function removeLinks(
 /**
  * Deletes files, such as a person's own or a draft. Each comes off the records it's on: the first hundred of those are
  * reported, with `attachment.removed` and one `subject.changed` per record, and the rest go with the file's row. Returns
- * whether this call deleted them all, rather than another removal, such as the sweep, that took them first, or an attach
- * or a finish that put a draft or an upload on a record meanwhile.
+ * how many this call deleted: not ones another removal, such as the sweep, took first, nor a draft or an upload that an
+ * attach or a finish put on a record meanwhile.
  */
 export async function deleteFiles(
   config: Config,
   writer: Writer,
   files: readonly AttachmentFile[],
   reason: FileDeletedReason
-): Promise<boolean> {
+): Promise<number> {
   const live = files.filter((file) => file.status !== "deleted")
   if (live.length === 0) {
     await purge(config, writer.db, files)
-    return false
+    return 0
   }
   const links = (
     await Promise.all(
@@ -256,7 +256,7 @@ export async function deleteFiles(
     if ([...after.values()].some((file) => file.status !== "deleted")) {
       throw error
     }
-    return false
+    return 0
   }
   const marked = results.slice(results.length - unkeptMarks.length).reduce<number>((sum, n) => sum + Number(n), 0)
   const kept = new Set<string>()
@@ -290,5 +290,5 @@ export async function deleteFiles(
     writer.db,
     files.filter((file) => !kept.has(file.id))
   )
-  return kept.size === 0
+  return live.length - kept.size
 }

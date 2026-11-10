@@ -140,8 +140,8 @@ export async function addLinks(
 
 /**
  * Puts drafts and files kept on their own on a record: the caller's drafts and files they can see. Trusted server code
- * skips the record's access checks. With an `author` user, it acts for them: only their drafts, and their own files
- * as they could. Without one, it attaches anyone's drafts and files kept on their own in the record's organization,
+ * skips the record's access checks. With an `author` user, it acts for them: only their drafts and the files they keep
+ * on their own. Without one, it attaches anyone's drafts and files kept on their own in the record's organization,
  * credited to no one.
  */
 export async function attach(config: Config, context: Context): Promise<{ files: AttachedFile[] }> {
@@ -159,7 +159,10 @@ export async function attach(config: Config, context: Context): Promise<{ files:
     throw fileNotFound()
   }
   const kept = files.filter((file) => file.owner !== null)
-  const seen = actor ? await canSeeFiles(context, actor, kept) : kept.map(() => true)
+  // Server code acting for someone attaches only the files they keep, since it can't check what else they could see.
+  const seen = actor
+    ? await canSeeFiles(context, actor, kept)
+    : kept.map((file) => userId === null || file.owner === userOwner(userId))
   const orgId = await orgOf(context.subjects, ref, actor)
   const now = new Date()
   const drafts: string[] = []
@@ -444,7 +447,7 @@ export async function deleteFile(config: Config, context: Context): Promise<{ de
     await purge(config, context.db, [file])
     return { deleted: true }
   }
-  return { deleted: await deleteFiles(config, context, [file], "deleted") }
+  return { deleted: (await deleteFiles(config, context, [file], "deleted")) > 0 }
 }
 
 /** What files a record of a subject type takes, or a file on its own without one. */

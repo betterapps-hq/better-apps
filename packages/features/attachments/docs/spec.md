@@ -198,10 +198,10 @@ All of them go through subject types, so a file follows its record's access.
   where its owner puts it.
 - **Attaching from trusted server code** skips `canView` and `canUpload`, so it can attach to a record the person can't
   see yet, such as a booking it just created. Pass the person as `author: { type: "user", userId }` and it acts for
-  them: only their drafts, and their own files as they could attach them, credited to them. Always do that when the file
-  ids came from a browser, or anyone's draft id would do. Without an `author`, it attaches anyone's drafts, and files
-  kept on their own only in their organization, credited to no one (`attachedBy: ""`), so only `canModerate` takes them
-  off. Attach when the person submits, not from a later job such as a payment webhook: a draft expires after `draftTtl`.
+  them: only their drafts and the files they keep on their own, credited to them. Always do that when the file ids came
+  from a browser, or anyone's draft id would do. Without an `author`, it attaches anyone's drafts, and files kept on
+  their own only in their organization, credited to no one (`attachedBy: ""`), so only `canModerate` takes them off.
+  Attach when the person submits, not from a later job such as a payment webhook: a draft expires after `draftTtl`.
 - **Taking a file off a record** needs the person who attached it, or someone `canModerate` allows. **Reordering** needs
   `canUpload`.
 - **Deleting a file kept on its own** needs its owner, or a member `canManage` allows. It comes off every record too.
