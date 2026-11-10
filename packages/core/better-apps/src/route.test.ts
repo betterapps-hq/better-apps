@@ -4,13 +4,16 @@ import {
   BetterAppsError,
   createBetterApps,
   defineAction,
+  defineEvent,
   defineFeature,
   defineRoute,
+  type BetterAppsEvent,
   type Actor,
   type BetterAppsFeature,
   type ErrorContext,
   type Identity,
-  type RouteContext
+  type RouteContext,
+  type RouteDefinition
 } from "./index.js"
 
 const ada: Actor = { userId: "ada", orgId: "acme", roles: [] }
@@ -185,10 +188,98 @@ describe("routes", () => {
     })
     const { app } = setup([defineFeature({ id: "links", routes: { look } })])
     await app.handler(get("/look"))
-    expect(seen?.db).toBe(app.db)
+    // The database writes the route's events with its batches, and reads and writes the app's tables otherwise.
+    expect(seen?.db.id).toBe(app.db.id)
+    expect(seen?.db.findOne).toBe(app.db.findOne)
     expect(seen?.subjects).toBe(app.subjects)
     expect(seen?.identity).toBe(identity)
     expect(seen?.now).toBeInstanceOf(Date)
+  })
+
+  describe("emit events", () => {
+    function clicks(handler: RouteDefinition["handler"]) {
+      const delivered: BetterAppsEvent[] = []
+      const links = defineFeature({
+        id: "links",
+        schema: { click: { fields: { code: { type: "string" } } } },
+        events: { clicked: defineEvent<{ code: string }>(), unheard: defineEvent<null>() },
+        routes: { open: defineRoute({ path: "/s/:code", method: "GET", handler }) }
+      })
+      const feed = defineFeature({
+        id: "feed",
+        on: { links: { clicked: (event) => void delivered.push(event) } }
+      })
+      const memory = memoryDatabase()
+      const rows = (model: string) => memory.tables.get(model) ?? []
+      const onError = vi.fn<(error: unknown, context: ErrorContext) => void>()
+      const app = createBetterApps({ database: memory.database, identity, features: [links, feed], onError })
+      return { app, delivered, rows, onError, memory }
+    }
+
+    it("written with the route's batch after the response, and delivered with no actor", async () => {
+      const { app, delivered, rows } = clicks(({ params, db, emit, waitUntil }) => {
+        const code = params.code ?? ""
+        waitUntil(
+          Promise.resolve().then(async () => {
+            emit("clicked", { code })
+            emit("unheard", null)
+            await db.batch([{ type: "create", model: "click", data: { code } }])
+          })
+        )
+        return new Response(null, { status: 302 })
+      })
+      const kept: Promise<unknown>[] = []
+      const response = await app.handler(get("/s/abc", { headers: { "x-user": "ada" } }), {
+        waitUntil: (promise) => kept.push(promise)
+      })
+      expect(response.status).toBe(302)
+      expect(delivered).toEqual([])
+      await Promise.all(kept)
+      expect(rows("click")).toHaveLength(1)
+      expect(delivered).toEqual([
+        expect.objectContaining({ feature: "links", type: "clicked", data: { code: "abc" }, actor: null, author: null })
+      ])
+      // Nobody subscribes to `unheard`, and delivered events leave the outbox.
+      expect(rows("betterAppsEvent")).toEqual([])
+    })
+
+    it("written once the kept work settles when no batch takes them, and the response waits without waitUntil", async () => {
+      const { app, delivered } = clicks(({ params, emit, waitUntil }) => {
+        waitUntil(new Promise((resolve) => setTimeout(resolve, 5)).then(() => emit("clicked", { code: params.code })))
+        return new Response("ok")
+      })
+      await app.handler(get("/s/xyz"))
+      expect(delivered.map((event) => event.data)).toEqual([{ code: "xyz" }])
+    })
+
+    it("dropped when the handler throws before writing them, or the batch they're in fails", async () => {
+      const { app, delivered, rows, onError, memory } = clicks(({ params, db, emit, waitUntil }) => {
+        emit("clicked", { code: params.code })
+        if (params.code === "crash") {
+          throw new Error("crashed")
+        }
+        waitUntil(db.batch([{ type: "create", model: "click", data: { code: params.code } }]))
+        return new Response("ok")
+      })
+      expect((await app.handler(get("/s/crash"))).status).toBe(500)
+      memory.failNextWrite(new Error("write failed"))
+      expect((await app.handler(get("/s/fails"))).status).toBe(200)
+      expect(delivered).toEqual([])
+      expect(rows("betterAppsEvent")).toEqual([])
+      expect(onError).toHaveBeenCalledTimes(2)
+    })
+
+    it("refused when the feature doesn't declare them", async () => {
+      const { app, onError } = clicks(({ emit }) => {
+        emit("other", null)
+        return new Response("ok")
+      })
+      expect((await app.handler(get("/s/abc"))).status).toBe(500)
+      expect(onError).toHaveBeenCalledWith(new Error(`The "links" feature doesn't declare a "other" event.`), {
+        feature: "links",
+        route: "open"
+      })
+    })
   })
 
   it("may sit under basePath when they can't match an action's URL, beside the actions", async () => {

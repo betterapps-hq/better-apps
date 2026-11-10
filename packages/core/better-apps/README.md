@@ -208,10 +208,14 @@ const links = defineFeature({
 - `GET` routes also answer `HEAD`, without a body: the handler's body is cancelled, so a stream it opened closes. A path
   that matches with another method gets 405 with `Allow`.
 - The handler receives the `request`, its parsed `url`, such as for its host, `params`, `db`, `identity`, `subjects`,
-  `now`, `getActor()`, which reads the signed-in user only when called, and `waitUntil(promise)`.
+  `now`, `getActor()`, which reads the signed-in user only when called, `waitUntil(promise)` and `emit`.
 - `waitUntil` keeps work running after the response, such as recording a click, with the platform's `waitUntil` that
   `app.handler` receives. Without one, or when it throws, the response waits for the work. A failure goes to `onError`
   with the feature and route, and never changes the response.
+- `emit` adds an event to the route's next `db.batch`, as in an action, such as the batch that records a click. Events
+  emitted outside a batch are written once the response is sent and the work handed to `waitUntil` has settled. Then
+  they're delivered, in the same `waitUntil`. Route events have no actor or author, since reading the visitor costs a
+  lookup. Events not yet written when the handler throws are dropped.
 - A `BetterAppsError` answers as actions' errors do. Any other error answers 500 and goes to `onError`.
 - Creating the app fails for a malformed path, one that could match an action's URL, or two routes with the same method
   and path.

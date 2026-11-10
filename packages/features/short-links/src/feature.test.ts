@@ -266,10 +266,12 @@ describe("opening a link", () => {
       const { response, kept } = open(code)
       const answer = await response
       expect(answer.status).toBe(404)
-      expect(kept).toHaveLength(0)
+      await Promise.all(kept)
       bodies.add(await answer.text())
     }
     expect(bodies.size).toBe(1)
+    const counts = await Promise.all([off, expired].map(async ({ id }) => (await api.get({ id }, as("ada"))).clicks))
+    expect(counts).toEqual([0, 0])
   })
 
   it("lets the app answer links that don't open", async () => {

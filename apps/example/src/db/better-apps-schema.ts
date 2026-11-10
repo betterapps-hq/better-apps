@@ -113,6 +113,7 @@ export const shortLink = sqliteTable(
     grantsView: integer("grants_view", { mode: "boolean" }).default(false).notNull(),
     enabled: integer("enabled", { mode: "boolean" }).default(true).notNull(),
     expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+    expiryToken: text("expiry_token"),
     clicks: integer("clicks").default(0).notNull(),
     lastClickedAt: integer("last_clicked_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
@@ -236,18 +237,6 @@ export const attachmentRemoval = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull()
   },
   (table) => [index("attachment_removal_by_time").on(table.createdAt)]
-)
-
-export const attachmentMove = sqliteTable(
-  "attachment_move",
-  {
-    id: text("id").primaryKey(),
-    toOrgId: text("to_org_id").default("").notNull(),
-    deleted: integer("deleted", { mode: "boolean" }).default(false).notNull(),
-    claim: text("claim").notNull(),
-    heldAt: integer("held_at", { mode: "timestamp_ms" }).notNull()
-  },
-  (table) => [index("attachment_move_by_time").on(table.heldAt)]
 )
 
 export const betterAppsEvent = sqliteTable(

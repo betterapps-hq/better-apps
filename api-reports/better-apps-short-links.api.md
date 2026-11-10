@@ -7,6 +7,8 @@
 import { ActionDefinition } from 'better-apps';
 import type { Actor } from 'better-apps';
 import { BetterAppsError } from 'better-apps';
+import { BetterAppsEvent } from 'better-apps';
+import { EventContext } from 'better-apps';
 import { EventDefinition } from 'better-apps';
 import { FeatureSchema } from 'better-apps';
 import { RouteDefinition } from 'better-apps';
@@ -17,6 +19,9 @@ import { SubjectGrants } from 'better-apps';
 
 // @public
 export const clickModel = "shortLinkClick";
+
+// @public
+export type ClickOutcome = "opened" | "granted" | "hopped";
 
 // @public
 export type ClickRow = {
@@ -109,6 +114,33 @@ export const limits: {
 };
 
 // @public
+export interface LinkClick extends OpenedLink {
+    // (undocumented)
+    clickedAt: Date;
+    country: string | null;
+    forwardedTo: string | null;
+    // (undocumented)
+    outcome: ClickOutcome;
+    referrer: string | null;
+    sampleRate: number;
+}
+
+// @public
+export interface LinkEventOptions {
+    clickRate?: number | undefined;
+    milestones?: readonly number[] | undefined;
+    notFoundPerMinute?: number | undefined;
+}
+
+// @public
+export interface LinkGrant extends OpenedLink {
+    // (undocumented)
+    grantedAt: Date;
+    // (undocumented)
+    subject: LinkSubject;
+}
+
+// @public
 export type LinkHost = "app" | {
     orgId: string;
 } | null;
@@ -121,6 +153,15 @@ export interface LinkHosts {
 
 // @public
 export const linkModel = "shortLink";
+
+// @public
+export interface LinkNotFound {
+    code: string;
+    host: string;
+    orgId: string | null;
+    // (undocumented)
+    requestedAt: Date;
+}
 
 // @public
 export interface LinkOriginArgs {
@@ -148,6 +189,7 @@ export type LinkRow = {
     grantsView: boolean;
     enabled: boolean;
     expiresAt: Date | null;
+    expiryToken: string | null;
     clicks: number;
     lastClickedAt: Date | null;
     createdAt: Date;
@@ -222,6 +264,20 @@ export interface NotFoundArgs {
 }
 
 // @public
+export interface OpenedLink {
+    host: string;
+    // (undocumented)
+    linkId: string;
+    orgId: string | null;
+    // (undocumented)
+    owner: {
+        type: OwnerType;
+        id: string;
+    };
+    subject: LinkSubject | null;
+}
+
+// @public
 export type OwnerType = "user" | "org";
 
 // @public
@@ -277,6 +333,16 @@ export const shortLinkEvents: {
     "link.removed": EventDefinition<    {
     link: ShortLink;
     }>;
+    "link.clicked": EventDefinition<LinkClick>;
+    "link.granted": EventDefinition<LinkGrant>;
+    "link.notFound": EventDefinition<LinkNotFound>;
+    "link.milestone": EventDefinition<    {
+    link: ShortLink;
+    clicks: number;
+    }>;
+    "link.expired": EventDefinition<    {
+    link: ShortLink;
+    }>;
     "subject.removed": EventDefinition<    {
     subjectType: string;
     subjectId: string;
@@ -286,6 +352,10 @@ export const shortLinkEvents: {
     type: OwnerType;
     id: string;
     };
+    }>;
+    "expiry.scheduled": EventDefinition<    {
+    linkId: string;
+    token: string;
     }>;
 };
 
@@ -303,6 +373,16 @@ export function shortLinks<const Options extends ShortLinksOptions>(options?: Op
         "link.removed": EventDefinition<    {
         link: ShortLink;
         }>;
+        "link.clicked": EventDefinition<LinkClick>;
+        "link.granted": EventDefinition<LinkGrant>;
+        "link.notFound": EventDefinition<LinkNotFound>;
+        "link.milestone": EventDefinition<    {
+        link: ShortLink;
+        clicks: number;
+        }>;
+        "link.expired": EventDefinition<    {
+        link: ShortLink;
+        }>;
         "subject.removed": EventDefinition<    {
         subjectType: string;
         subjectId: string;
@@ -313,11 +393,20 @@ export function shortLinks<const Options extends ShortLinksOptions>(options?: Op
         id: string;
         };
         }>;
+        "expiry.scheduled": EventDefinition<    {
+        linkId: string;
+        token: string;
+        }>;
     };
     readonly usesSubjects: string[];
     readonly options: Options;
     readonly routes: {
         open: RouteDefinition;
+    };
+    readonly on: {
+        readonly shortLinks: {
+            readonly "expiry.scheduled": (event: BetterAppsEvent<unknown>, context: EventContext) => Promise<void>;
+        };
     };
     readonly grants: SubjectGrants | undefined;
     readonly actions: {
@@ -407,6 +496,7 @@ export interface ShortLinksOptions {
     canManage?: ((args: ManageArgs) => boolean | Promise<boolean>) | undefined;
     codeLength?: number | undefined;
     cookie?: GrantCookie | undefined;
+    events?: LinkEventOptions | undefined;
     hosts?: LinkHosts | undefined;
     notFound?: ((args: NotFoundArgs) => Response | Promise<Response>) | undefined;
     path?: string | undefined;

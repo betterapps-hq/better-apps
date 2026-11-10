@@ -147,7 +147,8 @@ back on, or giving it a later expiry, checks again that the caller can see and s
 with `Cache-Control: private, no-store`, so a change to the link takes effect at once. Each `GET` adds a click and sets
 `lastClickedAt` in one statement, and keeps the click as a row of its own in the same batch, after the response, through
 the request's `waitUntil`; without one, the response waits. `HEAD` requests don't count. Every `GET` does, including
-link previews chat apps fetch. A click row holds the link and the time, and nothing about who opened it.
+link previews chat apps fetch. A click row holds the link and the time, and nothing about who opened it. The open's
+events, such as `link.clicked`, are written in the same batch.
 
 ## Clicks over time
 
@@ -270,7 +271,22 @@ with them. Until then, a link to a deleted record still redirects, and the app's
 ## Events
 
 `link.created`, `link.updated` and `link.removed` carry the link. `subject.removed` carries the record and
-`owner.removed` the owner whose links went. Opening a link emits nothing.
+`owner.removed` the owner whose links went. Opening a link with `GET`, never `HEAD`, emits these after the response:
+
+- `link.clicked`: an open, with the link's id, owner, organization and record, the host, the `outcome` (`opened`,
+  `granted` or `hopped`), the visitor's country from Cloudflare, the site they came from and the time. It holds no IP
+  address or user agent. `events.clickRate` samples them for busy apps, such as `0.1` for 1 open in 10, and each carries
+  its `sampleRate`.
+- `link.granted`: a link that grants access set its cookie for a visitor whose cookie didn't hold it.
+- `link.notFound`: a code didn't open on a host, with the host, its organization and the code. It's the same for an
+  unknown, turned off, expired or other scope's code. `events.notFoundPerMinute` limits each host, 10 a minute by
+  default.
+- `link.milestone`: a link's click count reached one of `events.milestones`, 1, 10, 100, 1,000 and 10,000 by default.
+  Each fires once, even when clicks land at the same moment.
+
+`link.expired` carries the link once its `expiresAt` passes, whether or not anyone opens it. It's scheduled in the
+outbox when the expiry is set, so run `app.deliverEvents()` on a schedule. Changing or clearing the expiry, or removing
+the link, cancels it. See the [spec](docs/spec.md#events) for each event's fields and costs.
 
 ## In the browser
 
