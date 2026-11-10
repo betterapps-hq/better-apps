@@ -36,9 +36,11 @@ export {
   attachmentModel,
   attachmentsSchema,
   fileModel,
+  moveModel,
   removalModel,
   type Attachment,
   type AttachmentFile,
+  type AttachmentMove,
   type FileStatus
 } from "./schema.js"
 export type { SweepResult } from "./cleanup.js"

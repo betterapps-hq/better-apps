@@ -127,6 +127,15 @@ export type AttachmentFile = {
 export const attachmentModel = "attachment";
 
 // @public
+export type AttachmentMove = {
+    id: string;
+    toOrgId: string;
+    deleted: boolean;
+    claim: string;
+    heldAt: Date;
+};
+
+// @public
 export interface AttachmentRemovedData extends AttachmentEventData {
     bulk?: boolean | undefined;
     // (undocumented)
@@ -515,6 +524,9 @@ export function memoryStorage(options?: MemoryStorageOptions): MemoryStorage;
 export interface MemoryStorageOptions {
     signedUploads?: boolean | undefined;
 }
+
+// @public
+export const moveModel = "attachmentMove";
 
 // @public
 export interface PreviewArgs {
