@@ -49,14 +49,16 @@ Then open <http://127.0.0.1:4190>. `build` and `preview` run the production buil
   visitor also reads the invoice's comments, with their reactions and files, without a way to add any. The dialog is
   `src/invoice-share.tsx`, the links are set up in `src/features.ts`, and `src/routes/s/$.ts` serves them.
 - **Files** from [`@better-apps/attachments`](../../packages/features/attachments/README.md) go on invoices and on
-  comments. The invoice page has a Files panel: add files, watch each upload's progress, open or download a file, move
-  it up or down, and delete it. Whoever added a file can delete it, and so can Ada. Comment boxes have a paperclip:
-  files upload while the comment is written and attach once it's posted, with `useDraftAttachments`. Images show a
-  thumbnail. Uploads, moves and deletions are announced in a polite live region, and failures in an alert. The Files
-  panel is for signed-in people. The UI is in `src/invoice-files.tsx`. The bytes go in a folder through the storage
-  adapter in `src/folder-storage.server.ts`, where a Worker would use
-  [`@better-apps/storage-r2`](../../packages/adapters/storage-r2/README.md). On start, the server sweeps away uploads
-  that never finished and drafts that were never posted.
+  comments. The invoice page has a Files panel: add files with the button or by dropping them on the panel, watch each
+  upload's progress, try a failed one again, open or download a file, move it up or down, and delete it. Whoever added a
+  file can delete it, and so can Ada. Comment boxes have a paperclip: files upload while the comment is written and
+  attach once it's posted. Uploads go through [`@better-apps/uploadcn`](../../packages/integrations/uploadcn/README.md),
+  with UploadCN's `Upload` primitives styled with the kit, `useAttachmentsUploader` in the panel and `useDraftUploader`
+  in comment boxes. Images show a thumbnail. Uploads, failures, moves and deletions are announced in polite live
+  regions, and a failure also shows beside its upload. The Files panel is for signed-in people. The UI is in
+  `src/invoice-files.tsx`. The bytes go in a folder through the storage adapter in `src/folder-storage.server.ts`, where
+  a Worker would use [`@better-apps/storage-r2`](../../packages/adapters/storage-r2/README.md). On start, the server
+  sweeps away uploads that never finished and drafts that were never posted.
 - **Notes**, at `/notes`, is a tiny feature in `src/features.ts`. Its loader calls a server function that calls
   `api.notes.list()` as the request's user, and the form posts to `/api/apps/notes/add` from the browser.
 - **Domains** from [`@better-apps/domains`](../../packages/features/domains/README.md), at `/settings/domains`, give the

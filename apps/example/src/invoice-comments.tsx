@@ -58,7 +58,14 @@ import { initials, SignInPrompt } from "./app-shell"
 import type { CommentTypes } from "./app-types"
 import { CommentReactions, RemoveReactionsMenu } from "./comment-reactions"
 import { formatTime, plural } from "./format"
-import { AttachButton, CommentFileList, DraftFiles, useCommentFiles, type CommentFiles } from "./invoice-files"
+import {
+  AttachButton,
+  CommentFileList,
+  CommentForm,
+  DraftFiles,
+  useCommentFiles,
+  type CommentFiles
+} from "./invoice-files"
 import { CommentText, emptyDraft, MentionTextarea, pickedName, toBody, toDraft, type Draft } from "./mention-textarea"
 import { alerts, modals } from "./ui"
 import { useViewer } from "./viewer"
@@ -342,7 +349,7 @@ function Composer() {
   }
 
   return (
-    <form className="composer" onSubmit={handleSubmit}>
+    <CommentForm files={files} className="composer" onSubmit={handleSubmit}>
       <label htmlFor={composerId} className="visually-hidden">
         {target ? `Comment on ${target.label}` : "Comment on the invoice"}
       </label>
@@ -398,7 +405,7 @@ function Composer() {
           </Button>
         </span>
       </div>
-    </form>
+    </CommentForm>
   )
 }
 
@@ -660,7 +667,8 @@ function ThreadCard({ thread, onGone }: ThreadCardProps) {
         </p>
       )}
       {viewer && (
-        <form
+        <CommentForm
+          files={files}
           className="reply"
           onSubmit={(event) => {
             event.preventDefault()
@@ -682,7 +690,7 @@ function ThreadCard({ thread, onGone }: ThreadCardProps) {
             onSubmitShortcut={() => void submitReply()}
           />
           <DraftFiles files={files} returnFocus={attachRef} />
-          {(draft.text.trim() !== "" || files.uploads.length > 0) && (
+          {(draft.text.trim() !== "" || files.count > 0) && (
             <div className="reply-actions">
               <AttachButton files={files} buttonRef={attachRef} />
               {files.busy && <span className="composer-hint">Files are still uploading</span>}
@@ -702,7 +710,7 @@ function ThreadCard({ thread, onGone }: ThreadCardProps) {
               </Button>
             </div>
           )}
-        </form>
+        </CommentForm>
       )}
     </article>
   )

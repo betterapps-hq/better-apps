@@ -53,6 +53,9 @@
     "packages/integrations/tanstack-start": {
       "entry": ["src/index.ts"]
     },
+    "packages/integrations/uploadcn": {
+      "entry": ["src/index.ts", "src/react.tsx"]
+    },
     "packages/tooling/cli": {
       "entry": ["src/index.ts", "src/bin.ts", "test/fixtures/*.config.ts"]
     },

@@ -420,9 +420,13 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
 
   /**
    * The last step of an upload: has the server check the bytes and mark the file ready. An upload onto a record adds the
-   * file to the record's list.
+   * file to the record's list. It needs only the prepared file's id and target, so an engine that keeps them between
+   * attempts, such as in UploadCN's resume state, can finish without the rest.
    */
-  async function finishUpload(prepared: PreparedUpload, { signal }: { signal?: AbortSignal } = {}): Promise<FileInfo> {
+  async function finishUpload(
+    prepared: Pick<PreparedUpload, "target"> & { file: Pick<FileInfo, "id"> },
+    { signal }: { signal?: AbortSignal } = {}
+  ): Promise<FileInfo> {
     const current = scoped()
     const { subjectType, subjectId } = prepared.target
     const key = subjectType !== undefined && subjectId !== undefined ? subjectKey(subjectType, subjectId) : null

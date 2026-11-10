@@ -26,7 +26,7 @@ and serves uploads and downloads from `app.handler`.
   Without it, the original image is served.
 - **The browser client has its own small upload queue and hooks**, and exposes the two steps around the bytes,
   `prepareUpload` and `finishUpload`, for an engine that sends the bytes itself, such as
-  [UploadCN](https://uploadcn.dev)'s.
+  [UploadCN](https://uploadcn.dev)'s through [`@better-apps/uploadcn`](../../../integrations/uploadcn/README.md).
 - **A signed upload address can't be revoked**, so attachments never trusts storage to hold what it confirmed. Downloads
   serve only bytes whose etag matches the one recorded when the upload finished, and a deleted file's row waits until
   its upload address has closed, so bytes that arrive late are deleted too.
@@ -372,7 +372,9 @@ const file = await attachments.upload(input.files[0], { subjectType: "invoice", 
 - `load(subjectType, subjectIds)` batches loads of the same tick, 20 records a call.
 - `prepareUpload(file, target)` checks the file against the loaded limits and calls `createUpload`, and
   `finishUpload(prepared)` calls `completeUpload` and adds the file to its record's list. They're the two steps around
-  the bytes, for an engine that sends them itself, such as [UploadCN](https://uploadcn.dev)'s.
+  the bytes, for an engine that sends them itself, such as [UploadCN](https://uploadcn.dev)'s through
+  [`@better-apps/uploadcn`](../../../integrations/uploadcn/README.md). `finishUpload` needs only the prepared file's id
+  and target, which an engine can keep between attempts.
 - `upload(file, target)` runs the three steps. It sends the bytes with `XMLHttpRequest`, for progress, or with `fetch`
   where there's none, and takes a `transport` for tests. `uploads[id]` holds
   `{ name, size, loaded, state, error, file }` while it runs, `state` being `uploading`, `finishing`, `done`, `error` or
