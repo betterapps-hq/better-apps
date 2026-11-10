@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { cookieOf, expectCode, setup } from "../test/app.js"
-import { grantCookie } from "./cookie.js"
+import { grantCookie, grantEntries } from "./cookie.js"
 import type { LinkHosts } from "./index.js"
 
 // Codes the next links get, in order, before random ones.
@@ -162,6 +162,16 @@ describe("grant cookies", () => {
         { actor: null, subjectType: "invoice", subjectId: "inv-globex", request: holding }
       ])
     ).toEqual([true, true])
+  })
+
+  it("drop entries that aren't codes and scopes", () => {
+    const request = new Request("https://app.test/invoices", {
+      // A scope that isn't base64url, one that isn't UTF-8, an empty one, a code that isn't one, and one good entry.
+      headers: {
+        cookie: `better-apps-links=bad~%%%.bad~_w.code12345678~.no!.good12345678~${btoa("acme").replace(/=+$/, "")}`
+      }
+    })
+    expect(grantEntries(request, "better-apps-links")).toEqual([{ code: "good12345678", scope: "acme" }])
   })
 
   it("drop entries that aren't codes and scopes, and the oldest when long scopes would make the cookie too long", () => {

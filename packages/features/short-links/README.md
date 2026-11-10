@@ -237,8 +237,10 @@ An app can write its own `hosts` instead, with the rules below.
   with `cookie: { domain: "yourapp.com" }`. A record on the organization's own domain, such as a white-label app's
   `https://billing.acme.com/invoices/1`, is shared there when `origin` returns that domain. `create` refuses a link that
   grants access with `INVALID_INPUT` when neither the organization's domain nor `baseUrl` reaches the record. Opened on
-  a host whose cookie doesn't reach the record, a link sends the visitor once to the same link where it does. Writing
-  such a link's short URL asks the record's `url`, once per record in a call.
+  a host whose cookie doesn't reach the record, a link sends the visitor once to the same link on a host where it does,
+  if one opens it: `baseUrl` or the record's host for a link with the app's codes, and the domain `origin` gives for one
+  with an organization's. Otherwise it opens where it is, and grants nothing. Writing such a link's short URL asks the
+  record's `url`, once per record in a call.
 
 ### Codes on organizations' domains
 

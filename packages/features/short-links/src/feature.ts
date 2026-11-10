@@ -1222,7 +1222,14 @@ async function readLinks(
   }
   const read = await Promise.all(
     byCode.map(async (list) =>
-      context.db.findMany<LinkRow>({ model: linkModel, where: [{ field: "code", operator: "in", value: list }] })
+      // Only links that grant access, since other scopes may have links with the same codes.
+      context.db.findMany<LinkRow>({
+        model: linkModel,
+        where: [
+          { field: "code", operator: "in", value: list },
+          { field: "grantsView", value: true }
+        ]
+      })
     )
   )
   return read.flat().filter((row) => wanted.has(grantKey(row)))

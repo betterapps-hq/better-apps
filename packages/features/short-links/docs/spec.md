@@ -295,7 +295,7 @@ link's host wouldn't, such as when the page is on an organization's domain and t
 2. Reads the link by its code in that scope: one read through the unique index. On an organization's domain, a miss
    reads the organization's own link with that code in the app's scope, as
    [Which host opens which links](#which-host-opens-which-links) describes.
-3. A link that isn't in that scope, is turned off or has expired gets `notFound`.
+3. A code neither read finds, or a link that's turned off or has expired, gets `notFound`.
 4. A record link's target is its subject type's `url`, for a subject type the feature still has. A URL link's is its
    URL.
 5. Answers `302 Found` with the target as `Location`, with the code added when `source` says so, and
@@ -401,7 +401,7 @@ A link's scope is set when it's made and never changes:
 - Every other link is in the app's scope: a member's own links, links made outside any organization, an organization's
   links made before its domain was ready, and links that grant access from the app's host. Its `scope` is `""`.
 
-So a domain appearing or going away never moves a link, and two links never come to share a code on one host:
+So a domain appearing or going away never moves a link, and a host opens one link at most for a code:
 
 - When an organization's domain becomes ready, its links made before then keep their codes and their short URLs on the
   app's host, which still opens them. Its domains open them too, for a code its own codes don't have, so a link that
