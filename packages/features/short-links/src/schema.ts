@@ -42,14 +42,22 @@ export type LinkRow = {
 }
 
 /**
- * One click on a link. It holds when the link was opened and nothing about who opened it: no IP address or user agent.
- * Removing the link removes its clicks.
+ * One click on a link. It holds when and where the link was opened, and nothing about who opened it: no IP address,
+ * user agent or city. Removing the link removes its clicks.
  */
 export type ClickRow = {
   id: string
   /** The link opened. */
   linkId: string
   clickedAt: Date
+  /** The host it was opened on, such as `links.acme.com`, or `null` for a click recorded without one. */
+  host: string | null
+  /** The visitor's country, such as `DE`, from Cloudflare's `request.cf`, or `null` elsewhere. */
+  country: string | null
+  /** The site the visitor came from, such as `https://news.example`: the origin of the `Referer`, or `null`. */
+  referrer: string | null
+  /** How it went: `opened` redirected to the target, and `granted` also set the access cookie. */
+  outcome: "opened" | "granted"
   /**
    * The start of the 15-minute slot the click fell in, in UTC. Every time zone's offset is a whole number of 15
    * minutes, so a slot is never split across two days in any zone, and clicks per day group by slot in one query.
@@ -93,6 +101,10 @@ export const shortLinksSchema: FeatureSchema = {
     fields: {
       linkId: { type: "string", references: { model: linkModel, field: "id", onDelete: "cascade" } },
       clickedAt: { type: "date" },
+      host: { type: "string", required: false },
+      country: { type: "string", required: false },
+      referrer: { type: "string", required: false },
+      outcome: { type: "string", defaultValue: "opened" },
       slot: { type: "date" }
     },
     // Serves a link's clicks over a range, and removing them with their link.

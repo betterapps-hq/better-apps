@@ -26,6 +26,7 @@ import {
 import { CopyIcon, Share2Icon, Trash2Icon } from "lucide-react"
 import { useId, useState } from "react"
 import { formatTime, plural } from "./format"
+import { LinkActivity } from "./link-activity"
 import { modals } from "./ui"
 
 /** What a failed call says, for a toast. */
@@ -33,7 +34,7 @@ const messageOf = (error: unknown) => (error instanceof Error ? error.message : 
 
 /**
  * The invoice's short links, in a dialog: make one, optionally for anyone who has it, copy it, turn it off or on, and
- * delete it. Each shows how often it was opened.
+ * delete it. Each shows how often it was opened, and the links' activity shows where they were opened.
  */
 export function ShareInvoice({ invoiceId, number }: { invoiceId: string; number: string }) {
   const subject = { subjectType: "invoice", subjectId: invoiceId } as const
@@ -104,6 +105,7 @@ export function ShareInvoice({ invoiceId, number }: { invoiceId: string; number:
             </Button>
           )}
         </section>
+        <LinkActivity links={links} />
       </DialogContent>
     </Dialog>
   )

@@ -19,6 +19,18 @@ export type AppLinkSubjectType<App> = ShortLinksFeatureOf<App> extends {
 } ? SubjectTypeOf<Options> : string;
 
 // @public
+export type ClickDimension = "host" | "country" | "referrer" | "outcome";
+
+// @public
+export interface ClicksBy {
+    total: number;
+    values: {
+        value: string | null;
+        clicks: number;
+    }[];
+}
+
+// @public
 export interface ClicksByDay {
     days: {
         date: string;
@@ -31,6 +43,14 @@ export interface ClicksByDay {
 export interface ClicksByDayInput extends DayRangeInput {
     // (undocumented)
     id: string;
+}
+
+// @public
+export interface ClicksByInput extends DayRangeInput {
+    // (undocumented)
+    by: ClickDimension;
+    ids: readonly string[];
+    limit?: number | undefined;
 }
 
 // @public

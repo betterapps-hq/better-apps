@@ -12,6 +12,7 @@ export {
 export {
   limits,
   shortLinks,
+  type ClicksBy,
   type ClicksByDay,
   type ClickTotals,
   type LinkPage,
@@ -19,7 +20,9 @@ export {
 } from "./feature.js"
 export type { ShortLink, ShortLinkTarget } from "./link.js"
 export type {
+  ClickDimension,
   ClicksByDayInput,
+  ClicksByInput,
   ClickTotalsInput,
   CreateLinkInput,
   DayRangeInput,
@@ -39,6 +42,7 @@ export type {
   NotFoundArgs,
   OwnerType,
   RecordClicksInput,
+  RecordedClick,
   ResolveHostArgs,
   ShortLinksOptions,
   SourceUrlArgs,

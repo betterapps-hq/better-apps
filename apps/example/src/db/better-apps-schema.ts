@@ -147,6 +147,10 @@ export const shortLinkClick = sqliteTable(
       .notNull()
       .references(() => shortLink.id, { onDelete: "cascade" }),
     clickedAt: integer("clicked_at", { mode: "timestamp_ms" }).notNull(),
+    host: text("host"),
+    country: text("country"),
+    referrer: text("referrer"),
+    outcome: text("outcome").default("opened").notNull(),
     slot: integer("slot", { mode: "timestamp_ms" }).notNull()
   },
   (table) => [index("short_link_click_by_link").on(table.linkId, table.slot)]

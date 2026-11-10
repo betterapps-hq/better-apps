@@ -23,6 +23,7 @@ import {
   passed,
   perMinuteLimit,
   sampled,
+  siteOf,
   type ClickRecord,
   type EventSettings
 } from "./activity.js"
@@ -41,7 +42,9 @@ import { ShortLinksError } from "./errors.js"
 import { shortLinkEvents } from "./events.js"
 import { isOpen, ownerKey, toLink, type ShortLink } from "./link.js"
 import type {
+  ClickDimension,
   ClicksByDayInput,
+  ClicksByInput,
   ClickTotalsInput,
   CreateLinkInput,
   LinkHosts,
@@ -52,6 +55,7 @@ import type {
   ListLinksInput,
   OwnerType,
   RecordClicksInput,
+  RecordedClick,
   ShortLinksOptions,
   SubjectTypeOf,
   UpdateLinkInput
@@ -81,6 +85,17 @@ export interface ClickTotals {
   total: number
 }
 
+/** Links' clicks over a range of days, counted by host, country, referring site or outcome. */
+export interface ClicksBy {
+  /**
+   * The most clicked values first, up to `limit`, such as `{ value: "DE", clicks: 31 }`. `null` counts clicks without
+   * one, such as visits with no `Referer`.
+   */
+  values: { value: string | null; clicks: number }[]
+  /** All the links' clicks over the range, including those of values past `limit`. */
+  total: number
+}
+
 /** Size limits. */
 export const limits = {
   linksPerPage: 20,
@@ -90,6 +105,9 @@ export const limits = {
   maxRangeDays,
   /** The most clicks `recordClicks` records in one call. */
   maxRecordedClicks: 500,
+  /** How many values `clicksBy` returns by default, and at most. */
+  clickValues: 10,
+  maxClickValues: 50,
   ...codeLimits
 } as const
 
@@ -582,7 +600,34 @@ const inputs = {
   removeOwner: z.object({ owner: z.object({ type: owner, id: z.string().min(1).max(255) }) }),
   clicksByDay: z.object({ id: linkId, ...days }),
   clickTotals: z.object({ ids: z.array(linkId).min(1).max(limits.maxLinksPerPage), ...days }),
-  recordClicks: z.object({ id: linkId, at: z.array(date).min(1).max(limits.maxRecordedClicks) })
+  clicksBy: z.object({
+    ids: z.array(linkId).min(1).max(limits.maxLinksPerPage),
+    by: z.enum(["host", "country", "referrer", "outcome"]),
+    limit: z.number().int().min(1).max(limits.maxClickValues).optional(),
+    ...days
+  }),
+  recordClicks: z.object({
+    id: linkId,
+    clicks: z
+      .array(
+        z.object({
+          at: date,
+          host: z
+            .string()
+            .min(1)
+            .max(253)
+            .regex(/^[a-z0-9.-]+$/i)
+            .optional(),
+          country: z
+            .string()
+            .regex(/^[A-Z0-9]{2}$/)
+            .optional(),
+          referrer: url.optional()
+        })
+      )
+      .min(1)
+      .max(limits.maxRecordedClicks)
+  })
 }
 
 type Parsed<Input> = Omit<Input, "expiresAt"> & { expiresAt?: Date | null | undefined }
@@ -1019,7 +1064,10 @@ async function open(config: Config, opener: Opener, context: RouteContext): Prom
  */
 async function countClick(config: Config, context: RouteContext, row: LinkRow, click: ClickRecord): Promise<void> {
   // The counter's increment comes first, so its result, the new count, is the batch's first.
-  const [counted] = await context.db.batch(clickWrites(row.id, [click.clickedAt], click.clickedAt))
+  const { clickedAt, host, country, referrer, outcome } = click
+  // Only opens that count reach here, never one that sent the visitor on to another host.
+  const kept: Click = { clickedAt, host, country, referrer, outcome: outcome === "granted" ? "granted" : "opened" }
+  const [counted] = await context.db.batch(clickWrites(row.id, [kept], clickedAt))
   const updated = counted as LinkRow | null
   if (!updated) {
     return
@@ -1092,23 +1140,26 @@ async function withSource(config: Config, row: LinkRow, location: string): Promi
   return url.href
 }
 
+/** A counted click as its row keeps it. */
+type Click = Pick<ClickRow, "clickedAt" | "host" | "country" | "referrer" | "outcome">
+
 /**
- * Records clicks on a link, in one batch: its counter and last click, then a row per click, so the counter and the rows
- * always agree. The adapter splits the rows into statements under the database's limit of bound parameters.
+ * Records counted clicks on a link, in one batch: its counter and last click, then a row per click, so the counter and
+ * the rows always agree. The adapter splits the rows into statements under the database's limit of bound parameters.
  */
-function clickWrites(linkId: string, times: readonly Date[], lastClickedAt: Date): WriteOperation[] {
-  const rows: ClickRow[] = times.map((clickedAt) => ({
+function clickWrites(linkId: string, clicks: readonly Click[], lastClickedAt: Date): WriteOperation[] {
+  const rows: ClickRow[] = clicks.map((click) => ({
     id: crypto.randomUUID(),
     linkId,
-    clickedAt,
-    slot: slotOf(clickedAt)
+    ...click,
+    slot: slotOf(click.clickedAt)
   }))
   return [
     {
       type: "incrementOne",
       model: linkModel,
       where: [{ field: "id", value: linkId }],
-      increment: { clicks: times.length },
+      increment: { clicks: clicks.length },
       set: { lastClickedAt }
     },
     { type: "createMany", model: clickModel, data: rows }
@@ -1157,14 +1208,7 @@ async function clickTotals(config: Config, context: Context): Promise<ClickTotal
   }
   const range = rangeOf(input)
   const ids = [...new Set(input.ids)]
-  const read = await Promise.all(
-    chunks(ids).map(async (list) =>
-      context.db.findMany<LinkRow>({ model: linkModel, where: [{ field: "id", operator: "in", value: list }] })
-    )
-  )
-  const rows = read.flat()
-  const managed = await Promise.all(rows.map(async (row) => manages(config, context, row)))
-  const byId = new Map(rows.filter((_, index) => managed[index]).map((row) => [row.id, row]))
+  const byId = await managedLinks(config, context, ids)
   const counted = await Promise.all(
     chunks([...byId.keys()]).map(async (list) =>
       context.db.countGroups({
@@ -1179,14 +1223,69 @@ async function clickTotals(config: Config, context: Context): Promise<ClickTotal
   return { links, total: links.reduce((sum, link) => sum + link.clicks, 0) }
 }
 
+/** The links of these ids that the caller manages, by id, in one read for each 90. */
+async function managedLinks(config: Config, context: Context, ids: readonly string[]): Promise<Map<string, LinkRow>> {
+  const read = await Promise.all(
+    chunks([...ids]).map(async (list) =>
+      context.db.findMany<LinkRow>({ model: linkModel, where: [{ field: "id", operator: "in", value: list }] })
+    )
+  )
+  const rows = read.flat()
+  const managed = await Promise.all(rows.map(async (row) => manages(config, context, row)))
+  return new Map(rows.filter((_, index) => managed[index]).map((row) => [row.id, row]))
+}
+
+/**
+ * Links' clicks over a range of days by host, country, referring site or outcome: one read for the links and one count,
+ * each 90 links to a query. Links the caller doesn't manage, and ids of no link, are left out, so they look alike.
+ */
+async function clicksBy(config: Config, context: Context): Promise<ClicksBy> {
+  const input = context.input as ClicksByInput
+  if (!context.actor && !isTrusted(context)) {
+    throw new ShortLinksError("UNAUTHENTICATED", "Sign in to see your links.")
+  }
+  const range = rangeOf(input)
+  const by: ClickDimension = input.by
+  const byId = await managedLinks(config, context, [...new Set(input.ids)])
+  const counted = await Promise.all(
+    chunks([...byId.keys()]).map(async (list) =>
+      context.db.countGroups({
+        model: clickModel,
+        where: [{ field: "linkId", operator: "in", value: list }, ...within(range)],
+        groupBy: [by]
+      })
+    )
+  )
+  const clicksOf = new Map<string | null, number>()
+  for (const { group, count } of counted.flat()) {
+    const value = (group[by] as string | null | undefined) ?? null
+    clicksOf.set(value, (clicksOf.get(value) ?? 0) + count)
+  }
+  const values = [...clicksOf]
+    .map(([value, clicks]) => ({ value, clicks }))
+    .sort((a, b) => b.clicks - a.clicks || order(a.value, b.value))
+  return {
+    values: values.slice(0, input.limit ?? limits.clickValues),
+    total: values.reduce((sum, value) => sum + value.clicks, 0)
+  }
+}
+
+/** Values in alphabetical order, with `null` last, so ties come back the same way each time. */
+function order(a: string | null, b: string | null): number {
+  if (a === null || b === null) {
+    return (a === null ? 1 : 0) - (b === null ? 1 : 0)
+  }
+  return a.localeCompare(b, "en")
+}
+
 /**
  * Records clicks at given times, such as a demo's history, keeping the counter and last click in step with them. It's
  * for trusted server code, so it trusts the times it's given, as long as none is later than now.
  */
 async function recordClicks(config: Config, context: Context): Promise<ShortLink> {
-  const input = context.input as Omit<RecordClicksInput, "at"> & { at: Date[] }
+  const input = context.input as { id: string; clicks: (Omit<RecordedClick, "at"> & { at: Date })[] }
   const row = await requireLink(config, context, input.id)
-  const times = input.at.map((time) => time.getTime())
+  const times = input.clicks.map((click) => click.at.getTime())
   const latest = Math.max(...times)
   if (latest > context.now.getTime()) {
     throw new ShortLinksError("INVALID_INPUT", "Clicks can't be recorded later than now.")
@@ -1197,7 +1296,14 @@ async function recordClicks(config: Config, context: Context): Promise<ShortLink
   }
   const lastClickedAt = new Date(Math.max(latest, row.lastClickedAt?.getTime() ?? latest))
   const gone = () => new ShortLinksError("NOT_FOUND", "That link doesn't exist, or you can't manage it.")
-  const writes = clickWrites(row.id, input.at, lastClickedAt)
+  const clicks = input.clicks.map((click): Click => ({
+    clickedAt: click.at,
+    host: click.host?.toLowerCase() ?? null,
+    country: click.country ?? null,
+    referrer: click.referrer === undefined ? null : siteOf(click.referrer),
+    outcome: row.grantsView ? "granted" : "opened"
+  }))
+  const writes = clickWrites(row.id, clicks, lastClickedAt)
   let updated: unknown
   try {
     const written = await context.db.batch(writes)
@@ -1468,6 +1574,7 @@ export function shortLinks<const Options extends ShortLinksOptions>(options: Opt
       ),
       clicksByDay: action<ClicksByDayInput, ClicksByDay>(inputs.clicksByDay, clicksByDay),
       clickTotals: action<ClickTotalsInput, ClickTotals>(inputs.clickTotals, clickTotals),
+      clicksBy: action<ClicksByInput, ClicksBy>(inputs.clicksBy, clicksBy),
       recordClicks: action<RecordClicksInput, ShortLink, true>(inputs.recordClicks, recordClicks, true)
     }
   })

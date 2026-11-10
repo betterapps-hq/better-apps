@@ -61,10 +61,15 @@ function countryOf(request: Request): string | null {
 /** The site the visitor came from: the origin of an http or https `Referer`, without its path or query, or `null`. */
 function referrerOf(request: Request): string | null {
   const referer = request.headers.get("referer")
-  if (referer === null || !URL.canParse(referer)) {
+  return referer === null ? null : siteOf(referer)
+}
+
+/** The origin of an http or https address, without its path or query, or `null` for any other. */
+export function siteOf(address: string): string | null {
+  if (!URL.canParse(address)) {
     return null
   }
-  const url = new URL(referer)
+  const url = new URL(address)
   return url.protocol === "http:" || url.protocol === "https:" ? url.origin : null
 }
 

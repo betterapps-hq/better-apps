@@ -5,27 +5,47 @@ import { clickModel, shortLinks, shortLinksSchema, type LinkRules, type ShortLin
 const inv1 = { subjectType: "invoice", subjectId: "inv-1" } as const
 const docs = { url: "https://docs.test/start" }
 
-/** The click rows a test app holds, oldest first. */
-function clickRows(t: ReturnType<typeof setup>): { linkId: string; clickedAt: number; slot: number }[] {
-  return t.database.sqlite
-    .prepare(`SELECT "linkId", "clickedAt", "slot" FROM "${clickModel}" ORDER BY "clickedAt"`)
-    .all() as { linkId: string; clickedAt: number; slot: number }[]
+type ClickRowRead = {
+  linkId: string
+  clickedAt: number
+  slot: number
+  host: string | null
+  country: string | null
+  referrer: string | null
+  outcome: string
 }
 
-/** Opens a link on a host and waits for its click to be written. */
-async function openOn(t: ReturnType<typeof setup>, url: string, cookie?: string) {
+/** The click rows a test app holds, oldest first. */
+function clickRows(t: ReturnType<typeof setup>): ClickRowRead[] {
+  return t.database.sqlite
+    .prepare(
+      `SELECT "linkId", "clickedAt", "slot", "host", "country", "referrer", "outcome" FROM "${clickModel}" ORDER BY "clickedAt"`
+    )
+    .all() as ClickRowRead[]
+}
+
+/** Opens a link on a host and waits for its click to be written, with Cloudflare's country when given one. */
+async function openOn(
+  t: ReturnType<typeof setup>,
+  url: string,
+  cookie?: string,
+  { country, referer }: { country?: string; referer?: string } = {}
+) {
   const kept: Promise<unknown>[] = []
-  const response = await t.app.handler(new Request(url, { headers: cookie ? { cookie } : {} }), {
-    waitUntil: (promise) => kept.push(promise)
-  })
+  const headers = new Headers(cookie ? { cookie } : {})
+  if (referer !== undefined) {
+    headers.set("referer", referer)
+  }
+  const request = Object.assign(new Request(url, { headers }), country === undefined ? {} : { cf: { country } })
+  const response = await t.app.handler(request, { waitUntil: (promise) => kept.push(promise) })
   await Promise.all(kept)
   return response
 }
 
-const at = (...times: string[]) => times.map((time) => new Date(time))
+const clicks = (...times: string[]) => times.map((time) => ({ at: new Date(time) }))
 
 describe("click events", () => {
-  it("are written one per GET alongside the counter, holding only the link and the time", async () => {
+  it("are written one per GET alongside the counter, holding the link, the time and where it was opened", async () => {
     const t = setup()
     const link = await t.api.create({ target: docs }, t.as("ada"))
     const before = Date.now()
@@ -43,10 +63,37 @@ describe("click events", () => {
       expect(row.clickedAt - row.slot).toBeLessThan(15 * 60_000)
     }
     // Nothing about who opened it is kept.
-    expect(Object.keys(shortLinksSchema[clickModel]?.fields ?? {})).toEqual(["linkId", "clickedAt", "slot"])
+    expect(Object.keys(shortLinksSchema[clickModel]?.fields ?? {})).toEqual([
+      "linkId",
+      "clickedAt",
+      "host",
+      "country",
+      "referrer",
+      "outcome",
+      "slot"
+    ])
     const read = await t.api.get({ id: link.id }, t.as("ada"))
     expect(read.clicks).toBe(2)
     expect(read.lastClickedAt?.getTime()).toBe(rows[1]?.clickedAt)
+  })
+
+  it("keep the host, Cloudflare's country, the referring site and how the open went", async () => {
+    const t = setup()
+    const plain = await t.api.create({ target: docs }, t.as("ada"))
+    const granting = await t.api.create({ target: inv1, grantsView: true }, t.as("ada"))
+    await openOn(t, `https://App.Test./s/${plain.code}`, undefined, {
+      country: "DE",
+      referer: "https://news.example/story?id=7#top"
+    })
+    // A country Cloudflare doesn't give, and a referrer that isn't a web page, are left out.
+    await openOn(t, `https://app.test/s/${granting.code}`, undefined, {
+      country: "Germany",
+      referer: "android-app://x"
+    })
+    expect(clickRows(t).map(({ host, country, referrer, outcome }) => ({ host, country, referrer, outcome }))).toEqual([
+      { host: "app.test", country: "DE", referrer: "https://news.example", outcome: "opened" },
+      { host: "app.test", country: null, referrer: null, outcome: "granted" }
+    ])
   })
 
   it("count the hop of a link that grants access to the record's host once, where the cookie is set", async () => {
@@ -74,7 +121,9 @@ describe("click events", () => {
     const there = await openOn(t, `https://app.test/s/${link.code}`)
     expect(there.headers.get("location")).toBe(`https://app.test/invoices/inv-1?via=${link.code}`)
     expect(cookieOf(there)).toBe(`better-apps-links=${link.code}`)
-    expect(clickRows(t)).toHaveLength(1)
+    expect(clickRows(t).map(({ host, outcome }) => ({ host, outcome }))).toEqual([
+      { host: "app.test", outcome: "granted" }
+    ])
     expect((await t.api.get({ id: link.id }, t.as("ada"))).clicks).toBe(1)
   })
 
@@ -85,7 +134,7 @@ describe("click events", () => {
     const mine = await t.api.create({ target: docs, owner: "user" }, t.as("bob"))
     const kept = await t.api.create({ target: docs }, t.as("gus"))
     for (const link of [one, record, mine, kept]) {
-      await t.api.recordClicks({ id: link.id, at: at("2026-01-01T12:00:00Z", "2026-01-02T12:00:00Z") })
+      await t.api.recordClicks({ id: link.id, clicks: clicks("2026-01-01T12:00:00Z", "2026-01-02T12:00:00Z") })
     }
     expect(clickRows(t)).toHaveLength(8)
     await t.api.remove({ id: one.id }, t.as("ada"))
@@ -103,17 +152,43 @@ describe("recordClicks", () => {
     const link = await t.api.create({ target: docs }, t.as("ada"))
     const recorded = await t.api.recordClicks({
       id: link.id,
-      at: ["2026-01-03T09:00:00Z", new Date("2026-01-01T09:00:00Z"), "2026-01-02T09:00:00Z"]
+      clicks: [{ at: "2026-01-03T09:00:00Z" }, { at: new Date("2026-01-01T09:00:00Z") }, { at: "2026-01-02T09:00:00Z" }]
     })
     expect(recorded).toMatchObject({ id: link.id, clicks: 3, lastClickedAt: new Date("2026-01-03T09:00:00Z") })
     // An older click doesn't move the last click back.
-    const older = await t.api.recordClicks({ id: link.id, at: at("2025-12-01T09:00:00Z") })
+    const older = await t.api.recordClicks({ id: link.id, clicks: clicks("2025-12-01T09:00:00Z") })
     expect(older).toMatchObject({ clicks: 4, lastClickedAt: new Date("2026-01-03T09:00:00Z") })
     expect(clickRows(t)).toHaveLength(4)
     // More than one statement's worth of rows goes in one batch.
-    const many = Array.from({ length: 45 }, (_, index) => new Date(Date.UTC(2026, 0, 10, 0, index)))
-    expect((await t.api.recordClicks({ id: link.id, at: many })).clicks).toBe(49)
+    const many = Array.from({ length: 45 }, (_, index) => ({ at: new Date(Date.UTC(2026, 0, 10, 0, index)) }))
+    expect((await t.api.recordClicks({ id: link.id, clicks: many })).clicks).toBe(49)
     expect(clickRows(t)).toHaveLength(49)
+  })
+
+  it("records where each click was opened, keeping only the referring site", async () => {
+    const t = setup()
+    const link = await t.api.create({ target: docs }, t.as("ada"))
+    const granting = await t.api.create({ target: inv1, grantsView: true }, t.as("ada"))
+    await t.api.recordClicks({
+      id: link.id,
+      clicks: [
+        { at: "2026-01-01T09:00:00Z", host: "Links.Acme.test", country: "FR", referrer: "https://news.example/a?b=c" },
+        { at: "2026-01-01T10:00:00Z" }
+      ]
+    })
+    await t.api.recordClicks({ id: granting.id, clicks: [{ at: "2026-01-01T11:00:00Z" }] })
+    expect(clickRows(t).map(({ host, country, referrer, outcome }) => ({ host, country, referrer, outcome }))).toEqual([
+      { host: "links.acme.test", country: "FR", referrer: "https://news.example", outcome: "opened" },
+      { host: null, country: null, referrer: null, outcome: "opened" },
+      { host: null, country: null, referrer: null, outcome: "granted" }
+    ])
+    for (const click of [
+      { at: "2026-01-01T09:00:00Z", country: "fr" },
+      { at: "2026-01-01T09:00:00Z", host: "links acme" },
+      { at: "2026-01-01T09:00:00Z", referrer: "" }
+    ]) {
+      await expectCode(t.api.recordClicks({ id: link.id, clicks: [click] }), "INVALID_INPUT")
+    }
   })
 
   it("deletes the rows it wrote for a link removed meanwhile, where foreign keys aren't enforced", async () => {
@@ -129,7 +204,7 @@ describe("recordClicks", () => {
       }
       return prepare(sql)
     }) as typeof sqlite.prepare
-    await expectCode(t.api.recordClicks({ id: link.id, at: at("2026-01-01T00:00:00Z") }), "NOT_FOUND")
+    await expectCode(t.api.recordClicks({ id: link.id, clicks: clicks("2026-01-01T00:00:00Z") }), "NOT_FOUND")
     sqlite.prepare = prepare
     expect(clickRows(t)).toHaveLength(0)
   })
@@ -137,15 +212,23 @@ describe("recordClicks", () => {
   it("refuses times later than now and links the caller can't manage, and is server only", async () => {
     const t = setup()
     const link = await t.api.create({ target: docs }, t.as("ada"))
-    await expectCode(t.api.recordClicks({ id: link.id, at: [new Date(Date.now() + 60 * 60_000)] }), "INVALID_INPUT")
-    await expectCode(t.api.recordClicks({ id: link.id, at: at("2026-01-01T00:00:00Z") }, t.as("gus")), "NOT_FOUND")
-    await expectCode(t.api.recordClicks({ id: "missing", at: at("2026-01-01T00:00:00Z") }), "NOT_FOUND")
-    await expectCode(t.api.recordClicks({ id: link.id, at: at("2010-12-31T23:59:59Z") }), "INVALID_INPUT")
-    const posted = await t.post("recordClicks", { id: link.id, at: ["2026-01-01T00:00:00Z"] }, "ada")
+    await expectCode(
+      t.api.recordClicks({ id: link.id, clicks: [{ at: new Date(Date.now() + 60 * 60_000) }] }),
+      "INVALID_INPUT"
+    )
+    await expectCode(
+      t.api.recordClicks({ id: link.id, clicks: clicks("2026-01-01T00:00:00Z") }, t.as("gus")),
+      "NOT_FOUND"
+    )
+    await expectCode(t.api.recordClicks({ id: "missing", clicks: clicks("2026-01-01T00:00:00Z") }), "NOT_FOUND")
+    await expectCode(t.api.recordClicks({ id: link.id, clicks: clicks("2010-12-31T23:59:59Z") }), "INVALID_INPUT")
+    const posted = await t.post("recordClicks", { id: link.id, clicks: [{ at: "2026-01-01T00:00:00Z" }] }, "ada")
     expect(posted.ok).toBe(false)
     expect(clickRows(t)).toHaveLength(0)
     // A manager's server code may record clicks on their links.
-    expect((await t.api.recordClicks({ id: link.id, at: at("2026-01-01T00:00:00Z") }, t.as("ada"))).clicks).toBe(1)
+    expect(
+      (await t.api.recordClicks({ id: link.id, clicks: clicks("2026-01-01T00:00:00Z") }, t.as("ada"))).clicks
+    ).toBe(1)
   })
 })
 
@@ -156,9 +239,9 @@ describe("clicksByDay", () => {
     const other = await t.api.create({ target: docs }, t.as("ada"))
     await t.api.recordClicks({
       id: link.id,
-      at: at("2026-01-01T00:00:00Z", "2026-01-01T23:59:59Z", "2026-01-03T12:00:00Z", "2026-01-04T00:00:00Z")
+      clicks: clicks("2026-01-01T00:00:00Z", "2026-01-01T23:59:59Z", "2026-01-03T12:00:00Z", "2026-01-04T00:00:00Z")
     })
-    await t.api.recordClicks({ id: other.id, at: at("2026-01-02T12:00:00Z") })
+    await t.api.recordClicks({ id: other.id, clicks: clicks("2026-01-02T12:00:00Z") })
     const days = await t.api.clicksByDay({ id: link.id, from: "2026-01-01", to: "2026-01-03" }, t.as("ada"))
     expect(days).toEqual({
       days: [
@@ -177,7 +260,7 @@ describe("clicksByDay", () => {
     const link = await t.api.create({ target: docs }, t.as("ada"))
     await t.api.recordClicks({
       id: link.id,
-      at: at(
+      clicks: clicks(
         // Kathmandu is 5:45 ahead: 23:59 on 1 January there, then midnight on the 2nd.
         "2026-01-01T18:14:00Z",
         "2026-01-01T18:15:00Z",
@@ -219,7 +302,7 @@ describe("clicksByDay", () => {
     // Samoa skipped 30 December 2011, going from the 29th straight to the 31st.
     await t.api.recordClicks({
       id: link.id,
-      at: at("2019-10-24T21:30:00Z", "2011-12-30T09:59:00Z", "2011-12-30T10:00:00Z")
+      clicks: clicks("2019-10-24T21:30:00Z", "2011-12-30T09:59:00Z", "2011-12-30T10:00:00Z")
     })
     const amman = await t.api.clicksByDay(
       { id: link.id, from: "2019-10-25", to: "2019-10-25", timeZone: "Asia/Amman" },
@@ -246,7 +329,7 @@ describe("clicksByDay", () => {
     const t = setup()
     const link = await t.api.create({ target: docs }, t.as("ada"))
     // Nuuk went from 23:00 on 28 March 2026 straight to 00:00 on the 29th, at 01:00 UTC, so the 29th starts then.
-    await t.api.recordClicks({ id: link.id, at: at("2026-03-29T00:59:00Z", "2026-03-29T01:00:00Z") })
+    await t.api.recordClicks({ id: link.id, clicks: clicks("2026-03-29T00:59:00Z", "2026-03-29T01:00:00Z") })
     const nuuk = await t.api.clicksByDay(
       { id: link.id, from: "2026-03-28", to: "2026-03-29", timeZone: "America/Nuuk" },
       t.as("ada")
@@ -305,9 +388,9 @@ describe("clickTotals", () => {
     const second = await t.api.create({ target: docs }, t.as("ada"))
     const quiet = await t.api.create({ target: docs }, t.as("ada"))
     const globex = await t.api.create({ target: docs }, t.as("gus"))
-    await t.api.recordClicks({ id: first.id, at: at("2026-01-01T10:00:00Z", "2026-01-05T10:00:00Z") })
-    await t.api.recordClicks({ id: second.id, at: at("2026-01-02T10:00:00Z", "2026-01-03T10:00:00Z") })
-    await t.api.recordClicks({ id: globex.id, at: at("2026-01-02T10:00:00Z") })
+    await t.api.recordClicks({ id: first.id, clicks: clicks("2026-01-01T10:00:00Z", "2026-01-05T10:00:00Z") })
+    await t.api.recordClicks({ id: second.id, clicks: clicks("2026-01-02T10:00:00Z", "2026-01-03T10:00:00Z") })
+    await t.api.recordClicks({ id: globex.id, clicks: clicks("2026-01-02T10:00:00Z") })
     const totals = await t.api.clickTotals(
       {
         ids: [second.id, first.id, quiet.id, globex.id, "missing", first.id],
@@ -331,6 +414,79 @@ describe("clickTotals", () => {
   })
 })
 
+describe("clicksBy", () => {
+  const range = { from: "2026-01-01", to: "2026-01-31" }
+
+  it("counts the links' clicks by host, country, referring site or outcome, most first, with `null` last", async () => {
+    const t = setup()
+    const first = await t.api.create({ target: docs }, t.as("ada"))
+    const second = await t.api.create({ target: inv1, grantsView: true }, t.as("ada"))
+    const globex = await t.api.create({ target: docs }, t.as("gus"))
+    await t.api.recordClicks({
+      id: first.id,
+      clicks: [
+        { at: "2026-01-02T10:00:00Z", host: "links.acme.test", country: "DE", referrer: "https://news.example/a" },
+        { at: "2026-01-03T10:00:00Z", host: "links.acme.test", country: "FR" },
+        { at: "2026-01-04T10:00:00Z", host: "app.test", country: "DE", referrer: "https://news.example/b" },
+        // Outside the range.
+        { at: "2026-02-01T10:00:00Z", host: "app.test", country: "US" }
+      ]
+    })
+    await t.api.recordClicks({
+      id: second.id,
+      clicks: [{ at: "2026-01-05T10:00:00Z", host: "app.test", country: "FR", referrer: "https://chat.example" }]
+    })
+    await t.api.recordClicks({ id: globex.id, clicks: [{ at: "2026-01-05T10:00:00Z", host: "links.globex.test" }] })
+    const ids = [first.id, second.id, globex.id, "missing"]
+    const by = async (dimension: "host" | "country" | "referrer" | "outcome", limit?: number) =>
+      t.api.clicksBy({ ids, by: dimension, ...range, ...(limit === undefined ? {} : { limit }) }, t.as("ada"))
+    // Ties go in alphabetical order. Globex's link and ids of no link are left out.
+    expect(await by("host")).toEqual({
+      values: [
+        { value: "app.test", clicks: 2 },
+        { value: "links.acme.test", clicks: 2 }
+      ],
+      total: 4
+    })
+    expect(await by("country")).toEqual({
+      values: [
+        { value: "DE", clicks: 2 },
+        { value: "FR", clicks: 2 }
+      ],
+      total: 4
+    })
+    expect(await by("referrer")).toEqual({
+      values: [
+        { value: "https://news.example", clicks: 2 },
+        { value: "https://chat.example", clicks: 1 },
+        { value: null, clicks: 1 }
+      ],
+      total: 4
+    })
+    expect(await by("outcome")).toEqual({
+      values: [
+        { value: "opened", clicks: 3 },
+        { value: "granted", clicks: 1 }
+      ],
+      total: 4
+    })
+    // `limit` keeps the most clicked, and the total still counts every click.
+    expect(await by("referrer", 1)).toEqual({ values: [{ value: "https://news.example", clicks: 2 }], total: 4 })
+    // Trusted server code reads any link's.
+    const all = await t.api.clicksBy({ ids, by: "host", ...range })
+    expect(all.values).toContainEqual({ value: "links.globex.test", clicks: 1 })
+  })
+
+  it("is for signed-in people and trusted server code, and checks its input", async () => {
+    const t = setup()
+    const link = await t.api.create({ target: docs }, t.as("ada"))
+    const posted = await t.post("clicksBy", { ids: [link.id], by: "host", ...range })
+    expect(posted.status).toBe(401)
+    await expectCode(t.api.clicksBy({ ids: [link.id], by: "host", ...range, limit: 51 }, t.as("ada")), "INVALID_INPUT")
+    await expectCode(t.api.clicksBy({ ids: [link.id], by: "city" as "host", ...range }, t.as("ada")), "INVALID_INPUT")
+  })
+})
+
 describe("listing by clicks", () => {
   it("lists the most opened links first, then the newest, a page at a time", async () => {
     const t = setup()
@@ -338,11 +494,14 @@ describe("listing by clicks", () => {
     for (let index = 0; index < 5; index += 1) {
       made.push(await t.api.create({ target: docs }, t.as("ada")))
     }
-    const clicks = [3, 0, 7, 3, 1]
+    const counts = [3, 0, 7, 3, 1]
     for (const [index, link] of made.entries()) {
-      const count = clicks[index] ?? 0
+      const count = counts[index] ?? 0
       if (count > 0) {
-        await t.api.recordClicks({ id: link.id, at: Array.from({ length: count }, () => new Date("2026-01-01")) })
+        await t.api.recordClicks({
+          id: link.id,
+          clicks: Array.from({ length: count }, () => ({ at: new Date("2026-01-01") }))
+        })
       }
     }
     const first = await t.api.list({ sort: "clicks", limit: 3 }, t.as("ada"))

@@ -44,7 +44,9 @@ Then open <http://127.0.0.1:4190>. `build` and `preview` run the production buil
 - **Short links** from [`@better-apps/short-links`](../../packages/features/short-links/README.md) share invoices. The
   invoice's **Share** button opens a dialog that creates a link at `/s/{code}`, optionally one that lets anyone with it
   view the invoice without signing in, and lists the invoice's links with how often each was opened. Each can be copied,
-  turned off and on, or deleted. Links are shared on the workspace's primary domain once it's ready, such as
+  turned off and on, or deleted. Under them, the last 30 days show on which domain the links were opened, from which
+  country and referring site, and whether they gave access, through `clicksBy`. Countries come from Cloudflare, so they
+  show as unknown on your machine. Links are shared on the workspace's primary domain once it's ready, such as
   `acme.better-invoices.localhost:4190/s/{code}`, or else on its first ready domain, and on the app's own address while
   none is ready. A ready domain opens the workspace's links, and any other host, such as a pending domain, opens none.
   The example has no organizations, so a code is unique across the app on every host. Invoices open on the app's own
@@ -55,7 +57,8 @@ Then open <http://127.0.0.1:4190>. `build` and `preview` run the production buil
   are shared too. Invoices are for signed-in people, so the invoice page checks
   `app.subjects.canView(null, ref, { request })` for signed-out visitors, which a link that grants access allows. Such a
   visitor also reads the invoice's comments, with their reactions and files, without a way to add any. The dialog is
-  `src/invoice-share.tsx`, the links are set up in `src/features.ts`, and `src/routes/s/$.ts` serves them.
+  `src/invoice-share.tsx`, its activity `src/link-activity.tsx`, the links are set up in `src/features.ts`, and
+  `src/routes/s/$.ts` serves them.
 - **Files** from [`@better-apps/attachments`](../../packages/features/attachments/README.md) go on invoices and on
   comments. The invoice page has a Files panel: add files with the button or by dropping them on the panel, watch each
   upload's progress, try a failed one again, open or download a file, move it up or down, and delete it. Whoever added a
