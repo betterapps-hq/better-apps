@@ -81,6 +81,24 @@ describe("useAttachmentsUploader", () => {
     expect(calls).not.toContain("deleteFile")
   })
 
+  it("makes no call as the next person for an upload a reset stopped while it was being prepared", async () => {
+    const { wrapper, options, calls, holdAnswer } = rendered()
+    const { result } = renderHook(
+      () => ({ uploader: useAttachmentsUploader(inv1, options), client: useAttachmentsClient() }),
+      { wrapper }
+    )
+    const release = holdAnswer("createUpload")
+    await act(() => result.current.uploader.add([pick("hello")]))
+    await waitFor(() => expect(calls).toContain("createUpload"))
+    act(() => result.current.client.reset())
+    const sent = calls.length
+    release()
+    await pause()
+    expect(result.current.uploader.getState().items).toEqual([])
+    // Nothing goes out after the reset, as the next person. The sweep deletes the prepared file.
+    expect(calls.slice(sent)).toEqual([])
+  })
+
   it("drops another subject type's limits while this one's settings load", async () => {
     const { wrapper, options, holdCall } = rendered()
     const { result, rerender } = renderHook(({ target }) => useAttachmentsUploader(target, options), {

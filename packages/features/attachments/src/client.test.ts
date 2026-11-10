@@ -300,6 +300,13 @@ describe("attachments client", () => {
     expect(requests.filter((name) => name === "listFiles")).toHaveLength(1)
   })
 
+  it("ends an engine's prepare with a reset, though it has no signal of its own", async () => {
+    const { attachments } = browser()
+    const preparing = attachments.prepareUpload(pick("next"), inv1)
+    attachments.reset()
+    await expect(preparing).rejects.toMatchObject({ code: "ABORTED" })
+  })
+
   it("deletes files, and takes a file on its own off the records it's on", async () => {
     const { attachments, count } = browser()
     const file = await attachments.upload(pick("mine"), { owner: "user" })

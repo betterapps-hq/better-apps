@@ -400,6 +400,7 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
   /**
    * The first step of an upload, for an engine that sends the bytes itself, such as UploadCN's: checks the file against
    * the loaded limits and asks the server where to send it. Send the bytes as `upload` says, then call `finishUpload`.
+   * `reset` cancels it, as it does every call under way, with or without a `signal`.
    */
   async function prepareUpload(
     file: Blob & { name?: string },
@@ -408,11 +409,12 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
   ): Promise<PreparedUpload> {
     const contentType = cleanContentType(file.type) ?? "application/octet-stream"
     checkLocally(target, contentType, file.size)
+    // So an upload the previous person started never goes on as the next one's.
     const created = await (call(
       "attachments",
       "createUpload",
       { ...target, name, contentType, size: file.size },
-      { signal }
+      { signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal }
     ) as Promise<Serialized<CreateUploadResult>>)
     const upload = { ...created.upload, expiresAt: new Date(created.upload.expiresAt) }
     return { file: reviveFile<FileInfo>(created.file), upload, target }
