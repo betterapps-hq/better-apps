@@ -98,6 +98,18 @@ export interface LiveViewer {
 }
 
 // @public
+export interface MoveFinishedData {
+    fromOrgId: string;
+    records: {
+        subjectType: string;
+        count: number;
+    }[];
+    subjectId: string;
+    subjectType: string;
+    toOrgId: string;
+}
+
+// @public
 export function normalizeEmoji(value: string): string;
 
 // @public
@@ -148,12 +160,18 @@ export const reactionEvents: {
     userId: string;
     orgId: string | null;
     }>;
+    "move.finished": EventDefinition<MoveFinishedData>;
     "cleanup.continued": EventDefinition<    {
     records: {
     subjectType: string;
     subjectIds: string[];
     }[];
-    toOrgId?: string | undefined;
+    move?: (Omit<MoveFinishedData, "subjectType" | "subjectId"> & {
+    subject: {
+    subjectType: string;
+    subjectId: string;
+    };
+    }) | undefined;
     }>;
 };
 
@@ -210,12 +228,18 @@ export function reactions<const Options extends ReactionsOptions>(options: Optio
         userId: string;
         orgId: string | null;
         }>;
+        "move.finished": EventDefinition<MoveFinishedData>;
         "cleanup.continued": EventDefinition<    {
         records: {
         subjectType: string;
         subjectIds: string[];
         }[];
-        toOrgId?: string | undefined;
+        move?: (Omit<MoveFinishedData, "subjectType" | "subjectId"> & {
+        subject: {
+        subjectType: string;
+        subjectId: string;
+        };
+        }) | undefined;
         }>;
     };
     readonly usesSubjects: string[];

@@ -39,6 +39,20 @@ export interface ReactionRemovedData extends ReactionEventData {
   bulk?: boolean | undefined
 }
 
+/** What `move.finished` carries. */
+export interface MoveFinishedData {
+  /** The subject type of the record whose move reactions followed, such as `comments.thread`. */
+  subjectType: string
+  /** That record's id. */
+  subjectId: string
+  /** The organization it moved from, or `""` for none. */
+  fromOrgId: string
+  /** The organization it moved to, or `""` for none. */
+  toOrgId: string
+  /** How many records of each subject type moved along, such as the thread and its comments, with reactions or not. */
+  records: { subjectType: string; count: number }[]
+}
+
 /** The events reactions emit. Browsers get them through `toClientEvent`, which checks the viewer can see the record. */
 export const reactionEvents = {
   "reaction.added": defineEvent<ReactionEventData>(),
@@ -50,12 +64,20 @@ export const reactionEvents = {
   /** A person's reactions were removed, in one organization, or in all of them when `orgId` is `null`. */
   "user.removed": defineEvent<{ userId: string; orgId: string | null }>(),
   /**
+   * Reactions finished moving after a record that moved to another organization, such as a comments' thread, with the
+   * records that moved along. Browsers never get it.
+   */
+  "move.finished": defineEvent<MoveFinishedData>(),
+  /**
    * Reactions' own: what's left of cleaning up after records that went away or moved, such as comments' threads, which
    * reactions continue in the next `app.deliverEvents()` run. Browsers never get it.
    */
   "cleanup.continued": defineEvent<{
     records: { subjectType: string; subjectIds: string[] }[]
-    toOrgId?: string | undefined
+    /** For a move, the record it follows, such as a thread for its comments, and what `move.finished` reports. */
+    move?:
+      | (Omit<MoveFinishedData, "subjectType" | "subjectId"> & { subject: { subjectType: string; subjectId: string } })
+      | undefined
   }>()
 }
 

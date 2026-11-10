@@ -24,7 +24,13 @@ import {
 } from "./access.js"
 import { isEmoji, maxEmojiLength, normalizeEmoji } from "./emoji.js"
 import { ReactionsError } from "./errors.js"
-import { reactionEvents, type ReactionEventData, type ReactionRemovedData, type RemovalReason } from "./events.js"
+import {
+  reactionEvents,
+  type ReactionEventData,
+  type ReactionRemovedData,
+  type ReactionsEventData,
+  type RemovalReason
+} from "./events.js"
 import type {
   EmojiList,
   ListReactionsInput,
@@ -473,11 +479,11 @@ const reactionsOn =
   async (limit: number): Promise<Reaction[]> =>
     (await pageOf(db, ref.subjectType, [ref.subjectId], limit, { notOrgId })).rows
 
-/** Records to clean up after, by subject type, and the organization they moved to, when they moved. */
-interface Cleanup {
-  records: { subjectType: string; subjectIds: string[] }[]
-  toOrgId?: string | undefined
-}
+/**
+ * Records to clean up after, by subject type. For a move, the organization they moved to, and the record whose move they
+ * follow, such as a thread for its comments.
+ */
+type Cleanup = ReactionsEventData["cleanup.continued"]
 
 /**
  * How many lists of ids one delivery of a cleanup reads looking for reactions. With one page of removals or moves, a
@@ -490,23 +496,20 @@ const cleanupBatches = 3
 /**
  * Removes or moves the reactions on records that went away or moved, such as comments' threads: one page of them per
  * delivery, reading at most `cleanupReads` lists of ids to find it. What's left continues with a `cleanup.continued`
- * event in the next `app.deliverEvents()` run. Subject types reactions no longer set up are skipped.
+ * event in the next `app.deliverEvents()` run, and the last page of a move emits `move.finished`. Subject types
+ * reactions no longer set up are skipped.
  */
 async function cleanUp(config: Config, writer: Writer & Pick<Context, "subjects">, job: Cleanup) {
-  const { toOrgId } = job
+  const { move } = job
+  const toOrgId = move?.toOrgId
   const records = job.records.filter(
     (record) => record.subjectIds.length > 0 && Object.hasOwn(config, record.subjectType)
   )
-  if (toOrgId !== undefined && records.length > 0) {
-    // A move runs over several deliveries, so its records may have moved again since. They move together, as a thread
-    // and its comments do, so the first of each kind tells where they are; one no longer in this job's organization
-    // stops it, so an older job never undoes a newer move.
-    const orgIds = await orgsOf(
-      writer.subjects,
-      records.map((record) => ({ subjectType: record.subjectType, subjectId: record.subjectIds[0] as string })),
-      null
-    )
-    if (orgIds.some((orgId) => orgId !== toOrgId)) {
+  if (move) {
+    // A move runs over several deliveries, so the record it follows may have moved again since, or gone; either stops
+    // it, so an older job never undoes a newer move. Records of its that went away meanwhile, such as a deleted comment,
+    // don't stop it: their reactions go with their own removal.
+    if ((await orgOf(writer.subjects, move.subject, null)) !== move.toOrgId) {
       return
     }
   }
@@ -539,6 +542,19 @@ async function cleanUp(config: Config, writer: Writer & Pick<Context, "subjects"
   }
   if (records.length > 0) {
     writer.emit("cleanup.continued", { ...job, records } satisfies Cleanup, { later: true })
+  } else if (move) {
+    // Left for later, as a next page is, so it's written with this delivery's removal from the outbox, under an id
+    // derived from it, and a retried or overlapping delivery of the last page emits it once.
+    writer.emit(
+      "move.finished",
+      {
+        ...move.subject,
+        fromOrgId: move.fromOrgId,
+        toOrgId: move.toOrgId,
+        records: move.records
+      } satisfies ReactionsEventData["move.finished"],
+      { later: true }
+    )
   }
 }
 
@@ -1069,10 +1085,19 @@ function commentHandlers(config: Config): Record<string, EventHandler> | null {
       await cleanUp(config, context, { records: threadRecords([data.thread.id], data.commentIds ?? []) })
     },
     "thread.moved": async (event, context) => {
-      const data = event.data as ThreadData
+      const data = event.data as ThreadData & { fromOrgId: string }
+      const records = threadRecords([data.thread.id], data.commentIds ?? [])
       await cleanUp(config, context, {
-        records: threadRecords([data.thread.id], data.commentIds ?? []),
-        toOrgId: data.thread.orgId
+        records,
+        move: {
+          subject: { subjectType: commentTypes.thread, subjectId: data.thread.id },
+          fromOrgId: data.fromOrgId,
+          toOrgId: data.thread.orgId,
+          records: records.map((record) => ({
+            subjectType: record.subjectType,
+            count: new Set(record.subjectIds).size
+          }))
+        }
       })
     }
   }

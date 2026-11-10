@@ -107,7 +107,9 @@ moves takes its and its comments' reactions along. Each delivery handles one pag
 ten lists of 90 ids to find them, so a thread of any size stays under D1's 50 queries per request on its free plan, and
 the rest continues with reactions' own `cleanup.continued` event in the next `app.deliverEvents()` run, so call it from
 a scheduled job. A move continues only while the thread is still in the organization it moved to, so an older move never
-undoes a newer one. Subject types reactions are no longer set up on are skipped. Subscribing to events needs the core's
+undoes a newer one, and a thread deleted meanwhile stops it, since its deletion takes the reactions. A comment deleted
+during a move doesn't stop it: the move carries on with the thread's other comments, and the comment's own deletion
+takes its reactions. Subject types reactions are no longer set up on are skipped. Subscribing to events needs the core's
 outbox table, which `better-apps generate` adds.
 
 ## Events
@@ -122,6 +124,14 @@ also emits `subject.changed` for every record it touched, written with the page,
 when a job stops partway. Each page of a move emits `subject.moved` for every record it moved reactions on, the same
 way, so a record without reactions gets none, and a busy one may get one per page. `subject.removed` and `user.removed`
 follow the actions above once they're done.
+
+`move.finished` follows the last page of a thread's move, once its reactions and its comments' are all in the new
+organization. It carries the thread as `subjectType` and `subjectId`, `fromOrgId` and `toOrgId`, and `records`, how many
+records of each subject type moved along, such as `{ subjectType: "comments.comment", count: 12 }`, with reactions or
+not. It's written with the last delivery's removal from the outbox, under an id derived from that delivery, so it's
+emitted once even when that delivery is retried or two runs deliver it at once, and it reaches subscribers in the next
+`app.deliverEvents()` run. A move stopped by a newer move of the thread, or by the thread's deletion, emits none.
+Browsers never get it.
 
 `toClientEvent({ event, viewer, request? })`, a server-only action, turns a reaction event into one a viewer's browser
 may see, or `null` when they can't see the record. With the viewer's request, grants it carries count as they do for
