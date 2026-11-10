@@ -1,6 +1,7 @@
 import { elementAnchor } from "@better-apps/anchors"
 // A test app with comments on invoices, where each invoice belongs to an organization and may be locked, and on public
-// pages anyone can read. An `audit` feature records every comments event it's delivered.
+// pages anyone can read. An `audit` feature records every comments event it's delivered, and a `shares` feature lets a
+// request see the invoices its `x-share` header lists, the way a share link does.
 import { createTestApp, type TestUser } from "@better-apps/testing"
 import { defineFeature, type BetterAppsEvent, type EventHandler, type SubjectDefinition } from "better-apps"
 import { commentEvents, comments, CommentsError, type CommentsOptions } from "../src/index.js"
@@ -58,6 +59,22 @@ export const options = {
   }
 } satisfies CommentsOptions
 
+/** A request carrying a grant to see the given invoices, such as one a share link's visitor makes. */
+export function sharing(...invoiceIds: string[]): Request {
+  return new Request("https://app.test/", { headers: { "x-share": invoiceIds.join(",") } })
+}
+
+const shares = defineFeature({
+  id: "shares",
+  grants: {
+    canViewMany: (checks) =>
+      checks.map(
+        ({ subjectType, subjectId, request }) =>
+          subjectType === "invoice" && (request.headers.get("x-share") ?? "").split(",").includes(subjectId)
+      )
+  }
+})
+
 /** Creates the app. `extra` changes the comments options, such as to add hooks, and `appSubjects` the app's subjects. */
 export function setup(extra: Partial<CommentsOptions> = {}, appSubjects: Record<string, SubjectDefinition> = {}) {
   const delivered: BetterAppsEvent[] = []
@@ -69,7 +86,7 @@ export function setup(extra: Partial<CommentsOptions> = {}, appSubjects: Record<
   const feature = comments({ ...options, ...extra } as typeof options)
   const { app, database, identity } = createTestApp({
     subjects: { ...subjects, ...appSubjects },
-    features: [feature, audit],
+    features: [feature, audit, shares],
     users
   })
   const as = (userId: UserId) => ({ actor: identity.actor(userId) })

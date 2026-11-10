@@ -28,13 +28,15 @@ import {
   listThreads,
   suggestMentions,
   toClientEvent,
+  toClientEvents,
   type ClientEvent,
+  type LiveViewer,
   type ThreadPage,
   type ThreadWithComments
 } from "./reads.js"
 import type { Config, Context } from "./runtime.js"
 import { commentModel, commentsSchema, threadModel, type Comment, type CommentThread } from "./schema.js"
-import { commentSubjects } from "./subjects.js"
+import { commentGrants, commentSubjects } from "./subjects.js"
 import { moveSubject, recountThreads, removeSubject, removeUser, type UpkeepStep } from "./upkeep.js"
 import {
   createThread,
@@ -176,6 +178,7 @@ export function comments<const Options extends CommentsOptions>(options: Options
     schema: commentsSchema(options.additionalFields),
     events: commentEvents,
     subjects: commentSubjects(config),
+    grants: commentGrants(config),
     usesSubjects: Object.keys(options.subjects),
     options,
     actions: {
@@ -224,9 +227,13 @@ export function comments<const Options extends CommentsOptions>(options: Options
         { actor: Actor | null; threadId: string } | { actor: Actor | null; thread: CommentThread },
         boolean
       >(null, canViewThread),
-      toClientEvent: serverAction<{ event: BetterAppsEvent; viewer: Actor | null }, ClientEvent | null>(
+      toClientEvent: serverAction<
+        { event: BetterAppsEvent; viewer: Actor | null; request?: Request | null | undefined },
+        ClientEvent | null
+      >(null, toClientEvent),
+      toClientEvents: serverAction<{ event: BetterAppsEvent; viewers: readonly LiveViewer[] }, (ClientEvent | null)[]>(
         null,
-        toClientEvent
+        toClientEvents
       )
     }
   })

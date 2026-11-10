@@ -382,6 +382,17 @@ export type FieldValue = string | number | boolean | Date | null | undefined | s
 export function getFeatureTables(features: readonly BetterAppsFeature[]): DatabaseSchema;
 
 // @public
+export interface GrantArgs {
+    reportError: (error: unknown) => void;
+}
+
+// @public
+export interface GrantCheck extends SubjectRef {
+    // (undocumented)
+    request: Request;
+}
+
+// @public
 export interface HandlerContext {
     waitUntil?(promise: Promise<unknown>): void;
 }
@@ -552,9 +563,7 @@ export interface SubjectDefinition {
 
 // @public
 export interface SubjectGrants {
-    canViewMany(refs: readonly SubjectRef[], args: {
-        request: Request;
-    }, context: SubjectContext): readonly boolean[] | Promise<readonly boolean[]>;
+    canViewMany(checks: readonly GrantCheck[], args: GrantArgs, context: SubjectContext): readonly boolean[] | Promise<readonly boolean[]>;
 }
 
 // @public

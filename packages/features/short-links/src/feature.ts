@@ -4,6 +4,8 @@ import {
   defineRoute,
   type ActionContext,
   type Actor,
+  type GrantArgs,
+  type GrantCheck,
   type RouteContext,
   type SubjectContext,
   type SubjectGrants,
@@ -630,93 +632,146 @@ async function open(config: Config, context: RouteContext): Promise<Response> {
  * record is the organization's. So turning `grantView` off ends the access existing links give at once.
  */
 function mayGrant(config: Config, row: LinkRow): boolean {
-  const type = row.subjectType ?? ""
-  const rules = Object.hasOwn(config.subjects, type) ? config.subjects[type] : undefined
-  return (
-    rules !== undefined &&
-    rules.grantView !== undefined &&
-    rules.grantView !== false &&
-    (row.orgId === "" || row.owner === ownerKey("org", row.orgId))
-  )
+  return grantsOn(config, row.subjectType ?? "") && (row.orgId === "" || row.owner === ownerKey("org", row.orgId))
+}
+
+/** Whether links to a subject type may let people see its records at all. */
+function grantsOn(config: Config, subjectType: string): boolean {
+  const rules = Object.hasOwn(config.subjects, subjectType) ? config.subjects[subjectType] : undefined
+  return rules !== undefined && rules.grantView !== undefined && rules.grantView !== false
+}
+
+/** Splits codes into lists of at most 90, under D1's limit of 100 bound parameters. */
+function chunks<Item>(items: readonly Item[], size = 90): Item[][] {
+  const lists: Item[][] = []
+  for (let start = 0; start < items.length; start += size) {
+    lists.push(items.slice(start, start + size))
+  }
+  return lists
 }
 
 /**
- * Which subjects a request may see through the links in its cookie: one query for the links, cached for the request,
- * then each subject is granted by a link to it that's on, unexpired, and in the record's current organization.
+ * Which subjects each request may see through the links in its cookie: one query for every request's links, then each
+ * subject is granted by a link to it in that request's cookie that's on, unexpired, and in the record's current
+ * organization. Subject types whose links can't grant access cost nothing. Nothing is kept between checks, so a link
+ * turned off counts at once, even for a live connection that reuses its request.
  */
 function grantsFor(config: Config): SubjectGrants {
-  const read = new WeakMap<Request, Promise<LinkRow[]>>()
-  const makersChecked = new WeakMap<Request, Map<string, Promise<boolean>>>()
   return {
-    async canViewMany(refs: readonly SubjectRef[], { request }: { request: Request }, context: SubjectContext) {
-      const codes = grantCodes(request, config.cookie.name)
+    async canViewMany(checks: readonly GrantCheck[], { reportError }: GrantArgs, context: SubjectContext) {
+      const codesOf = checks.map(({ subjectType, request }) =>
+        grantsOn(config, subjectType) ? grantCodes(request, config.cookie.name) : []
+      )
+      const codes = [...new Set(codesOf.flat())]
       if (codes.length === 0) {
-        return refs.map(() => false)
-      }
-      let rows = read.get(request)
-      if (!rows) {
-        rows = context.db.findMany<LinkRow>({
-          model: linkModel,
-          where: [{ field: "code", operator: "in", value: codes }]
-        })
-        read.set(request, rows)
+        return checks.map(() => false)
       }
       const now = new Date()
-      const granting = (await rows).filter((row) => row.grantsView && isOpen(row, now) && mayGrant(config, row))
-      const links = refs.map((ref) =>
-        granting.filter((row) => row.subjectType === ref.subjectType && row.subjectId === ref.subjectId)
+      const byCode = new Map(
+        (
+          await readLinks(
+            context,
+            codes,
+            checks.filter((_, index) => (codesOf[index] ?? []).length > 0)
+          )
+        )
+          .filter((row) => row.grantsView && isOpen(row, now) && mayGrant(config, row))
+          .map((row) => [row.code, row])
       )
-      const found = links.flat()
+      const links = checks.map((check, index) =>
+        (codesOf[index] ?? []).flatMap((code) => {
+          const row = byCode.get(code)
+          return row && row.subjectType === check.subjectType && row.subjectId === check.subjectId ? [row] : []
+        })
+      )
+      const found = [...new Set(links.flat())]
       if (found.length === 0) {
-        return refs.map(() => false)
+        return checks.map(() => false)
       }
-      // The record's organization must still be the link's.
-      const orgs = await context.subjects.getOrgIds(found.map(refOf))
-      const placed = found.filter((row, index) => (orgs[index] ?? "") === row.orgId)
+      // The record's organization must still be the link's, looked up once per record however many links it has.
+      const records = new Map(found.map((row) => [recordKey(refOf(row)), refOf(row)]))
+      const orgIds = await context.subjects.getOrgIds([...records.values()])
+      const orgOf = new Map([...records.keys()].map((key, index) => [key, orgIds[index] ?? ""]))
+      const placed = found.filter((row) => orgOf.get(recordKey(refOf(row))) === row.orgId)
       const valid = new Set(placed.filter((row) => row.orgId !== ""))
       const loose = placed.filter((row) => row.orgId === "")
       if (loose.length > 0) {
-        // Each link's maker is checked once per request, however many checks ask about the record.
-        const known = makersChecked.get(request) ?? new Map<string, Promise<boolean>>()
-        makersChecked.set(request, known)
-        const fresh = loose.filter((row) => !known.has(row.id))
-        if (fresh.length > 0) {
-          const answers = stillShared(config, context, fresh)
-          for (const [index, row] of fresh.entries()) {
-            known.set(
-              row.id,
-              answers.then((shared) => shared[index] === true)
-            )
-          }
-        }
-        const shared = await Promise.all(loose.map(async (row) => known.get(row.id)))
+        // Each link's maker is checked once, however many requests hold the link.
+        const answers = await stillShared(config, context, loose, reportError)
         for (const [index, row] of loose.entries()) {
-          if (shared[index]) {
+          if (answers[index]) {
             valid.add(row)
           }
         }
       }
-      return refs.map((_, index) => (links[index] ?? []).some((row) => valid.has(row)))
+      return checks.map((_, index) => (links[index] ?? []).some((row) => valid.has(row)))
     }
   }
 }
 
 const refOf = (row: LinkRow): SubjectRef => ({ subjectType: row.subjectType ?? "", subjectId: row.subjectId ?? "" })
 
+const recordKey = ({ subjectType, subjectId }: SubjectRef) => JSON.stringify([subjectType, subjectId])
+
+/**
+ * The links a batch of checks may be granted by, in as few queries as it takes: by their codes, 90 to a query, or, when
+ * the checks name fewer records than that takes, such as one record shown to many live viewers, by those records and
+ * matched to the codes here.
+ */
+async function readLinks(
+  context: SubjectContext,
+  codes: readonly string[],
+  checks: readonly SubjectRef[]
+): Promise<LinkRow[]> {
+  const records = new Map<string, Set<string>>()
+  for (const { subjectType, subjectId } of checks) {
+    records.set(subjectType, (records.get(subjectType) ?? new Set()).add(subjectId))
+  }
+  const byRecord = [...records].flatMap(([subjectType, ids]) => chunks([...ids]).map((list) => ({ subjectType, list })))
+  const byCode = chunks(codes)
+  if (byRecord.length < byCode.length) {
+    const wanted = new Set(codes)
+    const read = await Promise.all(
+      byRecord.map(async ({ subjectType, list }) =>
+        context.db.findMany<LinkRow>({
+          model: linkModel,
+          where: [
+            { field: "subjectType", value: subjectType },
+            { field: "subjectId", operator: "in", value: list },
+            { field: "grantsView", value: true }
+          ]
+        })
+      )
+    )
+    return read.flat().filter((row) => wanted.has(row.code))
+  }
+  const read = await Promise.all(
+    byCode.map(async (list) =>
+      context.db.findMany<LinkRow>({ model: linkModel, where: [{ field: "code", operator: "in", value: list }] })
+    )
+  )
+  return read.flat()
+}
+
 /**
  * The links outside any organization whose maker could still make them: they can see the record, and `canShare` and
  * `grantView` allow them. Such a link stands for its maker alone, so it grants nothing once they lose access. An
  * organization's links stand for the organization instead, and outlive the members who made them. When a check fails,
- * such as when the identity service is down, these links grant nothing for the request, and other links still count.
+ * such as when the identity service is down, these links grant nothing to any request in the batch being checked, and
+ * other links still count.
  */
-async function stillShared(config: Config, context: SubjectContext, rows: readonly LinkRow[]): Promise<boolean[]> {
+async function stillShared(
+  config: Config,
+  context: SubjectContext,
+  rows: readonly LinkRow[],
+  reportError: GrantArgs["reportError"]
+): Promise<boolean[]> {
   try {
     const shared = new Set(await sharedByMaker(config, context, rows))
     return rows.map((row) => shared.has(row))
   } catch (error) {
-    // Grants have no onError to report to, so the failure is logged the way the default onError logs, rather than links
-    // quietly stopping granting, such as after an identity key rotation.
-    console.error("Better Apps (shortLinks): links made outside an organization grant nothing for this request.", error)
+    // Reported, so links don't quietly stop granting, such as after an identity key rotation.
+    reportError(error)
     return rows.map(() => false)
   }
 }

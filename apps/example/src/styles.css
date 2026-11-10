@@ -1019,7 +1019,7 @@ tr[data-field]:hover .comment-here {
     border-color 120ms;
 }
 
-.reaction:hover {
+button.reaction:hover {
   background: var(--accent);
 }
 

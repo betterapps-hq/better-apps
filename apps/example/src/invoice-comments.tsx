@@ -54,7 +54,7 @@ import {
   XIcon
 } from "lucide-react"
 import { createContext, use, useEffect, useRef, useState, type FormEvent, type ReactNode, type RefObject } from "react"
-import { initials } from "./app-shell"
+import { initials, SignInPrompt } from "./app-shell"
 import type { CommentTypes } from "./app-types"
 import { CommentReactions, RemoveReactionsMenu } from "./comment-reactions"
 import { formatTime, plural } from "./format"
@@ -220,8 +220,12 @@ export function CommentHere({ field, label }: Detail) {
   )
 }
 
-/** The invoice's threads, newest activity first, with a form to start one. */
+/**
+ * The invoice's threads, newest activity first, with a form to start one. Someone signed out sees them only through a
+ * share link, so for them it's read-only.
+ */
 export function CommentsPanel() {
+  const readOnly = useViewer() === null
   const context = useInvoiceComments()
   const { subject, filter, setFilter } = context
   const { threads, state, error, hasMore, loadMore, refresh } = useThreads<CommentTypes>(subject)
@@ -253,7 +257,7 @@ export function CommentsPanel() {
           <ToggleGroupItem value="resolved">Resolved {resolved.length}</ToggleGroupItem>
         </ToggleGroup>
       </div>
-      <Composer />
+      {readOnly ? <SignInPrompt>to comment on this invoice.</SignInPrompt> : <Composer />}
       <AlertRegion manager={alerts} region={alertRegion} label="Comment alerts" />
       {state === "error" && (
         <Empty role="alert">
@@ -278,11 +282,13 @@ export function CommentsPanel() {
               <MessagesSquareIcon />
             </EmptyMedia>
             <EmptyTitle>{filter === "open" ? "No open threads" : "No resolved threads"}</EmptyTitle>
-            <EmptyDescription>
-              {filter === "open"
-                ? "Start a thread above, or hover a detail on the invoice to comment on it."
-                : "Threads you resolve move here."}
-            </EmptyDescription>
+            {!readOnly && (
+              <EmptyDescription>
+                {filter === "open"
+                  ? "Start a thread above, or hover a detail on the invoice to comment on it."
+                  : "Threads you resolve move here."}
+              </EmptyDescription>
+            )}
           </EmptyHeader>
         </Empty>
       )}
@@ -402,7 +408,7 @@ interface ThreadCardProps {
   onGone(): void
 }
 
-/** A thread with its comments, a reply form, and what can be done with it. */
+/** A thread with its comments, a reply form, and what can be done with it. Signed out, it only shows the comments. */
 function ThreadCard({ thread, onGone }: ThreadCardProps) {
   const viewer = useViewer()
   const { root, details, labelOf, highlight, setHighlight } = useInvoiceComments()
@@ -519,7 +525,8 @@ function ThreadCard({ thread, onGone }: ThreadCardProps) {
     if (comment.authorType !== "user") {
       return comment.authorName ?? "Unknown author"
     }
-    return users[comment.authorId]?.name ?? "Former user"
+    // A visitor with a share link gets the author's name on the comment, without their user id.
+    return users[comment.authorId]?.name ?? comment.authorName ?? "Former user"
   }
 
   // Points out the thread's detail on the invoice while the thread is hovered or has focus.
@@ -565,23 +572,25 @@ function ThreadCard({ thread, onGone }: ThreadCardProps) {
         {field && <MapPinIcon size={14} aria-hidden="true" style={{ color: "var(--pin)" }} />}
         <h3 id={titleId}>On {place}</h3>
         {thread.status === "resolved" && <Badge variant="secondary">Resolved</Badge>}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label={
-                  thread.status === "open" ? `Resolve the thread on ${place}` : `Reopen the thread on ${place}`
-                }
-                onClick={() => void changeStatus()}
-              />
-            }
-          >
-            {thread.status === "open" ? <CheckIcon /> : <RotateCcwIcon />}
-          </TooltipTrigger>
-          <TooltipContent>{thread.status === "open" ? "Resolve" : "Reopen"}</TooltipContent>
-        </Tooltip>
+        {viewer && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={
+                    thread.status === "open" ? `Resolve the thread on ${place}` : `Reopen the thread on ${place}`
+                  }
+                  onClick={() => void changeStatus()}
+                />
+              }
+            >
+              {thread.status === "open" ? <CheckIcon /> : <RotateCcwIcon />}
+            </TooltipTrigger>
+            <TooltipContent>{thread.status === "open" ? "Resolve" : "Reopen"}</TooltipContent>
+          </Tooltip>
+        )}
         {(canMove || viewer?.isOwner) && (
           <DropdownMenu>
             <DropdownMenuTrigger
@@ -650,49 +659,51 @@ function ThreadCard({ thread, onGone }: ThreadCardProps) {
           {reply.error.message}
         </p>
       )}
-      <form
-        className="reply"
-        onSubmit={(event) => {
-          event.preventDefault()
-          void submitReply()
-        }}
-      >
-        <label htmlFor={replyId} className="visually-hidden">
-          Reply to the thread on {place}
-        </label>
-        <MentionTextarea
-          id={replyId}
-          target={{ threadId: thread.id }}
-          rows={1}
-          maxLength={10_000}
-          required
-          placeholder={thread.status === "resolved" ? "Reply to reopen" : "Reply"}
-          draft={draft}
-          onDraftChange={setDraft}
-          onSubmitShortcut={() => void submitReply()}
-        />
-        <DraftFiles files={files} returnFocus={attachRef} />
-        {(draft.text.trim() !== "" || files.uploads.length > 0) && (
-          <div className="reply-actions">
-            <AttachButton files={files} buttonRef={attachRef} />
-            {files.busy && <span className="composer-hint">Files are still uploading</span>}
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setDraft(emptyDraft)
-                files.clear()
-              }}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" size="sm" aria-disabled={reply.status === "pending" || files.busy}>
-              Reply
-            </Button>
-          </div>
-        )}
-      </form>
+      {viewer && (
+        <form
+          className="reply"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void submitReply()
+          }}
+        >
+          <label htmlFor={replyId} className="visually-hidden">
+            Reply to the thread on {place}
+          </label>
+          <MentionTextarea
+            id={replyId}
+            target={{ threadId: thread.id }}
+            rows={1}
+            maxLength={10_000}
+            required
+            placeholder={thread.status === "resolved" ? "Reply to reopen" : "Reply"}
+            draft={draft}
+            onDraftChange={setDraft}
+            onSubmitShortcut={() => void submitReply()}
+          />
+          <DraftFiles files={files} returnFocus={attachRef} />
+          {(draft.text.trim() !== "" || files.uploads.length > 0) && (
+            <div className="reply-actions">
+              <AttachButton files={files} buttonRef={attachRef} />
+              {files.busy && <span className="composer-hint">Files are still uploading</span>}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setDraft(emptyDraft)
+                  files.clear()
+                }}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" size="sm" aria-disabled={reply.status === "pending" || files.busy}>
+                Reply
+              </Button>
+            </div>
+          )}
+        </form>
+      )}
     </article>
   )
 }
@@ -715,7 +726,8 @@ function CommentItem({ comment, author, pending, own, threadId, nameOf, onDelete
   const edit = useEditComment()
   const [editing, setEditing] = useState<Draft | null>(null)
   const menuRef = useRef<HTMLButtonElement>(null)
-  const deleted = comment.deletedAt !== null || comment.body === null
+  // A visitor with a share link gets each comment as text, with no body to edit.
+  const deleted = comment.deletedAt !== null || (comment.body === null && !comment.bodyText)
   const canDelete = !deleted && !pending && (own || viewer?.isOwner === true)
   const editId = `comment-${comment.id}-edit`
   const when = formatTime(comment.createdAt)
@@ -830,11 +842,11 @@ function CommentItem({ comment, author, pending, own, threadId, nameOf, onDelete
       )}
       {!deleted && !editing && (
         <p className="comment-body">
-          <CommentText body={comment.body as string} nameOf={nameOf} />
+          {comment.body === null ? comment.bodyText : <CommentText body={comment.body as string} nameOf={nameOf} />}
         </p>
       )}
       {!deleted && !pending && <CommentFileList commentId={comment.id} />}
-      {!deleted && !pending && !editing && <CommentReactions commentId={comment.id} />}
+      {!deleted && !pending && !editing && <CommentReactions commentId={comment.id} readOnly={viewer === null} />}
     </div>
   )
 }

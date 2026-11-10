@@ -19,6 +19,7 @@ import { StandardSchemaIssue } from 'better-apps';
 import { StandardSchemaV1 } from 'better-apps';
 import type { SubjectArgs } from 'better-apps';
 import { SubjectDefinition } from 'better-apps';
+import { SubjectGrants } from 'better-apps';
 
 // @public
 export interface AdditionalFields {
@@ -197,6 +198,7 @@ export function comments<const Options extends CommentsOptions>(options: Options
         }>;
     };
     readonly subjects: Record<string, SubjectDefinition>;
+    readonly grants: SubjectGrants;
     readonly usesSubjects: string[];
     readonly options: Options;
     readonly actions: {
@@ -343,10 +345,21 @@ export function comments<const Options extends CommentsOptions>(options: Options
         toClientEvent: ActionDefinition<StandardSchemaV1<{
         event: BetterAppsEvent;
         viewer: Actor | null;
+        request?: Request | null | undefined;
         }, {
         event: BetterAppsEvent;
         viewer: Actor | null;
+        request?: Request | null | undefined;
         }>, ClientEvent | null> & {
+            serverOnly?: true | undefined;
+        };
+        toClientEvents: ActionDefinition<StandardSchemaV1<{
+        event: BetterAppsEvent;
+        viewers: readonly LiveViewer[];
+        }, {
+        event: BetterAppsEvent;
+        viewers: readonly LiveViewer[];
+        }>, (ClientEvent | null)[]> & {
             serverOnly?: true | undefined;
         };
     };
@@ -533,6 +546,12 @@ export interface ListThreadsInput<SubjectType extends string = string, AnchorKin
     // (undocumented)
     subjectType: SubjectType;
     where?: Record<string, string | number | boolean | null> | undefined;
+}
+
+// @public
+export interface LiveViewer {
+    actor: Actor | null;
+    request?: Request | null | undefined;
 }
 
 // @public

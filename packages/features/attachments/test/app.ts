@@ -62,7 +62,7 @@ export function setup(extra: Partial<AttachmentsOptions> = {}, { signedUploads =
   // A share link: a request with `x-share: {invoiceId}` may see that invoice, as a share link's grant would allow.
   const share = defineFeature({
     id: "share",
-    grants: { canViewMany: (refs, { request }) => refs.map((ref) => ref.subjectId === request.headers.get("x-share")) }
+    grants: { canViewMany: (checks) => checks.map((check) => check.subjectId === check.request.headers.get("x-share")) }
   })
   const feature = attachments({
     storage,
