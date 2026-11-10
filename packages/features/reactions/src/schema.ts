@@ -6,6 +6,22 @@ export const reactionModel = "reaction"
 /** The model of the table that remembers reactions just removed, so each removal is reported once. */
 export const removalModel = "reactionRemoval"
 
+/** The model of the table that holds the latest move or deletion of each record whose moves reactions follow. */
+export const moveModel = "reactionMove"
+
+/**
+ * The latest move or deletion of a record, such as a comments' thread, that reactions follow, keyed by the record. A move
+ * job's pages go on only while it holds its record's row, so an older move never writes after a newer one.
+ */
+export type ReactionMove = {
+  /** The record, as `JSON.stringify([subjectType, subjectId])`. */
+  id: string
+  /** The id of the event that reported the move or deletion, such as comments' `thread.moved`. */
+  eventId: string
+  /** When that event was emitted, which orders moves whose events arrive out of order. */
+  eventAt: Date
+}
+
 /** One person's reaction with one emoji to one record. */
 export type Reaction = {
   id: string
@@ -49,5 +65,11 @@ export const reactionsSchema: FeatureSchema = {
   [removalModel]: {
     fields: { createdAt: { type: "date" } },
     indexes: [{ fields: ["createdAt"], name: "reaction_removal_by_time" }]
+  },
+  // One row per record whose move or deletion reactions followed, replaced by each newer one. Rows older than 30 days
+  // are cleared as moves start.
+  [moveModel]: {
+    fields: { eventId: { type: "string" }, eventAt: { type: "date" } },
+    indexes: [{ fields: ["eventAt"], name: "reaction_move_by_time" }]
   }
 }

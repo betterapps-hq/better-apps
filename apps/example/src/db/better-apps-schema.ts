@@ -98,6 +98,16 @@ export const reactionRemoval = sqliteTable(
   (table) => [index("reaction_removal_by_time").on(table.createdAt)]
 )
 
+export const reactionMove = sqliteTable(
+  "reaction_move",
+  {
+    id: text("id").primaryKey(),
+    eventId: text("event_id").notNull(),
+    eventAt: integer("event_at", { mode: "timestamp_ms" }).notNull()
+  },
+  (table) => [index("reaction_move_by_time").on(table.eventAt)]
+)
+
 export const shortLink = sqliteTable(
   "short_link",
   {

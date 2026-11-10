@@ -76,7 +76,11 @@ export const reactionEvents = {
     records: { subjectType: string; subjectIds: string[] }[]
     /** For a move, the record it follows, such as a thread for its comments, and what `move.finished` reports. */
     move?:
-      | (Omit<MoveFinishedData, "subjectType" | "subjectId"> & { subject: { subjectType: string; subjectId: string } })
+      | (Omit<MoveFinishedData, "subjectType" | "subjectId"> & {
+          subject: { subjectType: string; subjectId: string }
+          /** When the move's event was emitted, as an ISO date, which orders it among the record's moves. */
+          movedAt: string
+        })
       | undefined
   }>()
 }

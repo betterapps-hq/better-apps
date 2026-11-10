@@ -107,6 +107,9 @@ export interface MoveFinishedData {
 }
 
 // @public
+export const moveModel = "reactionMove";
+
+// @public
 export function normalizeEmoji(value: string): string;
 
 // @public
@@ -168,6 +171,7 @@ export const reactionEvents: {
     subjectType: string;
     subjectId: string;
     };
+    movedAt: string;
     }) | undefined;
     }>;
 };
@@ -182,6 +186,13 @@ export interface ReactionFilter<Types extends ReactionsTypes = ReactionsTypes> e
 
 // @public
 export const reactionModel = "reaction";
+
+// @public
+export type ReactionMove = {
+    id: string;
+    eventId: string;
+    eventAt: Date;
+};
 
 // @public
 export interface ReactionRemovedData extends ReactionEventData {
@@ -236,6 +247,7 @@ export function reactions<const Options extends ReactionsOptions>(options: Optio
         subjectType: string;
         subjectId: string;
         };
+        movedAt: string;
         }) | undefined;
         }>;
     };
