@@ -4,6 +4,7 @@ import {
   defineRoute,
   type ActionContext,
   type Actor,
+  type EventContext,
   type GrantArgs,
   type GrantCheck,
   type RouteContext,
@@ -14,6 +15,7 @@ import {
   type Where
 } from "better-apps"
 import { z } from "zod"
+import { click, eventSettings, grant, passed, perMinuteLimit, sampled, type EventSettings } from "./activity.js"
 import { codeLimits, generateCode, isValidCode, normalizeCode } from "./codes.js"
 import { grantCodes, grantCookie, isUnder, reachesHost, type CookieSettings } from "./cookie.js"
 import { ShortLinksError } from "./errors.js"
@@ -61,6 +63,7 @@ interface Config {
   codeLength: number
   cookie: CookieSettings
   notFound: NonNullable<ShortLinksOptions["notFound"]>
+  events: EventSettings
 }
 
 /** An http or https URL, with any host, including `127.0.0.1` and `[::1]`. */
@@ -140,7 +143,8 @@ function resolve(options: ShortLinksOptions): Config {
     hosts,
     codeLength,
     cookie: { name: cookieName, maxAge: cookieMaxAge, domain },
-    notFound: options.notFound ?? notFoundPage
+    notFound: options.notFound ?? notFoundPage,
+    events: eventSettings(options.events)
   }
 }
 
@@ -380,6 +384,54 @@ async function checkReach(prefixes: Prefixer, fields: Omit<LinkRow, "id" | "code
   }
 }
 
+/** Whether two expiries are the same, where `null` is never. */
+function sameTime(a: Date | null, b: Date | null): boolean {
+  return a === null || b === null ? a === b : a.getTime() === b.getTime()
+}
+
+/**
+ * Schedules `link.expired` for a link's expiry, held by the outbox until then, in the batch that saves the expiry. Its
+ * token is the link's, so changing or clearing the expiry, or removing the link, leaves it doing nothing.
+ */
+function scheduleExpiry(context: Context, row: Pick<LinkRow, "id" | "expiresAt" | "expiryToken">): void {
+  if (row.expiresAt !== null && row.expiryToken !== null) {
+    context.emit("expiry.scheduled", { linkId: row.id, token: row.expiryToken }, { availableAt: row.expiresAt })
+  }
+}
+
+/** What an `expiry.scheduled` event carries. */
+interface ScheduledExpiry {
+  linkId: string
+  token: string
+}
+
+/**
+ * A link's scheduled expiry, from its `expiry.scheduled` event: `link.expired`, unless the link is gone or its expiry
+ * changed since. The token is cleared in the batch that writes the event, so a retried delivery emits it once. It's
+ * emitted whether or not the link is on.
+ */
+async function expire(config: Config, context: EventContext, data: ScheduledExpiry): Promise<void> {
+  const byId: Where = { field: "id", value: data.linkId }
+  const row = await context.db.findOne<LinkRow>({ model: linkModel, where: [byId] })
+  if (!row || row.expiryToken !== data.token || row.expiresAt === null) {
+    return
+  }
+  if (row.expiresAt.getTime() > Date.now()) {
+    // Delivered early, such as by a run whose clock is behind the one that wrote it: wait for the expiry.
+    context.emit("expiry.scheduled", data, { availableAt: row.expiresAt })
+    return
+  }
+  context.emit("link.expired", { link: await present(prefixer(config, null), row) })
+  await context.db.batch([
+    {
+      type: "update",
+      model: linkModel,
+      where: [byId, { field: "expiryToken", value: data.token }],
+      update: { expiryToken: null }
+    }
+  ])
+}
+
 /** Whether `next` is later than `current`, where `null` is never. */
 function isLater(next: Date | null, current: Date | null): boolean {
   if (next === null) {
@@ -496,6 +548,7 @@ async function create(config: Config, context: Context): Promise<ShortLink> {
     grantsView: input.grantsView === true,
     enabled: true,
     expiresAt: input.expiresAt ?? null,
+    expiryToken: input.expiresAt ? crypto.randomUUID() : null,
     clicks: 0,
     lastClickedAt: null,
     createdAt: context.now,
@@ -508,6 +561,7 @@ async function create(config: Config, context: Context): Promise<ShortLink> {
     const row: LinkRow = { id: crypto.randomUUID(), code: codeFor(), ...fields }
     const link = await present(prefixes, row)
     context.emit("link.created", { link })
+    scheduleExpiry(context, row)
     try {
       await context.db.batch([{ type: "create", model: linkModel, data: row }])
       return link
@@ -628,9 +682,11 @@ async function update(config: Config, context: Context): Promise<ShortLink> {
   if (input.enabled !== undefined) {
     changes.enabled = input.enabled
   }
-  if (input.expiresAt !== undefined) {
+  if (input.expiresAt !== undefined && !sameTime(input.expiresAt, row.expiresAt)) {
     checkExpiry(input.expiresAt)
     changes.expiresAt = input.expiresAt
+    // A new token, so the old expiry's scheduled event does nothing.
+    changes.expiryToken = input.expiresAt ? crypto.randomUUID() : null
   }
   // A link that lets people see a record, turned back on or given longer, is checked again as if it were made now, so
   // someone who has since lost access to the record, or left its organization, can't reopen it.
@@ -646,6 +702,9 @@ async function update(config: Config, context: Context): Promise<ShortLink> {
   }
   const link = await present(prefixer(config, context.request), { ...row, ...changes })
   context.emit("link.updated", { link })
+  if (changes.expiryToken !== undefined) {
+    scheduleExpiry(context, { ...row, ...changes })
+  }
   const [updated] = await context.db.batch([
     { type: "update", model: linkModel, where: [{ field: "id", value: row.id }], update: changes }
   ])
@@ -707,23 +766,38 @@ async function scopeOf(config: Config, request: Request, url: URL): Promise<stri
   return typeof host?.orgId === "string" && host.orgId !== "" ? host.orgId : null
 }
 
+/** What opening links keeps between requests: how many `link.notFound` events each host emitted this minute. */
+interface Opener {
+  allowNotFound: (host: string, now: Date) => boolean
+}
+
 /**
  * Opens a link: one read by its code, then a temporary redirect, so a link turned off or changed takes effect at once.
  * On an organization's domain, only its own links open. A link that grants access adds its code to the visitor's
- * cookie. The click is written after the response.
+ * cookie. The click, and the events about it, are written after the response, and only for `GET`.
  */
-async function open(config: Config, context: RouteContext): Promise<Response> {
-  const { request, params, db, now } = context
+async function open(config: Config, opener: Opener, context: RouteContext): Promise<Response> {
+  const { request, params, db, now, emit } = context
   const wanted = params.code ?? ""
+  const counted = request.method === "GET"
+  const host = context.url.hostname.replace(/\.$/, "")
   // A host that opens no links, and another organization's link, answer as a missing link does, so a domain tells
   // nothing about the codes it doesn't open.
   const scope = await scopeOf(config, request, context.url)
   if (scope === null) {
     return config.notFound({ request, code: wanted })
   }
+  /** The missing link's answer, with `link.notFound`, which is the same whatever kept the code from opening. */
+  const missing = () => {
+    if (counted && opener.allowNotFound(host, now)) {
+      const code = wanted.slice(0, limits.maxCode)
+      emit("link.notFound", { host, orgId: scope === "" ? null : scope, code, requestedAt: now })
+    }
+    return config.notFound({ request, code: wanted })
+  }
   const row = isValidCode(wanted) ? await db.findOne<LinkRow>({ model: linkModel, where: byCode(wanted) }) : null
   if (!row || !isOpen(row, now) || (scope !== "" && row.owner !== ownerKey("org", scope))) {
-    return config.notFound({ request, code: wanted })
+    return missing()
   }
   let location = row.url
   if (location === null) {
@@ -731,12 +805,14 @@ async function open(config: Config, context: RouteContext): Promise<Response> {
     // A record link of a subject type the feature no longer has opens nothing.
     const rules = rulesFor(config, type)
     if (!rules || type === null || id === null) {
-      return config.notFound({ request, code: wanted })
+      return missing()
     }
     const path = await rules.url({ subjectType: type, subjectId: id, orgId: row.orgId === "" ? null : row.orgId })
     location = new URL(path, request.url).href
   }
+  const sample = counted && sampled(config.events)
   const headers = new Headers({ location, "cache-control": "private, no-store" })
+  let granted = false
   if (row.grantsView) {
     if (config.hosts && !reachesHost(request.url, location, config.cookie.domain)) {
       // The cookie set on this host wouldn't reach the record, so the link opens where it does: on the app's own host,
@@ -746,21 +822,55 @@ async function open(config: Config, context: RouteContext): Promise<Response> {
       const there = reachesHost(app, location, config.cookie.domain)
         ? `${app}/${code}`
         : new URL(`${config.path}/${code}`, location).href
+      if (sample) {
+        emit("link.clicked", click(config.events, row, host, now, { granted: false, forwardedTo: new URL(there).host }))
+      }
       return new Response(null, { status: 302, headers: { location: there, "cache-control": "private, no-store" } })
     }
+    granted = true
+    // A visitor whose cookie already holds the link was given access before.
+    const fresh = !grantCodes(request, config.cookie.name).includes(row.code)
     headers.set("set-cookie", grantCookie(request, config.cookie, row.code))
+    const event = counted && fresh ? grant(row, host, now) : null
+    if (event) {
+      emit("link.granted", event)
+    }
   }
-  if (request.method === "GET") {
-    context.waitUntil(
-      db.incrementOne({
-        model: linkModel,
-        where: [{ field: "id", value: row.id }],
-        increment: { clicks: 1 },
-        set: { lastClickedAt: new Date() }
-      })
-    )
+  if (counted) {
+    if (sample) {
+      emit("link.clicked", click(config.events, row, host, now, { granted, forwardedTo: null }))
+    }
+    context.waitUntil(countClick(config, context, row))
   }
   return new Response(null, { status: 302, headers })
+}
+
+/**
+ * Counts a click in one batch with the events the open emitted, then emits `link.milestone` for each milestone the
+ * count passed. Each count comes back from one click's increment alone, so each milestone is emitted once, however
+ * many clicks land at the same moment.
+ */
+async function countClick(config: Config, context: RouteContext, row: LinkRow): Promise<void> {
+  const [counted] = await context.db.batch([
+    {
+      type: "incrementOne",
+      model: linkModel,
+      where: [{ field: "id", value: row.id }],
+      increment: { clicks: 1 },
+      set: { lastClickedAt: context.now }
+    }
+  ])
+  const updated = counted as LinkRow | null
+  if (!updated) {
+    return
+  }
+  const reached = passed(config.events, updated.clicks - 1, updated.clicks)
+  if (reached.length > 0) {
+    const link = await present(prefixer(config, context.request), updated)
+    for (const clicks of reached) {
+      context.emit("link.milestone", { link, clicks })
+    }
+  }
 }
 
 /**
@@ -947,6 +1057,7 @@ const unchecked = <Input>(): StandardSchemaV1<Input, Input> => ({
 export function shortLinks<const Options extends ShortLinksOptions>(options: Options = {} as Options) {
   type SubjectType = SubjectTypeOf<Options>
   const config = resolve(options)
+  const opener: Opener = { allowNotFound: perMinuteLimit(config.events.notFoundPerMinute) }
   // `serverOnly` keeps its literal type, so the browser client leaves server-only actions out.
   const action = <Input, Output, ServerOnly extends boolean = false>(
     schema: StandardSchemaV1 | null,
@@ -972,8 +1083,14 @@ export function shortLinks<const Options extends ShortLinksOptions>(options: Opt
       open: defineRoute({
         path: `${config.path}/:code`,
         method: "GET",
-        handler: async (context) => open(config, context)
+        handler: async (context) => open(config, opener, context)
       })
+    },
+    // Scheduled expiries are short links' own events, delivered by later `app.deliverEvents()` runs.
+    on: {
+      shortLinks: {
+        "expiry.scheduled": (event, context) => expire(config, context, event.data as ScheduledExpiry)
+      }
     },
     // Only apps that let links grant access ask the cookie about every refused check.
     grants: granting ? grantsFor(config) : undefined,

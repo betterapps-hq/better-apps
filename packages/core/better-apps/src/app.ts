@@ -132,6 +132,22 @@ async function validate(schema: StandardSchemaV1, value: unknown): Promise<unkno
   return result.value
 }
 
+/** Hands work to `waitUntil`, or waits for it without one, or when the runtime refuses it, such as after its context ended. */
+async function handOff(
+  work: Promise<void>,
+  waitUntil: ((promise: Promise<unknown>) => void) | undefined
+): Promise<void> {
+  if (waitUntil) {
+    try {
+      waitUntil(work)
+      return
+    } catch {
+      // Waited for below.
+    }
+  }
+  await work
+}
+
 async function readBody(request: Request, limit: number): Promise<string> {
   const tooLarge = () =>
     new BetterAppsError("PAYLOAD_TOO_LARGE", `The request body is larger than ${limit} bytes.`, { status: 413 })
@@ -365,6 +381,11 @@ export function createBetterApps<const Features extends readonly BetterAppsFeatu
       )
     }
     let answered = false
+    let emitted = false
+    const emit: typeof events.emit = (...args) => {
+      events.emit(...args)
+      emitted = true
+    }
     // Settles the kept work, then writes the events left over, when the handler answered, and delivers them all.
     const settle = async () => {
       while (kept.length > 0) {
@@ -393,7 +414,7 @@ export function createBetterApps<const Features extends readonly BetterAppsFeatu
         now,
         getActor: async () => (actor ??= identity.getActor(request)),
         waitUntil: keep,
-        emit: events.emit
+        emit
       })
       answered = true
       if (request.method === "HEAD" && response.body) {
@@ -410,18 +431,9 @@ export function createBetterApps<const Features extends readonly BetterAppsFeatu
       onError(error, where, waitUntil)
       return internalError()
     } finally {
-      const settled = settle()
-      let handedOff = false
-      if (waitUntil) {
-        try {
-          waitUntil(settled)
-          handedOff = true
-        } catch {
-          // The runtime refused it, such as after its context ended, so the response waits for it instead.
-        }
-      }
-      if (!handedOff) {
-        await settled
+      // A route that kept no work and emitted nothing, such as a missing page, leaves nothing to settle.
+      if (kept.length > 0 || emitted) {
+        await handOff(settle(), waitUntil)
       }
     }
   }

@@ -97,6 +97,23 @@ export interface LinkHosts {
   origin?: ((args: LinkOriginArgs) => string | null | Promise<string | null>) | undefined
 }
 
+/** How often opening links emits events. */
+export interface LinkEventOptions {
+  /**
+   * The share of opens that emit `link.clicked`, from 0, none, to 1, every one. Each one is an outbox row, written in the
+   * same batch as the click count and delivered after the response, so a busy app can sample, such as 0.1 for one open
+   * in ten. 1 by default. Nothing is written while no feature subscribes to `link.clicked`, whatever the rate.
+   */
+  clickRate?: number | undefined
+  /** The click counts that emit `link.milestone`. 1, 10, 100, 1,000 and 10,000 by default. An empty list emits none. */
+  milestones?: readonly number[] | undefined
+  /**
+   * The most `link.notFound` events each host emits a minute, in each running copy of the app, so guessing codes can't
+   * flood the outbox. 10 by default. 0 emits none.
+   */
+  notFoundPerMinute?: number | undefined
+}
+
 /** How short links are set up in an app. */
 export interface ShortLinksOptions {
   /** The subject types links can point to, keyed by name. The app or a feature declares each one. */
@@ -132,6 +149,8 @@ export interface ShortLinksOptions {
    * so it can't tell visitors which codes were links once.
    */
   notFound?: ((args: NotFoundArgs) => Response | Promise<Response>) | undefined
+  /** How often opening links emits `link.clicked`, `link.milestone` and `link.notFound`. */
+  events?: LinkEventOptions | undefined
 }
 
 /** Who owns a link: a user, or an organization. */

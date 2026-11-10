@@ -22,6 +22,11 @@ export type LinkRow = {
   grantsView: boolean
   enabled: boolean
   expiresAt: Date | null
+  /**
+   * Matches the `expiry.scheduled` event of the current `expiresAt`, so an older one does nothing. A new one each time
+   * `expiresAt` changes, and `null` without one or once `link.expired` is emitted.
+   */
+  expiryToken: string | null
   clicks: number
   lastClickedAt: Date | null
   createdAt: Date
@@ -42,6 +47,7 @@ export const shortLinksSchema: FeatureSchema = {
       grantsView: { type: "boolean", defaultValue: false },
       enabled: { type: "boolean", defaultValue: true },
       expiresAt: { type: "date", required: false },
+      expiryToken: { type: "string", required: false },
       clicks: { type: "number", defaultValue: 0 },
       lastClickedAt: { type: "date", required: false },
       createdAt: { type: "date" },
