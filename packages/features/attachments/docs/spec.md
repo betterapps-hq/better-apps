@@ -111,13 +111,14 @@ reported once. Reactions does the same for its reactions.
 Every file is kept by something, or it expires:
 
 - **A record keeps it** while it's attached there. A file uploaded for a record, or as a draft for one, is kept by one
-  record at most. When it leaves that record, it's deleted.
+  record at most, and its `orgId` is the record's organization. When it leaves that record, it's deleted.
 - **A person or an organization keeps it** when it was uploaded on its own: `owner` is `user:{userId}` or `org:{orgId}`.
   Without an `owner` in the upload, a file uploaded inside an organization belongs to it, and one outside any belongs to
   its uploader. Such a file stays until it's deleted, even when it's attached to records and taken off them again. It
   can be on several records at once, such as a logo on many invoices.
 - **Nothing keeps it yet** while it's uploading, or while it's a draft waiting for its record. It has an `expiresAt`,
-  and the sweep removes it after that.
+  and the sweep removes it after that. A draft's `orgId` is the uploader's organization at the time, or `""`, until it's
+  attached and takes its record's.
 
 ## Settings
 
@@ -186,8 +187,10 @@ All of them go through subject types, so a file follows its record's access.
 - **Uploading a draft** needs someone signed in. The draft is checked against its subject type's limits, but its record
   doesn't exist yet, so `canUpload` waits for the attach. `maxDrafts` bounds the bytes a person can store that way.
 - **Attaching** a draft needs its uploader. Attaching a file kept on its own needs someone who can see it. Either way
-  the record must be one the person can see and `canUpload` allows. Files go only on records in their own organization,
-  except that a person can put their own files on records in any organization they're in.
+  the record must be one the person can see and `canUpload` allows. A file an organization keeps goes only on records in
+  that organization. A person's own files and drafts go on records in any organization, such as an anonymous guest's
+  documents on a booking: a draft holds only its uploader's bytes, so attaching it moves no organization's data, and the
+  person could upload the same bytes there directly.
 - **Taking a file off a record** needs the person who attached it, or someone `canModerate` allows. **Reordering** needs
   `canUpload`.
 - **Deleting a file kept on its own** needs its owner, or a member `canManage` allows. It comes off every record too.

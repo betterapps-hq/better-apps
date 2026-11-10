@@ -158,10 +158,15 @@ export async function attach(config: Config, context: Context): Promise<{ files:
       if ((file.expiresAt as Date).getTime() <= now.getTime()) {
         throw new AttachmentsError("CONFLICT", "That upload expired. Upload the file again.")
       }
+      // A draft holds only its uploader's own bytes, so it goes on a record in any organization and joins the record's.
       drafts.push(file.id)
     } else if (file.owner !== null) {
       if (!seen[kept.indexOf(file)]) {
         throw fileNotFound()
+      }
+      // An organization's files stay in it. A person's own files go on any record they can add files to.
+      if (file.orgId !== orgId && file.owner !== `user:${actor.userId}`) {
+        throw new AttachmentsError("INVALID_INPUT", "That file belongs to another organization.")
       }
     } else {
       const on = await attachmentsOn(context, ref, orgId)
@@ -169,10 +174,6 @@ export async function attach(config: Config, context: Context): Promise<{ files:
         throw new AttachmentsError("INVALID_INPUT", "That file is on another record. Upload it again to add it here.")
       }
       continue
-    }
-    // Files stay in their organization, except that a person can take their own to any organization they're in.
-    if (file.orgId !== orgId && file.owner !== `user:${actor.userId}`) {
-      throw new AttachmentsError("INVALID_INPUT", "That file belongs to another organization.")
     }
     checkLimits(settings, file.contentType, file.size)
   }
@@ -184,9 +185,9 @@ export async function attach(config: Config, context: Context): Promise<{ files:
       { field: "status", value: "ready" },
       { field: "expiresAt", operator: "gt", value: now }
     ],
-    update: { expiresAt: null, subjectType: input.subjectType }
+    update: { expiresAt: null, subjectType: input.subjectType, orgId }
   }))
-  const attaching = files.map((file) => (drafts.includes(file.id) ? { ...file, expiresAt: null } : file))
+  const attaching = files.map((file) => (drafts.includes(file.id) ? { ...file, expiresAt: null, orgId } : file))
   return {
     files: await addLinks(config, context, ref, attaching, {
       before,

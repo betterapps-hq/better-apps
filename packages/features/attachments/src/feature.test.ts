@@ -5,6 +5,9 @@ import { attachmentModel, attachments, fileModel, memoryStorage } from "./index.
 /** A call from a signed-out visitor: a request with no sign-in, rather than trusted server code. */
 const signedOut = () => ({ request: new Request("https://app.test") })
 
+const bookAcme = { subjectType: "booking", subjectId: "book-acme" } as const
+const bookGlobex = { subjectType: "booking", subjectId: "book-globex" } as const
+
 const text = (body: string) => ({ name: "notes.txt", contentType: "text/plain", bytes: body })
 
 describe("uploads onto a record", () => {
@@ -444,6 +447,35 @@ describe("drafts", () => {
     })
   })
 
+  it("go on a record in another organization from someone outside any, and join it", async () => {
+    const { api, as, upload, events } = setup()
+    const { file } = await upload("solo", { subjectType: "booking" })
+    expect(file.orgId).toBe("")
+    const { files } = await api.attach({ ...bookAcme, fileIds: [file.id] }, as("solo"))
+    expect(files[0]).toMatchObject({ id: file.id, orgId: "acme", owner: null, expiresAt: null })
+    expect(await api.getFile({ fileId: file.id }, as("solo"))).toMatchObject({ orgId: "acme", expiresAt: null })
+    expect(events("attachment.added")[0]?.data).toMatchObject({ orgId: "acme", file: { orgId: "acme" } })
+    const listed = await api.listFiles({ subjectType: "booking", subjectIds: ["book-acme"] }, as("bob"))
+    expect(listed["book-acme"]?.map((entry) => entry.id)).toEqual([file.id])
+    // The booking keeps it now: it can't go on another record, and its uploader's removal leaves it.
+    await expect(api.attach({ ...bookGlobex, fileIds: [file.id] }, as("solo"))).rejects.toMatchObject({
+      code: "INVALID_INPUT"
+    })
+    expect(await api.removeUser({ userId: "solo" })).toEqual({ removed: 0, done: true })
+    expect((await api.getFile({ fileId: file.id }, as("bob"))).id).toBe(file.id)
+  })
+
+  it("go on a record in another organization from their uploader's, but never from anyone else", async () => {
+    const { api, as, upload } = setup()
+    const { file } = await upload("gus", { subjectType: "booking" })
+    expect(file.orgId).toBe("globex")
+    await expect(api.attach({ ...bookAcme, fileIds: [file.id] }, as("bob"))).rejects.toMatchObject({
+      code: "NOT_FOUND"
+    })
+    const { files } = await api.attach({ ...bookAcme, fileIds: [file.id] }, as("gus"))
+    expect(files[0]).toMatchObject({ id: file.id, orgId: "acme" })
+  })
+
   it("stay on the record that wins when two records race for one", async () => {
     const { api, as, upload, events, count } = setup()
     const { file } = await upload("bob", { subjectType: "invoice" })
@@ -880,6 +912,12 @@ describe("files on their own", () => {
     expect(files.map((file) => file.id)).toEqual([mine.file.id])
     await expect(api.attach({ ...globex, fileIds: [ours.file.id] }, elsewhere)).rejects.toMatchObject({
       code: "NOT_FOUND"
+    })
+    // Gus sees Acme's file on a booking anyone can see, but it stays in Acme.
+    await api.attach({ ...bookAcme, fileIds: [ours.file.id] }, as("bob"))
+    await expect(api.attach({ ...globex, fileIds: [ours.file.id] }, as("gus"))).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+      message: "That file belongs to another organization."
     })
   })
 
