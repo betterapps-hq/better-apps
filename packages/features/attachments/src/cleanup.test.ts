@@ -15,19 +15,12 @@ import { attachmentEvents, attachmentModel, attachments, fileModel, memoryStorag
 // Comments' subject types and events, as @better-apps/comments declares them, without its tables.
 function withComments() {
   const threads = new Map([["t-1", { orgId: "acme", comments: new Set(["c-1", "c-2"]) }]])
-  // `afterOrg` runs once, right after the next organization lookup, such as to move a thread while a page of a move
-  // runs. `failOnce` fails the next delivery of that event to the feed once, as a crash would.
-  const hooks: { afterOrg?: (() => void) | undefined; failOnce?: string | undefined } = {}
+  // `failOnce` fails the next delivery of that event to the feed once, as a crash would.
+  const hooks: { failOnce?: string | undefined } = {}
   const threadOf = (commentId: string) => [...threads].find(([, thread]) => thread.comments.has(commentId))
   const subject = (find: (id: string) => { orgId: string } | undefined): SubjectDefinition => ({
     canView: ({ actor, subjectId }) => actor.orgId === find(subjectId)?.orgId,
-    getOrgId: ({ subjectId }) => {
-      const orgId = find(subjectId)?.orgId ?? null
-      const after = hooks.afterOrg
-      hooks.afterOrg = undefined
-      after?.()
-      return orgId
-    }
+    getOrgId: ({ subjectId }) => find(subjectId)?.orgId ?? null
   })
   const fake = defineFeature({
     id: "comments",
@@ -310,9 +303,10 @@ describe("with comments", () => {
     await setup.emit(moved("t-big", "globex", ids))
     setup.threads.set("t-big", { orgId: "acme", comments: new Set(ids) })
     await setup.emit(moved("t-big", "acme", ids, "globex"))
+    // The last move lists only the comments its first page takes, so only the first move's job can move the rest.
     setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
-    await setup.emit(moved("t-big", "globex", ids))
-    await setup.deliver()
+    await setup.emit(moved("t-big", "globex", [...ids].sort().slice(0, 10)))
+    expect(setup.inOrg("globex")).toEqual([20, 20])
     await setup.deliver()
     await setup.deliver()
     expect(setup.turn("t-big")).toEqual({ toOrgId: "globex", deleted: 0 })
@@ -369,15 +363,51 @@ describe("with comments", () => {
     const ids = await busyThread(setup)
     setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
     await setup.emit(moved("t-big", "globex", ids))
+    expect(setup.inOrg("globex")).toEqual([20, 20])
+    // The thread moves to acme, and the move to globex's next page runs before acme's event arrives, so its turn still
+    // names globex and only the thread's organization stops it.
     setup.threads.set("t-big", { orgId: "acme", comments: new Set(ids) })
-    await setup.emit(moved("t-big", "acme", ids, "globex"))
-    // The move to globex's next page runs while the thread is in acme, which stops it.
     await setup.deliver()
-    expect(setup.inOrg("acme")).toEqual([30, 30])
+    expect(setup.inOrg("globex")).toEqual([20, 20])
+    expect(setup.events("cleanup.continued")).toHaveLength(1)
+    // It doesn't pick up again when the thread comes back: the move back takes the rest along.
+    setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
+    await setup.deliver()
+    expect(setup.events("cleanup.continued")).toHaveLength(1)
+    expect(setup.inOrg("globex")).toEqual([20, 20])
+    await setup.emit(moved("t-big", "globex", ids, "acme"))
+    expect(setup.inOrg("globex")).toEqual([30, 30])
+  })
+
+  it("leaves a page whose writes fail for the next run while its move holds the turn", async () => {
+    const setup = withComments()
+    const ids = await busyThread(setup)
     setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
     await setup.emit(moved("t-big", "globex", ids))
+    expect(setup.inOrg("globex")).toEqual([20, 20])
+    // Once the next page has placed its attachments, one already in globex lands on a comment of that page, in the place
+    // the page meant to use, so the page's writes fail.
+    const last = [...ids].sort().at(-1) as string
+    const { sqlite } = setup.database
+    const prepare = sqlite.prepare.bind(sqlite)
+    let landed = false
+    Object.assign(sqlite, {
+      prepare: (sql: string) => {
+        if (!landed && sql.startsWith("select") && sql.includes(`from "${fileModel}"`)) {
+          landed = true
+          prepare(
+            `UPDATE ${attachmentModel} SET subjectId = ? WHERE id = (SELECT id FROM ${attachmentModel} WHERE orgId = 'globex' AND slot = 0 LIMIT 1)`
+          ).run(last)
+        }
+        return prepare(sql)
+      }
+    })
     await setup.deliver()
+    expect(landed).toBe(true)
+    expect(setup.inOrg("globex")).toEqual([20, 20])
+    expect(setup.events("cleanup.continued")).toHaveLength(1)
     await setup.deliver()
+    expect(setup.events("cleanup.continued")).toHaveLength(2)
     expect(setup.inOrg("globex")).toEqual([30, 30])
   })
 

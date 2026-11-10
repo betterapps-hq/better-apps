@@ -243,7 +243,6 @@ async function movePage(
         }
       }
     }
-    const removal = await linkRemoval(writer, dropped, "withdrawn", { bulk: true })
     const files =
       moves.length === 0
         ? []
@@ -253,6 +252,9 @@ async function movePage(
             select: ["id", "owner"]
           })
     const kept = files.filter((file) => file.owner === null).map((file) => file.id)
+    // Events go out with the next batch, so nothing that can throw comes between them and it: a page read again after a
+    // failed read would emit them twice.
+    const removal = await linkRemoval(writer, dropped, "withdrawn", { bulk: true })
     for (const subjectId of new Set(moves.map((move) => move.row.subjectId))) {
       writer.emit("subject.moved", { subjectType, subjectId, toOrgId })
     }

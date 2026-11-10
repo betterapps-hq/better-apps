@@ -355,8 +355,8 @@ With files on comments' threads or comments, attachments follow comments' events
 thread loses its files, and a moved thread takes its and its comments' files along. Each delivery handles one page: up
 to 100 attachments removed, reading at most ten lists of 90 ids to find them, or up to 20 moved in one batch, reading at
 most five. A move's page is tried once, and one whose writes fail, such as on an attachment that landed meanwhile, waits
-for the next run. A delivery of a thread of any size stays under D1's 50 queries per request on its free plan, and the
-rest continues with attachments' own `cleanup.continued` event, emitted `{ later: true }` for the next
+for the next run. A move's delivery stays under D1's 50 queries per request on its free plan, however big the thread.
+What's left continues with attachments' own `cleanup.continued` event, emitted `{ later: true }` for the next
 `app.deliverEvents()` run.
 
 Attachments keep where they expect each thread they follow to be in `attachmentMove`: the organization of the move

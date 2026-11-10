@@ -63,7 +63,7 @@ export type AttachmentMove = {
   deleted: boolean
   /** A new value on each claim, so a move that read the row before another claim can't write over it. */
   claim: string
-  /** When the row was last written, so rows no move has used for 30 days can be cleared. */
+  /** When a move or deletion last wrote the row, so rows nothing has written for 30 days can be cleared. */
   heldAt: Date
 }
 
@@ -134,8 +134,8 @@ export const attachmentsSchema: FeatureSchema = {
     fields: { createdAt: { type: "date" } },
     indexes: [{ fields: ["createdAt"], name: "attachment_removal_by_time" }]
   },
-  // One row per record whose move or deletion attachments followed. Rows no move has written for 30 days are cleared as
-  // moves start.
+  // One row per record whose move or deletion attachments followed. Rows nothing has written for 30 days are cleared as
+  // moves start or records are deleted.
   [moveModel]: {
     fields: {
       toOrgId: { type: "string", defaultValue: "" },
