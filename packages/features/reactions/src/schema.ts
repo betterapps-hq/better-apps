@@ -6,6 +6,27 @@ export const reactionModel = "reaction"
 /** The model of the table that remembers reactions just removed, so each removal is reported once. */
 export const removalModel = "reactionRemoval"
 
+/** The model of the table that holds where reactions expect each record whose moves they follow to be. */
+export const moveModel = "reactionMove"
+
+/**
+ * Where reactions expect a record whose moves they follow, such as a comments' thread, to be: the organization the move
+ * they're following took it to, or deleted. A move takes the row only once the record is in its organization, and its
+ * pages write only while the row still names that organization, so an older move never writes after a newer one.
+ */
+export type ReactionMove = {
+  /** The record, as `JSON.stringify([subjectType, subjectId])`. */
+  id: string
+  /** The organization the move being followed took the record to, or `""` for none. */
+  toOrgId: string
+  /** Whether the record was deleted, which stops any move of it while the row is kept. */
+  deleted: boolean
+  /** A new value on each claim, so a move that read the row before another claim can't write over it. */
+  claim: string
+  /** When the row was last written, so rows no move has used for 30 days can be cleared. */
+  heldAt: Date
+}
+
 /** One person's reaction with one emoji to one record. */
 export type Reaction = {
   id: string
@@ -49,5 +70,16 @@ export const reactionsSchema: FeatureSchema = {
   [removalModel]: {
     fields: { createdAt: { type: "date" } },
     indexes: [{ fields: ["createdAt"], name: "reaction_removal_by_time" }]
+  },
+  // One row per record whose move or deletion reactions followed. Rows no move has written for 30 days are cleared as
+  // moves start.
+  [moveModel]: {
+    fields: {
+      toOrgId: { type: "string", defaultValue: "" },
+      deleted: { type: "boolean", defaultValue: false },
+      claim: { type: "string" },
+      heldAt: { type: "date" }
+    },
+    indexes: [{ fields: ["heldAt"], name: "reaction_move_by_time" }]
   }
 }

@@ -37,4 +37,4 @@ export type {
   ReactorVisibility,
   TypesOf
 } from "./options.js"
-export { reactionModel, reactionsSchema, removalModel, type Reaction } from "./schema.js"
+export { moveModel, reactionModel, reactionsSchema, removalModel, type Reaction, type ReactionMove } from "./schema.js"

@@ -103,15 +103,25 @@ statements per page.
 
 With reactions on comments' threads or comments, reactions follow comments' events instead: a deleted comment or thread
 loses its reactions, a deleted comment can't get new ones, even one saved while it was being deleted, and a thread that
-moves takes its and its comments' reactions along. Each delivery handles one page's worth of reactions, reading at most
-ten lists of 90 ids to find them, so a thread of any size stays under D1's 50 queries per request on its free plan, and
-the rest continues with reactions' own `cleanup.continued` event in the next `app.deliverEvents()` run, so call it from
-a scheduled job. A move continues only while the thread is still in the organization it moved to, so an older move never
-undoes a newer one, and a thread deleted meanwhile stops a move to another organization, since its deletion takes the
-reactions. A move to no organization can't tell a deleted thread from one without an organization, so it runs on, and
-the deletion still takes the reactions. A comment deleted during a move doesn't stop it: the move carries on with the
-thread's other comments, and the comment's own deletion takes its reactions. Subject types reactions are no longer set
-up on are skipped. Subscribing to events needs the core's outbox table, which `better-apps generate` adds.
+moves takes its and its comments' reactions along. Each delivery handles one page's worth of reactions: up to 100
+removed, reading at most ten lists of 90 ids to find them, or up to 15 moved, reading at most five. A move's page is
+tried once, and one whose writes fail, such as on a reaction that landed meanwhile, waits for the next run. A delivery
+of a thread of any size stays under D1's 50 queries per request on its free plan, and the rest continues with reactions'
+own `cleanup.continued` event in the next `app.deliverEvents()` run, so call it from a scheduled job.
+
+Reactions keep where they expect each thread they follow to be in `reactionMove`: the organization of the move they're
+following, or deleted. A move takes that place only when the thread is in its organization, since the move that
+committed last is the one that put it there, whenever its event was emitted or arrives. So a move whose thread has moved
+on, such as one whose delivery is retried after a newer move, never runs. Each claim writes the place again only while
+it's still what the move read, so a move that read it before a newer move's claim fails, and is refused when retried. A
+move continues only while it holds the place and the thread is still in its organization, so an older move never undoes
+a newer one, and once a page of it runs while the thread is elsewhere, it stops for good. Each page's batch also checks
+that its move still holds the place, so a newer move that lands while a page runs makes the page's writes fail, and the
+older move stop, rather than undo the newer one's work. The thread's deletion takes the place, which stops a move even
+to no organization, for as long as the row is kept. Two moves to the same organization share the place. A comment
+deleted during a move doesn't stop it: the move carries on with the thread's other comments, and the comment's own
+deletion takes its reactions. Subject types reactions are no longer set up on are skipped. Subscribing to events needs
+the core's outbox table, which `better-apps generate` adds.
 
 ## Events
 
@@ -132,9 +142,9 @@ follow the actions above once they're done.
 It's written with the last delivery's removal from the outbox, under an id derived from that delivery, so a retried
 delivery emits it once, and it reaches subscribers in the next `app.deliverEvents()` run. Delivery is at least once, as
 for every event, so skip an event id you've already handled. A move stopped by a newer move of the thread, or by its
-deletion, emits none. A thread that moves away and back before an older move to the same organization finishes lets that
-move run on, since its records belong there too, so both moves report `move.finished`, each with its own `moveEventId`.
-Browsers never get it.
+deletion, emits none. When a thread moves away and back before an older move to the same organization runs again, as
+when no delivery run comes between the two moves, both moves run and report `move.finished`, each with its own
+`moveEventId`. Browsers never get it.
 
 `toClientEvent({ event, viewer, request? })`, a server-only action, turns a reaction event into one a viewer's browser
 may see, or `null` when they can't see the record. With the viewer's request, grants it carries count as they do for
@@ -201,5 +211,7 @@ Records that mount together, such as every comment in a thread, load in one call
 `reaction` holds the reactions. Unique indexes on the record, its organization, the user and either the emoji or the
 reaction's `slot`, its place among the person's reactions on the record, keep each emoji once per person and the limit.
 Counts and first uses are grouped from an index on the record, organization and emoji. `reactionRemoval` remembers each
-reaction removed in the last hour by its id, so a second removal of it fails rather than being reported twice. Run
+reaction removed in the last hour by its id, so a second removal of it fails rather than being reported twice.
+`reactionMove` holds where reactions expect each comments' thread whose move or deletion they followed to be, keyed by
+the thread, with a new `claim` each time a move takes it, until no move or deletion has written it for 30 days. Run
 `better-apps generate` from [`@better-apps/cli`](../../tooling/cli/README.md) to add them to your schema.

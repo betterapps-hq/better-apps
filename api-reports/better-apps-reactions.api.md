@@ -107,6 +107,9 @@ export interface MoveFinishedData {
 }
 
 // @public
+export const moveModel = "reactionMove";
+
+// @public
 export function normalizeEmoji(value: string): string;
 
 // @public
@@ -182,6 +185,15 @@ export interface ReactionFilter<Types extends ReactionsTypes = ReactionsTypes> e
 
 // @public
 export const reactionModel = "reaction";
+
+// @public
+export type ReactionMove = {
+    id: string;
+    toOrgId: string;
+    deleted: boolean;
+    claim: string;
+    heldAt: Date;
+};
 
 // @public
 export interface ReactionRemovedData extends ReactionEventData {
