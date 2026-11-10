@@ -1,7 +1,7 @@
 // Taking files off records and deleting files, for single changes and pages of bulk jobs alike. Rows go first, in one
 // batch with their events; bytes go after. Files whose bytes fail to delete stay `deleted`, and the sweep retries them.
 import { BetterAppsError, type DatabaseAdapter, type SubjectRef, type Where, type WriteOperation } from "better-apps"
-import { chunks, type Context } from "./access.js"
+import { chunks, isUnkept, type Context } from "./access.js"
 import type { Config } from "./config.js"
 import type { AttachmentRemovedData, DetachReason, FileDeletedReason } from "./events.js"
 import { eventFile } from "./present.js"
@@ -185,18 +185,19 @@ export async function removeLinks(
 /**
  * Deletes files, such as a person's own or a draft. Each comes off the records it's on: the first hundred of those are
  * reported, with `attachment.removed` and one `subject.changed` per record, and the rest go with the file's row. Returns
- * whether this call deleted them, rather than another removal, such as the sweep, that took them all first.
+ * how many this call deleted: not ones another removal, such as the sweep, took first, nor a draft or an upload that an
+ * attach or a finish put on a record meanwhile.
  */
 export async function deleteFiles(
   config: Config,
   writer: Writer,
   files: readonly AttachmentFile[],
   reason: FileDeletedReason
-): Promise<boolean> {
+): Promise<number> {
   const live = files.filter((file) => file.status !== "deleted")
   if (live.length === 0) {
     await purge(config, writer.db, files)
-    return false
+    return 0
   }
   const links = (
     await Promise.all(
@@ -226,15 +227,24 @@ export async function deleteFiles(
   for (const record of recordsOf(links)) {
     writer.emit("subject.changed", record)
   }
-  for (const file of live) {
+  // A draft or an upload under way goes only while nothing keeps it, so one that an attach or a finish put on a record
+  // since it was read stays there. Whether it went is known only once the batch ran, so its `file.deleted` is emitted
+  // then, and written after it.
+  const unkept = live.filter(isUnkept)
+  const others = live.filter((file) => !isUnkept(file))
+  for (const file of others) {
     if (file.status === "ready") {
       writer.emit("file.deleted", { file: eventFile(file), reason })
     }
   }
+  const notDeleted: Where = { field: "status", operator: "ne", value: "deleted" }
+  const unkeptMarks = markDeleted(unkept, [notDeleted, { field: "expiresAt", operator: "gt", value: new Date(0) }])
+  let results: unknown[]
   try {
-    await writer.db.batch([
+    results = await writer.db.batch([
       ...linkRemovals(links, live),
-      ...markDeleted(live, [{ field: "status", operator: "ne", value: "deleted" }])
+      ...markDeleted(others, [notDeleted]),
+      ...unkeptMarks
     ])
   } catch (error) {
     // Another removal took some of them first, so this batch failed with its events. When it took them all, it reported
@@ -246,8 +256,39 @@ export async function deleteFiles(
     if ([...after.values()].some((file) => file.status !== "deleted")) {
       throw error
     }
-    return false
+    return 0
   }
-  await purge(config, writer.db, files)
-  return true
+  const marked = results.slice(results.length - unkeptMarks.length).reduce<number>((sum, n) => sum + Number(n), 0)
+  const kept = new Set<string>()
+  if (marked < unkept.length) {
+    // Only a race with an attach or a finish gets here. The files it kept stay, with their bytes, and aren't remembered
+    // as removed, so they can be removed later.
+    const after = await filesById(
+      writer.db,
+      unkept.map((file) => file.id)
+    )
+    for (const file of unkept) {
+      if (after.get(file.id)?.status !== "deleted") {
+        kept.add(file.id)
+      }
+    }
+    await writer.db.batch(
+      chunks([...kept]).map((ids) => ({
+        type: "deleteMany" as const,
+        model: removalModel,
+        where: [{ field: "id", operator: "in" as const, value: ids }]
+      }))
+    )
+  }
+  for (const file of unkept) {
+    if (file.status === "ready" && !kept.has(file.id)) {
+      writer.emit("file.deleted", { file: eventFile(file), reason })
+    }
+  }
+  await purge(
+    config,
+    writer.db,
+    files.filter((file) => !kept.has(file.id))
+  )
+  return live.length - kept.size
 }

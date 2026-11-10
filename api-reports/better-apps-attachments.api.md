@@ -83,6 +83,10 @@ export const attachmentEvents: {
     "user.removed": EventDefinition<    {
     userId: string;
     }>;
+    "user.moved": EventDefinition<    {
+    userId: string;
+    toUserId: string;
+    }>;
     "cleanup.continued": EventDefinition<    {
     records: {
     subjectType: string;
@@ -161,6 +165,10 @@ export function attachments<const Options extends AttachmentsOptions>(options: O
         "subject.removed": EventDefinition<RecordData>;
         "user.removed": EventDefinition<    {
         userId: string;
+        }>;
+        "user.moved": EventDefinition<    {
+        userId: string;
+        toUserId: string;
         }>;
         "cleanup.continued": EventDefinition<    {
         records: {
@@ -268,6 +276,18 @@ export function attachments<const Options extends AttachmentsOptions>(options: O
         }>, {
         removed: number;
         } & BulkStep> & {
+            serverOnly?: true | undefined;
+        };
+        moveUser: ActionDefinition<StandardSchemaV1<{
+        userId: string;
+        toUserId: string;
+        }, {
+        userId: string;
+        toUserId: string;
+        }>, {
+        files: number;
+        attachments: number;
+        }> & {
             serverOnly?: true | undefined;
         };
         toClientEvent: ActionDefinition<StandardSchemaV1<{

@@ -74,9 +74,10 @@ export default {
 ```
 
 - `storage` keeps the bytes. `memoryStorage()` from this package keeps them in memory, for tests and demos.
-- `subjects` lists the subject types files can go on. `canUpload` says who adds files, everyone who can see the record
-  by default; `canModerate` says who takes anyone's off, nobody by default. `contentTypes` takes exact types or
-  `image/*`, `maxSize` is in bytes, 25 MiB by default, and `maxFiles` is from 1 to 30, 10 by default.
+- `subjects` lists the subject types files can go on. `canUpload` says who adds files, reorders them and takes off their
+  own, everyone who can see the record by default; `canModerate` says who takes anyone's off, nobody by default.
+  `contentTypes` takes exact types or `image/*`, `maxSize` is in bytes, 25 MiB by default, and `maxFiles` is from 1 to
+  30, 10 by default.
 - `standalone` allows files on their own, owned by a person or an organization. `canManage` says who deletes an
   organization's files.
 - `secret`, at least 32 characters, signs download URLs so they work without the request's sign-in for an hour, such as
@@ -100,8 +101,12 @@ them besides actions, and an app's catch-all route for its base path reaches the
 3. `completeUpload({ fileId })` checks what storage holds and marks the file ready, attaching it to its record.
 
 Attach drafts with `attach({ subjectType, subjectId, fileIds })` once the record exists. Drafts that aren't attached
-expire after `draftTtl`, a day by default. Files go only on records in their own organization, except that a person can
-put their own files on records in any organization they're in.
+expire after `draftTtl`, a day by default. A draft is in no organization until it's attached, then joins its record's,
+so a person with no active organization, such as an anonymous guest, can upload before the record exists. Only its
+uploader can attach it. Server code can attach to a record the person can't see yet, such as a booking it just created:
+call `attach` with `author: { type: "user", userId }` so it attaches only that person's drafts. When a guest signs up
+and becomes another user, call `moveUser({ userId, toUserId })` so their drafts and files go with them. A person's own
+files go on records in any organization too, but anyone else's stay in the organization they're in.
 
 The upload route counts a body that comes without a length, such as a chunked one, so it never stores more than the
 declared size.
@@ -113,7 +118,7 @@ declared size.
 - Writes: `createUpload`, `completeUpload`, `attach`, `detach({ subjectType, subjectId, fileId })`,
   `reorder({ subjectType, subjectId, fileIds })` and `deleteFile({ fileId })`.
 - Server only, through `app.api.attachments`: `sweep`, `removeSubject`, `moveSubject` and `removeUser`, which each do
-  one page and return `done`, and `toClientEvent` and `toClientEvents` for live updates.
+  one page and return `done`, `moveUser`, and `toClientEvent` and `toClientEvents` for live updates.
 - Errors are `AttachmentsError`s: `UNAUTHENTICATED`, `NOT_FOUND` for files and records the caller can't see,
   `FORBIDDEN`, `INVALID_INPUT`, `PAYLOAD_TOO_LARGE` (413) past `maxSize`, `LIMIT_EXCEEDED` past `maxFiles` or
   `maxDrafts`, and `CONFLICT` for an upload that expired or hasn't arrived, or a draft another record took first.

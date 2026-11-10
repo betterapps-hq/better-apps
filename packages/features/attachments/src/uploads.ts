@@ -1,7 +1,7 @@
 // Uploads: `createUpload` checks and writes a pending row and says where to send the bytes, the bytes go straight to
 // storage or through the upload route, and `completeUpload` checks what arrived and marks the file ready.
 import type { Actor, SubjectRef, WriteOperation } from "better-apps"
-import { canSeeFiles, isTrusted, orgOf, requireActor, type Context } from "./access.js"
+import { canSeeFiles, isTrusted, orgOf, orgOwner, requireActor, userOwner, type Context } from "./access.js"
 import { checkLimits, settingsOf, type Config, type Limits } from "./config.js"
 import { AttachmentsError } from "./errors.js"
 import { cleanContentType, cleanName } from "./files.js"
@@ -46,7 +46,8 @@ async function placeUpload(
   if (input.subjectType !== undefined) {
     const settings = settingsOf(config, input.subjectType)
     if (input.subjectId === undefined) {
-      return { limits: settings, orgId: actor.orgId ?? "", owner: null, subjectType: input.subjectType, target: null }
+      // A draft joins an organization only when it's attached, in its record's.
+      return { limits: settings, orgId: "", owner: null, subjectType: input.subjectType, target: null }
     }
     const ref: SubjectRef = { subjectType: input.subjectType, subjectId: input.subjectId }
     await requireUploader(settings, context, ref)
@@ -68,14 +69,15 @@ async function placeUpload(
   if (standalone.rules.canUpload && !(await standalone.rules.canUpload(actor))) {
     throw new AttachmentsError("FORBIDDEN", "You can't upload files here.")
   }
-  const ownerKind = input.owner ?? (actor.orgId ? "org" : "user")
-  if (ownerKind === "org" && !actor.orgId) {
+  const orgId = actor.orgId ?? ""
+  const ownerKind = input.owner ?? (orgId ? "org" : "user")
+  if (ownerKind === "org" && !orgId) {
     throw new AttachmentsError("INVALID_INPUT", "Only people in an organization can upload its files.")
   }
   return {
     limits: standalone,
-    orgId: actor.orgId ?? "",
-    owner: ownerKind === "org" ? `org:${actor.orgId}` : `user:${actor.userId}`,
+    orgId,
+    owner: ownerKind === "org" ? orgOwner(orgId) : userOwner(actor.userId),
     subjectType: null,
     target: null
   }
@@ -217,9 +219,15 @@ export async function completeUpload(config: Config, context: Context): Promise<
     throw new AttachmentsError("INVALID_INPUT", "The file that arrived doesn't match the upload. Send it again.")
   }
   const keptByRecord = file.target !== null
+  const ref: SubjectRef | null = keptByRecord
+    ? { subjectType: file.subjectType as string, subjectId: file.target as string }
+    : null
+  // The record may have moved since the upload started, so a file it keeps takes the organization it's attached in.
+  const orgId = ref ? await orgOf(context.subjects, ref, context.actor) : file.orgId
   const expiresAt = file.owner === null && !keptByRecord ? new Date(now.getTime() + config.draftTtlMs) : null
   const ready: AttachmentFile = {
     ...file,
+    orgId,
     status: "ready",
     uploadTokenHash: null,
     expiresAt,
@@ -233,9 +241,12 @@ export async function completeUpload(config: Config, context: Context): Promise<
     where: [
       { field: "id", value: file.id },
       { field: "status", value: "pending" },
-      { field: "expiresAt", operator: "gt", value: now }
+      { field: "expiresAt", operator: "gt", value: now },
+      // An upload `moveUser` handed to another user meanwhile is theirs to finish.
+      { field: "createdBy", value: file.createdBy }
     ],
     update: {
+      orgId,
       status: "ready",
       uploadTokenHash: null,
       expiresAt,
@@ -246,7 +257,7 @@ export async function completeUpload(config: Config, context: Context): Promise<
   }
   // Emitted once the update matched, and written after it, so an upload that expired or lost a race isn't reported.
   const announce = () => context.emit("file.uploaded", { file: eventFile(ready) })
-  if (!keptByRecord) {
+  if (!ref) {
     const [updated] = await context.db.batch([markReady])
     if (!updated) {
       // Another call finished it meanwhile, or it was deleted, which `ownUpload` reports, or it expired.
@@ -259,13 +270,14 @@ export async function completeUpload(config: Config, context: Context): Promise<
     announce()
     return { file: await present(config, ready), attachment: null }
   }
-  const ref: SubjectRef = { subjectType: file.subjectType as string, subjectId: file.target as string }
   try {
     // Who can add files may have changed since the upload started, such as on a record that's locked now.
     if (!isTrusted(context)) {
       await requireUploader(settingsOf(config, ref.subjectType), context, ref)
     }
     const [attached] = await addLinks(config, context, ref, [ready], {
+      orgId,
+      attachedBy: file.createdBy,
       before: [markReady],
       guarded: [file.id],
       conflict: expiredUpload().message,
