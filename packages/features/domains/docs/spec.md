@@ -383,6 +383,60 @@ const match = await app.api.domains.lookup({ hostname: new URL(request.url).host
   hostnames exist.
 - `getPrimary({ orgId })` returns an organization's primary domain, or `null`.
 
+## Hosts for other features
+
+A feature that serves organizations' domains needs to know whose host a request is on and where an organization's links
+are shared. [Short links](../../short-links/docs/spec.md#organizations-domains) take both as `hosts`, without importing
+domains. `domainHosts` builds them from `lookup` and `getPrimary`:
+
+```ts
+const appUrl = "https://app.yourapp.com"
+const linkHosts = domainHosts({ url: appUrl, hostnames: ["www.yourapp.com"] })
+shortLinks({ baseUrl: appUrl, hosts: linkHosts.hosts })
+// Once the app is created:
+linkHosts.connect(app.api.domains)
+```
+
+| Option        | Default | What it does                                                                                           |
+| ------------- | ------- | ------------------------------------------------------------------------------------------------------ |
+| `url`         | none    | The app's own URL. Its hostname is the app's, and domains' origins use its scheme and port             |
+| `hostnames`   | none    | More hostnames that are the app's own, such as `localhost` beside `127.0.0.1`, without a port          |
+| `localSuffix` | none    | For local development with `localHostnames()` only: answers custom domains under this `localhost` name |
+
+- `domainHosts` throws for a `url` that isn't an `http` or `https` URL, such as `localhost:3000` without its scheme. Its
+  hostname is normalized like the others, so a trailing dot doesn't matter.
+- Short links' `baseUrl` must be on `url`'s host or one in `hostnames`. Links that no organization's domain opens are
+  shared on `baseUrl`, and only the app's own hosts open them, so a `baseUrl` elsewhere would open none. Nothing can
+  check this, since the two are separate features' options, so pass both from one constant.
+- It throws for a `hostnames` entry that isn't a hostname, such as `localhost:4190` or `::1`, which could never match.
+  Write an IPv6 address in brackets, as `[::1]`.
+- `hosts.resolve({ hostname })` normalizes the hostname as `lookup` does, so case, a trailing dot and a port don't
+  matter, and answers `null` without a lookup for one no domain could hold. It returns `"app"` for the app's own
+  hostnames without a lookup. Otherwise it looks the hostname up and returns `{ orgId }` for a `verified` domain,
+  `"app"` for one in an app without organizations, and `null` for a domain that isn't `active` or a hostname no domain
+  holds.
+- `hosts.origin({ orgId })` returns the origin of the organization's primary domain once it's `active`, on `url`'s
+  scheme and port, such as `https://links.acme.com`, or `null` without one, which means the app's own.
+- Features are created before the app, and `app.api.domains` exists only once it is, so the app calls
+  `connect(app.api.domains)` then. Until it does, both throw an error that says so, rather than every domain answering
+  as unknown. A later `connect` replaces the earlier one.
+
+### Custom domains on your machine
+
+Browsers can't reach a customer's domain, such as `go.acme.com`, on a developer's machine, and domains refuses custom
+hostnames under `.localhost` (see [custom hostnames](#custom-hostnames)). Browsers send every name under `localhost` to
+the machine, so with `localSuffix: "yourapp.localhost"` the app answers a custom domain at
+`go.acme.com.yourapp.localhost`:
+
+- `resolve` looks the hostname up as it is first, and answers for a subdomain there, such as `acme.yourapp.localhost`
+  for the zone `yourapp.localhost`. So a custom domain's alias never takes a subdomain's place, even with the suffix
+  `localhost` above the zone. A subdomain never answers at an alias.
+- Otherwise it strips the suffix from a hostname under it and looks the rest up, answering only for a custom domain. A
+  custom domain answers only there, so `go.acme.com` itself answers `null`. An alias costs two lookups.
+- `origin` adds the suffix to a primary custom domain's hostname, so links are shared where the browser reaches them.
+- `domainHosts` throws for a suffix that isn't `localhost` or under it. It's for the local provider only, never
+  production.
+
 ## Events
 
 | Event                   | Data                  | When                                                                           |

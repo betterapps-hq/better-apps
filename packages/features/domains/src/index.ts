@@ -4,6 +4,7 @@ export { DomainsError, type DomainsErrorCode } from "./errors.js"
 export { domainEvents, type DomainsEventData, type DomainSummary } from "./events.js"
 export { domains, limits, type Domain, type DomainList, type DomainsFeature, type HostnameMatch } from "./feature.js"
 export { defaultReservedSubdomains, normalizeHostname } from "./hostname.js"
+export { domainHosts, type DomainHosts, type DomainHostsApi, type DomainHostsOptions, type HostOwner } from "./hosts.js"
 export { localHostnames, type LocalHostnames, type LocalHostnamesOptions } from "./local.js"
 export type {
   AddDomainInput,
