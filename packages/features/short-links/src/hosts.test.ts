@@ -36,15 +36,20 @@ function hostsFor(seen: { hosts: string[]; orgs: (string | null)[] } = { hosts: 
   }
 }
 
-/** Opens a link on a host, the way a browser does, with the cookie it holds. */
+/** How many clicks the app has recorded, one row each. */
+const clickCount = (t: ReturnType<typeof setup>) =>
+  (t.database.sqlite.prepare(`SELECT COUNT(*) AS count FROM "shortLinkClick"`).get() as { count: number }).count
+
+/** Opens a link on a host, the way a browser does, with the cookie it holds, and counts the clicks it recorded. */
 async function openOn(t: ReturnType<typeof setup>, host: string, code: string, cookie?: string) {
+  const before = clickCount(t)
   const kept: Promise<unknown>[] = []
   const response = await t.app.handler(
     new Request(`https://${host}/s/${code}`, { headers: cookie ? { cookie } : {} }),
     { waitUntil: (promise) => kept.push(promise) }
   )
   await Promise.all(kept)
-  return { response, clicks: kept.length }
+  return { response, clicks: clickCount(t) - before }
 }
 
 describe("organizations' domains", () => {
@@ -80,9 +85,8 @@ describe("organizations' domains", () => {
     const missing = await openOn(t, "links.globex.test", "missing1")
     const wrongOrg = await openOn(t, "links.globex.test", link.code)
     const unknown = await openOn(t, "pending.acme.test", link.code)
-    for (const { response, clicks } of [wrongOrg, unknown]) {
+    for (const { response } of [wrongOrg, unknown]) {
       expect(response.status).toBe(404)
-      expect(clicks).toBe(0)
       expect(await response.text()).toBe(await missing.response.clone().text())
     }
     expect((await t.api.get({ id: link.id }, t.as("ada"))).clicks).toBe(0)
@@ -130,8 +134,9 @@ describe("organizations' domains", () => {
     const onDomain = await openOn(t, "links.acme.test", link.code)
     expect(onDomain.response.headers.get("location")).toBe(`https://app.test/s/${link.code}`)
     expect(onDomain.response.headers.get("set-cookie")).toBeNull()
-    expect(onDomain.clicks).toBe(0)
     const onAppHost = await openOn(t, "app.test", link.code)
+    // The click counts once, where the cookie was set.
+    expect((await t.api.get({ id: link.id }, t.as("ada"))).clicks).toBe(1)
     expect(onAppHost.response.headers.get("location")).toBe("https://app.test/invoices/inv-1")
     expect(cookieOf(onAppHost.response)).toBe(`better-apps-links=${link.code}`)
     // Records the domain serves itself are reached from it, so such links are shared there.

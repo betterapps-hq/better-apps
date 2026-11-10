@@ -168,6 +168,8 @@ export interface ShortLinksOptions {
     codeLength?: number | undefined;
     // Warning: (ae-forgotten-export) The symbol "GrantCookie" needs to be exported by the entry point react.d.ts
     cookie?: GrantCookie | undefined;
+    // Warning: (ae-forgotten-export) The symbol "LinkEventOptions" needs to be exported by the entry point react.d.ts
+    events?: LinkEventOptions | undefined;
     // Warning: (ae-forgotten-export) The symbol "LinkHosts" needs to be exported by the entry point react.d.ts
     hosts?: LinkHosts | undefined;
     // Warning: (ae-forgotten-export) The symbol "NotFoundArgs" needs to be exported by the entry point react.d.ts

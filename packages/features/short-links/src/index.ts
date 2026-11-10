@@ -1,6 +1,14 @@
 export { codeLimits, generateCode, isValidCode } from "./codes.js"
 export { ShortLinksError, type ShortLinksErrorCode } from "./errors.js"
-export { shortLinkEvents, type ShortLinksEventData } from "./events.js"
+export {
+  shortLinkEvents,
+  type ClickOutcome,
+  type LinkClick,
+  type LinkGrant,
+  type LinkNotFound,
+  type OpenedLink,
+  type ShortLinksEventData
+} from "./events.js"
 export {
   limits,
   shortLinks,
@@ -16,6 +24,7 @@ export type {
   CreateLinkInput,
   DayRangeInput,
   GrantCookie,
+  LinkEventOptions,
   LinkHost,
   LinkHosts,
   LinkOriginArgs,

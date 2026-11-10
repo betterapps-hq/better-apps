@@ -113,6 +113,7 @@ export const shortLink = sqliteTable(
     grantsView: integer("grants_view", { mode: "boolean" }).default(false).notNull(),
     enabled: integer("enabled", { mode: "boolean" }).default(true).notNull(),
     expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+    expiryToken: text("expiry_token"),
     clicks: integer("clicks").default(0).notNull(),
     lastClickedAt: integer("last_clicked_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),

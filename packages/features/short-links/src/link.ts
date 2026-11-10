@@ -37,7 +37,7 @@ export interface ShortLink {
 export const ownerKey = (type: OwnerType, id: string): string => `${type}:${id}`
 
 /** An owner from the `owner` column. */
-function ownerOf(key: string): ShortLink["owner"] {
+export function ownerOf(key: string): ShortLink["owner"] {
   const split = key.indexOf(":")
   return { type: key.slice(0, split) as OwnerType, id: key.slice(split + 1) }
 }
