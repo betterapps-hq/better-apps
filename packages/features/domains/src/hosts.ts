@@ -1,7 +1,11 @@
 // Which organization a host serves, and the origin of an organization's domain, for features that serve customers'
 // domains, such as short links' `hosts`.
+import { z } from "zod"
 import type { Domain, HostnameMatch } from "./feature.js"
 import { isWithin, maxHostnameLength, normalizeHostname } from "./hostname.js"
+
+/** The app's own URL: http or https, with any host, including `127.0.0.1` and `[::1]`. */
+const appUrl = z.url({ protocol: /^https?$/ })
 
 /** The domains calls `domainHosts` makes: `app.api.domains`, which exists only once the app is created. */
 export interface DomainHostsApi {
@@ -56,8 +60,13 @@ export interface DomainHosts {
  * Features are created before the app, so the app calls `connect(app.api.domains)` once it exists.
  */
 export function domainHosts(options: DomainHostsOptions): DomainHosts {
-  const url = new URL(options.url)
-  const appHostnames = new Set([url.hostname])
+  const parsed = appUrl.safeParse(String(options.url))
+  if (!parsed.success) {
+    throw new Error("`url` is the app's own http or https URL, such as `https://app.yourapp.com`.")
+  }
+  const url = new URL(parsed.data)
+  // Normalized as requests' hosts are, so a trailing dot can't keep the app's own host from matching.
+  const appHostnames = new Set([normalizeHostname(url.host, { allowPort: true }) ?? url.hostname])
   for (const entry of options.hostnames ?? []) {
     const hostname = normalizeHostname(entry)
     if (hostname === null) {

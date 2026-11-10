@@ -71,6 +71,22 @@ describe("domainHosts", () => {
     expect(() => domainHosts({ url: "http://127.0.0.1:4190", localSuffix: "Yourapp.Localhost." })).not.toThrow()
   })
 
+  it("refuses a url that isn't the app's http or https URL", () => {
+    expect(() => domainHosts({ url: "localhost:3000" })).toThrow("`url`")
+    expect(() => domainHosts({ url: "app.yourapp.com" })).toThrow("`url`")
+    expect(() => domainHosts({ url: "ftp://app.yourapp.com" })).toThrow("`url`")
+    expect(() => domainHosts({ url: new URL("https://app.yourapp.com") })).not.toThrow()
+  })
+
+  it("normalizes the url's hostname", async () => {
+    const api = fakeDomains(held)
+    const { hosts, connect } = domainHosts({ url: "http://App.YourApp.localhost.:3000" })
+    connect(api)
+    await expect(hosts.resolve({ hostname: "app.yourapp.localhost" })).resolves.toBe("app")
+    expect(api.lookups).toEqual([])
+    await expect(hosts.origin({ orgId: "globex" })).resolves.toBe("http://links.globex.com:3000")
+  })
+
   it("refuses app hostnames that aren't hostnames without a port", () => {
     const url = "http://127.0.0.1:4190"
     expect(() => domainHosts({ url, hostnames: ["localhost:4190"] })).toThrow('"localhost:4190"')

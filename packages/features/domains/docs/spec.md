@@ -402,8 +402,10 @@ linkHosts.connect(app.api.domains)
 | `hostnames`   | none    | More hostnames that are the app's own, such as `localhost` beside `127.0.0.1`, without a port          |
 | `localSuffix` | none    | For local development with `localHostnames()` only: answers custom domains under this `localhost` name |
 
-- `domainHosts` throws for a `hostnames` entry that isn't a hostname, such as `localhost:4190` or `::1`, which could
-  never match. Write an IPv6 address in brackets, as `[::1]`.
+- `domainHosts` throws for a `url` that isn't an `http` or `https` URL, such as `localhost:3000` without its scheme. Its
+  hostname is normalized like the others, so a trailing dot doesn't matter.
+- It throws for a `hostnames` entry that isn't a hostname, such as `localhost:4190` or `::1`, which could never match.
+  Write an IPv6 address in brackets, as `[::1]`.
 - `hosts.resolve({ hostname })` normalizes the hostname as `lookup` does, so case, a trailing dot and a port don't
   matter, and answers `null` without a lookup for one no domain could hold. It returns `"app"` for the app's own
   hostnames without a lookup. Otherwise it looks the hostname up and returns `{ orgId }` for a `verified` domain,
