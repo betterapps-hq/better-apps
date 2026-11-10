@@ -59,7 +59,7 @@ with a catch-all route at `/s` in TanStack Start.
 - `notFound({ request, code })` answers links that don't exist, are turned off or have expired. A plain 404 page, by
   default. It isn't told which, so visitors can't tell which codes were links once.
 - `source: { param, urls?, grants? }` adds the link's code to the address it redirects to, such as
-  `?via=intro-linkedin`, so the page knows which link opened it. See
+  `?via=intro-linkedin`, so the page knows which link's code opened it. See
   [Which link opened a page](#which-link-opened-a-page).
 
 ## Owners and permissions
@@ -84,7 +84,7 @@ custom `code`, such as one the app generates: 1 to 64 letters, digits, `-` and `
 stored in lowercase, so every database compares them alike, and `/s/Sale` opens `sale`. Codes are unique across the app,
 except on organizations' domains, where each organization has its own, as
 [Codes on organizations' domains](#codes-on-organizations-domains) describes. A custom code that's taken in the link's
-scope returns `CONFLICT`; a generated one that collides is replaced, up to three times.
+scope returns `CONFLICT`; a generated one that collides is tried again with a new one, up to three tries in all.
 
 The code of a link that grants access is all it takes to see the record, so it always has 12 random characters: a
 generated code is at least that long, whatever `codeLength` says, and a custom one, up to 51 characters, gets them after
@@ -187,8 +187,8 @@ such as a booking's source. It works whichever host the page is on, unlike a coo
   would show in the page's address, history, logs and analytics. An app that turns it on can keep the code, such as in a
   cookie of its own, and redirect to the address without it.
 - A link that sends the visitor on to another host, as a link that grants access can, adds the code only on that host.
-- With `hosts`, a code is unique only within its scope, so a code can name one link on the app's host and another on an
-  organization's domain. Look it up with the page's organization in mind.
+- With `hosts`, a code is unique only within its scope, so two links to the same page, such as an organization's on its
+  domain and a member's own on the app's host, can add the same code.
 
 ## Organizations' domains
 

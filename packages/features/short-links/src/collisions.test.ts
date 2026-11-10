@@ -46,6 +46,15 @@ describe("generated codes that collide", () => {
     expect(next).toEqual(["fresh-02"])
   })
 
+  it("tell a failed write apart from a taken code only within the link's scope", async () => {
+    const { app, api, as } = setup({ baseUrl: "https://app.test", hosts })
+    await api.create({ target: docs, code: "pricing" }, as("ada"))
+    // Globex's write fails for another reason. Acme's code is in another scope, so it isn't read back as taken.
+    const batch = vi.spyOn(app.db, "batch").mockRejectedValueOnce(new Error("The database is down."))
+    await expect(api.create({ target: docs, code: "pricing" }, as("gus"))).rejects.toThrow("The database is down.")
+    batch.mockRestore()
+  })
+
   it("collide only within their scope", async () => {
     const { api, as } = setup({ baseUrl: "https://app.test", hosts })
     await api.create({ target: docs, code: "taken-01" }, as("ada"))
@@ -92,12 +101,50 @@ describe("grant cookies", () => {
         { actor: null, ...acmeInvoice, request: holding(cookie) }
       ])
     ).toEqual([false, true, false, true])
+    // Read by record, as when many visitors hold more codes than reading by code would take in a query.
+    const reads = vi.spyOn(app.db, "findMany")
+    // Each visitor holds 19 other codes, so five of them hold more than 90 between them.
+    const filler = (visitor: number) =>
+      Array.from({ length: 19 }, (_, index) => `filler${visitor}${String(index).padStart(4, "0")}`).join(".")
+    const entries = [cookie, globexEntry, ...[2, 3, 4].map(() => "better-apps-links=")]
+    expect(
+      await app.subjects.canViewMany(
+        entries.map((held, visitor) => {
+          const [name, value] = held.split("=")
+          return { actor: null, ...globexInvoice, request: holding(`${name}=${filler(visitor)}.${value ?? ""}`) }
+        })
+      )
+    ).toEqual([false, true, false, false, false])
+    const linkReads = reads.mock.calls.filter(([query]) => query.model === "shortLink")
+    expect(linkReads).toHaveLength(1)
+    expect(linkReads[0]?.[0].where?.[0]?.field).toBe("subjectType")
+    reads.mockRestore()
     // Globex's own link grants its invoice, read by record or by code alike.
     const both = `better-apps-links=samecode1234~${btoa("globex").replace(/=+$/, "")}.${cookie.split("=")[1] ?? ""}`
     expect(
       await app.subjects.canViewMany([
         { actor: null, ...globexInvoice, request: holding(both) },
         { actor: null, ...acmeInvoice, request: holding(both) }
+      ])
+    ).toEqual([true, true])
+  })
+
+  it("keep another scope's entry with the same code when a link is opened", async () => {
+    const { app, api, as } = setup({ baseUrl: "https://app.test", hosts })
+    next.push("samecode1234", "samecode1234")
+    await api.create({ target: { subjectType: "invoice", subjectId: "inv-1" }, grantsView: true }, as("ada"))
+    await api.create({ target: { subjectType: "invoice", subjectId: "inv-globex" }, grantsView: true }, as("gus"))
+    const globexEntry = `samecode1234~${btoa("globex").replace(/=+$/, "")}`
+    const opened = await app.handler(
+      new Request("https://links.acme.test/s/samecode1234", { headers: { cookie: `better-apps-links=${globexEntry}` } })
+    )
+    const cookie = cookieOf(opened)
+    expect(cookie).toBe(`better-apps-links=${globexEntry}.samecode1234~${btoa("acme").replace(/=+$/, "")}`)
+    const holding = new Request("https://app.test/invoices", { headers: { cookie } })
+    expect(
+      await app.subjects.canViewMany([
+        { actor: null, subjectType: "invoice", subjectId: "inv-1", request: holding },
+        { actor: null, subjectType: "invoice", subjectId: "inv-globex", request: holding }
       ])
     ).toEqual([true, true])
   })

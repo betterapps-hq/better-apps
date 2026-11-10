@@ -193,6 +193,12 @@ describe("domainHosts", () => {
       await expect(hosts.origin({ orgId: "globex" })).resolves.toBe("https://links.globex.com")
     })
 
+    it("falls back the same way for the app's own domains in an app without organizations", async () => {
+      const { hosts, connect } = domainHosts({ url: "https://app.yourapp.com" })
+      connect(fakeDomains([{ orgId: null, hostname: "go.workspace.com", kind: "custom", status: "active" }]))
+      await expect(hosts.origin({ orgId: null })).resolves.toBe("https://go.workspace.com")
+    })
+
     it("is the app's own without an active domain", async () => {
       const { hosts, connect } = domainHosts({ url: "https://app.yourapp.com" })
       connect(fakeDomains(held))

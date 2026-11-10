@@ -110,8 +110,9 @@ export function ShareInvoice({ invoiceId, number }: { invoiceId: string; number:
 }
 
 /**
- * What a link is called: its address, or its code while it has none, which is while the workspace domain it was made on
- * isn't ready.
+ * What a link is called: its address, or its code while it has none. Short links leave an organization's link on its
+ * domain without an address while no domain of the organization is ready, which this app, with no organizations, never
+ * makes.
  */
 function nameOf(link: ShortLink) {
   return link.shortUrl ?? `Link ${link.code}`

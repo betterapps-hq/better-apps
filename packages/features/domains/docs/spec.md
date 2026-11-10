@@ -417,8 +417,8 @@ linkHosts.connect(app.api.domains)
   holds.
 - `hosts.origin({ orgId })` returns the origin of the organization's primary domain once it's `active`, on `url`'s
   scheme and port, such as `https://links.acme.com`. Without an `active` primary domain, such as after it's removed or
-  while it's failing, it's the first `active` domain the organization added, which still opens its links, read with
-  `list`. With no `active` domain, it's `null`, which means the app's own.
+  while it's failing, it's the first `active` domain the organization added, or the app added for `orgId` `null`, which
+  still opens its links, read with `list`. With no `active` domain, it's `null`, which means the app's own.
 - Features are created before the app, and `app.api.domains` exists only once it is, so the app calls
   `connect(app.api.domains)` then. Until it does, both throw an error that says so, rather than every domain answering
   as unknown. A later `connect` replaces the earlier one.

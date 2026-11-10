@@ -256,7 +256,7 @@ describe("organizations' domains", () => {
     expect(landed.response.headers.get("set-cookie")).toContain("; Domain=example.test;")
   })
 
-  it("ask each record's url once per call when writing short URLs, and none for links in an organization's scope", async () => {
+  it("ask each record's url once per call when writing short URLs", async () => {
     const asked: string[] = []
     const asking = (rules: LinkRules): LinkRules => ({
       ...rules,
@@ -287,9 +287,38 @@ describe("organizations' domains", () => {
     }
     asked.length = 0
     expect((await t.api.list({}, t.as("ada"))).links).toHaveLength(3)
-    expect(asked).toEqual([])
+    expect([...asked].sort()).toEqual(["inv-1", "inv-2"])
+    asked.length = 0
     expect((await t.api.list({}, t.as("solo"))).links).toHaveLength(2)
     expect(asked).toEqual(["doc-1"])
+  })
+
+  it("give a link that grants access no short URL while its organization's origin can't give the cookie to the record", async () => {
+    // Acme's subdomain shares the cookie with the app's host, where invoices are. Its own domain can't.
+    let origin = "https://acme.app.test"
+    const t = setup({
+      baseUrl: "https://app.test",
+      subjects: { ...options.subjects, invoice: onApp },
+      cookie: { domain: "app.test" },
+      hosts: {
+        resolve: ({ hostname }) =>
+          ({
+            "app.test": "app" as const,
+            "acme.app.test": { orgId: "acme" },
+            "links.acme.test": { orgId: "acme" }
+          })[hostname] ?? null,
+        origin: ({ orgId }) => (orgId === "acme" ? origin : null)
+      }
+    })
+    const link = await t.api.create({ target: inv1, grantsView: true }, t.as("ada"))
+    expect(link.shortUrl).toBe(`https://acme.app.test/s/${link.code}`)
+    origin = "https://links.acme.test"
+    expect((await t.api.get({ id: link.id }, t.as("ada"))).shortUrl).toBeNull()
+    // A link that doesn't grant access is shared on the new domain as usual.
+    const plain = await t.api.create({ target: docs }, t.as("ada"))
+    expect(plain.shortUrl).toBe(`https://links.acme.test/s/${plain.code}`)
+    origin = "https://acme.app.test"
+    expect((await t.api.get({ id: link.id }, t.as("ada"))).shortUrl).toBe(`https://acme.app.test/s/${link.code}`)
   })
 
   it("open every link on every host without hosts", async () => {

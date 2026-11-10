@@ -231,7 +231,8 @@ function loadOnce<T>(): (key: string, load: () => T | Promise<T>) => Promise<T> 
 
 /**
  * Where each link's short URL goes in a call. A link in an organization's scope is on the host `hosts.origin` gives the
- * organization, and has none while it gives none. A link made outside any organization is on `hosts.origin`'s host for
+ * organization, and has none while it gives none, or while the cookie a link that grants access sets wouldn't reach the
+ * record from there. A link made outside any organization is on `hosts.origin`'s host for
  * links outside any, when the cookie a link that grants access sets reaches the record from there. Every other link is
  * on the app's own host. Each organization's origin, and each record's `url`, is asked once per call.
  */
@@ -275,7 +276,9 @@ function prefixer(config: Config, request: Request | null): Prefixer {
   }
   const of = async (row: LinkRow): Promise<string | null> => {
     if (row.scope !== "") {
-      return originPrefix(row.scope)
+      // No other host opens the link, so it has no short URL where its cookie wouldn't reach the record, such as after
+      // `origin` moves from a subdomain under the cookie's domain to one of the organization's own domains.
+      return sharedOf(row)
     }
     return (row.orgId === "" ? await sharedOf(row) : null) ?? own
   }
@@ -595,7 +598,7 @@ async function create(config: Config, context: Context): Promise<ShortLink> {
   // An organization's own link, shared on its domain, has a code of the organization's. Every other has one of the app's.
   fields.scope = await prefixes.scopeOf({ id: "", code: "", ...fields })
   await checkReach(prefixes, fields)
-  // A code with a random part that's taken is replaced, up to three times. A taken code is told apart from other failed
+  // A code with a random part is tried up to three times, with a new one each time it's taken. A taken code is told apart from other failed
   // writes by reading it back, in the link's scope only, so nothing is told about other scopes' codes.
   for (let attempt = 1; ; attempt += 1) {
     const row: LinkRow = { id: crypto.randomUUID(), code: codeFor(), ...fields }

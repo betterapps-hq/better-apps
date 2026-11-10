@@ -146,7 +146,7 @@ shortLinks({
 - Codes are unique within their scope: the app's, which every link is in without `hosts`, or an organization's, for
   links it makes on its domains, as [Codes on organizations' domains](#codes-on-organizations-domains) describes. A
   custom code that's taken in the link's scope returns `CONFLICT`, which tells the caller nothing about other scopes'
-  codes. A code with a random part that collides is replaced with another, up to three times, before `CONFLICT`. A
+  codes. A code with a random part is tried up to three times, with a new one each time it's taken, before `CONFLICT`. A
   collision is told apart from other failed writes by reading the code back in the same scope.
 - A link's code never changes. A different code is a different link.
 
@@ -280,9 +280,9 @@ link's host wouldn't, such as when the page is on an organization's domain and t
 - When a link sends the visitor on to another host, as a link that grants access can, that hop carries no code. The link
   on the next host adds it.
 - With `hosts`, a code is unique only within its scope, as
-  [Codes on organizations' domains](#codes-on-organizations-domains) describes, so the same code can be one link on the
-  app's host and another on an organization's domain. An app that looks a link up from the code reads it with the page's
-  organization: its own links' codes first, then the app's.
+  [Codes on organizations' domains](#codes-on-organizations-domains) describes. So two links to the same page, such as
+  an organization's link on its domain and a member's own on the app's host, can add the same code. The code labels the
+  visit with the link's code, not with one link.
 
 ## Opening a link
 
@@ -407,6 +407,9 @@ So a domain appearing or going away never moves a link, and two links never come
   open only on whichever domains `resolve` still gives it, and their `shortUrl` is `null` until `origin` names a domain
   again. The app's host never opens them, since another organization's link, or one in the app's scope, may have the
   same code. New links go in the app's scope meanwhile.
+- A hostname that passes to another organization, such as a released subdomain someone else takes, opens the new
+  holder's codes from then on. A short URL the old holder shared there opens the new holder's link with that code, if it
+  has one, and nothing otherwise.
 
 ### Which host opens which links
 
@@ -446,7 +449,9 @@ any organization ask with `orgId` `null`, for a host `resolve` calls `"app"`, or
 organization in a call, so `list` asks once for a page of one organization's links.
 
 - A link in an organization's scope is shared on the domain `origin` gives, such as the organization's primary one.
-  While `origin` returns `null`, its `shortUrl` is `null`.
+  While `origin` returns `null`, its `shortUrl` is `null`. So is that of such a link that grants access while the cookie
+  wouldn't reach its record from that domain, such as after `origin` moves from a subdomain under `cookie.domain` to one
+  of the organization's own domains. No other host would grant the access.
 - A link made outside any organization is shared on `origin({ orgId: null })` when it returns a host, and on `baseUrl`
   otherwise.
 - Every other link is in the app's scope and shared on `baseUrl`.
@@ -477,7 +482,8 @@ without the cookie or a click. That host sets the cookie and counts the click. I
 on, so a link sends a visitor on once at most.
 
 - A link in the app's scope goes to `baseUrl` when the cookie reaches the record from there, and to the record's host
-  otherwise. The record's host only opens the link when `resolve` calls it the app's.
+  otherwise. The record's host opens the link when `resolve` calls it the app's, or when it's a domain of the
+  organization that owns the link.
 - A link in an organization's scope goes to the domain `origin` gives when the cookie reaches the record from there,
   such as from one of its own domains to its subdomain. Otherwise it opens where it is, and its cookie doesn't reach the
   record.

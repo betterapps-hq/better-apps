@@ -107,8 +107,8 @@ export function DomainSettings() {
             </h2>
           </CardTitle>
           <CardDescription>
-            The primary domain is the one links use. A domain is ready once its records are in place and its certificate
-            is issued.
+            Links use the primary domain, or another ready domain while it isn’t ready. A domain is ready once its
+            records are in place and its certificate is issued.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -303,7 +303,7 @@ function DomainItem({ domain, canManage, call }: DomainItemProps) {
     const confirmed = await modals.confirm({
       title: `Remove ${hostname}?`,
       description: domain.primary
-        ? "It’s the primary domain, so links will use the app’s own address until you choose another."
+        ? "It’s the primary domain, so links will use another ready domain, or the app’s own address if none is ready, until you choose another."
         : "Links on it will stop working. You can add it again later.",
       confirmLabel: "Remove domain"
     })
