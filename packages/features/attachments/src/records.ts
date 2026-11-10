@@ -404,6 +404,22 @@ export async function deleteFile(config: Config, context: Context): Promise<{ de
       }
     }
   }
+  if (file.status === "pending") {
+    // A finish under way could make the file ready and put it on its record between reading and deleting it, so it's
+    // taken while it's still pending, which the finish then can't change. When the finish got there first, the file is
+    // read again and deleted as it is now, which for a file on its record means taking it off first.
+    const taken = await context.db.update<AttachmentFile>({
+      model: fileModel,
+      where: [
+        { field: "id", value: fileId },
+        { field: "status", value: "pending" }
+      ],
+      update: { status: "deleted", expiresAt: null }
+    })
+    if (!taken) {
+      return deleteFile(config, context)
+    }
+  }
   return { deleted: await deleteFiles(config, context, [file], "deleted") }
 }
 

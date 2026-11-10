@@ -113,7 +113,8 @@ It only takes the subject types of the client's app.
   that finished deletes it, so it doesn't wait for the sweep, unless it's being attached.
 - Pass `multiple` to `Upload.Root`. Without it, a root takes a single file when one place is left, and a pick replaces
   every upload in the queue, stopping those under way.
-- `isUnderWay(item)` says whether an upload is still checked, waiting, sending or being processed.
+- `isUnderWay(item)` says whether an upload hasn't ended: checked, waiting, sending or being processed, paused, such as
+  while offline, or added but not started.
 - UploadCN's own checks, such as for a file that's too large, use UploadCN's wording, which its options don't change.
   `Upload.Root`'s `messages` change its status labels, announcements and action labels.
 

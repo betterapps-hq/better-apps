@@ -375,6 +375,31 @@ describe("attachmentsAdapter", () => {
     await until(() => count(view.calls, "deleteFile") === 1)
   })
 
+  it("prepares again when a restored resume state is malformed, such as one without headers", async () => {
+    const view = setup()
+    const adapter = attachmentsAdapter(view.attachments, inv1, { transport: view.transport })
+    const file = pick("hello")
+    const context = {
+      item: { id: "item", name: file.name } as UploadItem,
+      file,
+      signal: new AbortController().signal,
+      attempt: 2,
+      resumeState: {
+        fileId: "old",
+        url: "https://app.test/old",
+        expiresAt: Date.now() + 60_000,
+        target: inv1,
+        sent: false
+      },
+      onProgress: () => undefined,
+      onChunkProgress: () => undefined,
+      saveResumeState: () => undefined
+    } satisfies UploadAdapterContext
+    const result = await adapter.upload(context)
+    expect(result.status).toBe("ready")
+    expect(view.sends).not.toContain("https://app.test/old")
+  })
+
   it("only takes the app's subject types", () => {
     const view = setup()
     // @ts-expect-error Tickets aren't one of the app's subject types.

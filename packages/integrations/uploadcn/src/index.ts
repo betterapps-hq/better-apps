@@ -62,6 +62,8 @@ function isResumeState(value: unknown): value is AttachmentsResumeState {
     state !== null &&
     typeof state.fileId === "string" &&
     typeof state.url === "string" &&
+    typeof state.headers === "object" &&
+    state.headers !== null &&
     typeof state.expiresAt === "number" &&
     typeof state.sent === "boolean" &&
     typeof state.target === "object" &&

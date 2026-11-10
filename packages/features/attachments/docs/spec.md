@@ -351,7 +351,9 @@ enough.
   `getFile({ fileId })`; `listOwnFiles({ owner, cursor?, limit? })` pages a person's or an organization's own files,
   newest first; `getSettings({ subjectType })` returns the limits, for a picker's `accept` and checks before sending.
 - Writes: `createUpload`, `completeUpload`, `attach`, `detach`, `reorder({ subjectType, subjectId, fileIds })` and
-  `deleteFile`, which also cancels an upload or a draft of the caller's. `reorder` writes every file's position in one
+  `deleteFile`, which also cancels an upload or a draft of the caller's. It takes an unfinished upload only while it's
+  still pending, so a finish can't put it on its record meanwhile; one that finished onto its record first answers
+  `INVALID_INPUT`, as any file on a record does, to be detached instead. `reorder` writes every file's position in one
   batch, so when two people reorder a record at once, it ends in the order of whichever saves last.
 - Server only: `sweep`, `removeSubject`, `moveSubject`, `removeUser`, `toClientEvent` and `toClientEvents`.
 
