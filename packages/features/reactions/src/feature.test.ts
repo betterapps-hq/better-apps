@@ -639,8 +639,7 @@ describe("toClientEvent", () => {
 
 describe("with comments", () => {
   // Comments' subject types and events, as @better-apps/comments declares them, without its tables.
-  // `types` are the comments subject types reactions are set up on.
-  function withComments({ open = false, types = ["comments.comment", "comments.thread"] } = {}) {
+  function withComments({ open = false } = {}) {
     const threads = new Map([["t-1", { orgId: "acme", comments: new Set(["c-1", "c-2"]) }]])
     // Runs once, right after the next organization lookup, such as to move a thread while a reaction is saved.
     // `failOnce` fails the next delivery of that reactions event once, after reactions handled it, as a crash would.
@@ -679,7 +678,7 @@ describe("with comments", () => {
         })
       }
     })
-    const feature = reactions({ subjects: Object.fromEntries(types.map((type) => [type, {}])) })
+    const feature = reactions({ subjects: { "comments.comment": {}, "comments.thread": {} } })
     const delivered: BetterAppsEvent[] = []
     const record: EventHandler = (event) => {
       if (hooks.failOnce === event.type) {
@@ -712,9 +711,9 @@ describe("with comments", () => {
       events
     }
   }
-  const moved = (threadId: string, toOrgId: string, commentIds: string[]) => ({
+  const moved = (threadId: string, toOrgId: string, commentIds: string[], fromOrgId = "acme") => ({
     type: "thread.moved",
-    data: { thread: { id: threadId, orgId: toOrgId }, fromOrgId: "acme", commentIds }
+    data: { thread: { id: threadId, orgId: toOrgId }, fromOrgId, commentIds }
   })
   const comment = (id: string) => ({ subjectType: "comments.comment", subjectId: id }) as const
 
@@ -773,10 +772,7 @@ describe("with comments", () => {
         subjectId: "t-1",
         fromOrgId: "acme",
         toOrgId: "globex",
-        records: [
-          { subjectType: "comments.thread", count: 1 },
-          { subjectType: "comments.comment", count: 2 }
-        ]
+        moveEventId: expect.any(String)
       }
     ])
   })
@@ -854,18 +850,23 @@ describe("with comments", () => {
     expect(setup.events("move.finished")).toEqual([])
   })
 
-  it("count every record that moved with the thread, whichever subject types have reactions", async () => {
-    const setup = withComments({ types: ["comments.comment"] })
-    setup.threads.set("t-1", { orgId: "globex", comments: new Set(["c-1", "c-2"]) })
-    await setup.emit(moved("t-1", "globex", ["c-1", "c-2"]))
+  it("stop an older move that's still paging when its thread moves back, which takes every reaction back", async () => {
+    const setup = withComments()
+    const ids = await busyThread(setup, 20)
+    await setup.api.react({ subjectType: "comments.thread", subjectId: "t-big", emoji: "👀" }, setup.as("ada"))
+    setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
+    await setup.emit(moved("t-big", "globex", ids))
+    // The first page takes the thread's reaction and 29 of its comments'.
+    expect(setup.inOrg("globex")).toEqual({ count: 30 })
+    setup.threads.set("t-big", { orgId: "acme", comments: new Set(ids) })
+    await setup.emit(moved("t-big", "acme", ids, "globex"))
     await setup.deliver()
+    await setup.deliver()
+    await setup.deliver()
+    expect(setup.inOrg("globex")).toEqual({ count: 0 })
+    expect(setup.inOrg("acme")).toEqual({ count: 41 })
     expect(setup.events("move.finished").map((event) => event.data)).toMatchObject([
-      {
-        records: [
-          { subjectType: "comments.thread", count: 1 },
-          { subjectType: "comments.comment", count: 2 }
-        ]
-      }
+      { fromOrgId: "globex", toOrgId: "acme" }
     ])
   })
 
@@ -923,10 +924,9 @@ describe("with comments", () => {
         subjectId: "t-big",
         fromOrgId: "acme",
         toOrgId: "globex",
-        records: [
-          { subjectType: "comments.thread", count: 1 },
-          { subjectType: "comments.comment", count: 20 }
-        ]
+        // The same on every page, from the event that reported the move.
+        moveEventId: (setup.events("cleanup.continued")[0]?.data as { move?: { moveEventId: string } } | undefined)
+          ?.move?.moveEventId
       }
     ])
   })

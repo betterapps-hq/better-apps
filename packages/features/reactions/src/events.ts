@@ -49,11 +49,8 @@ export interface MoveFinishedData {
   fromOrgId: string
   /** The organization it moved to, or `""` for none. */
   toOrgId: string
-  /**
-   * How many records of each subject type moved: the thread, and the comments it had when it moved, with reactions or
-   * not, and whether or not reactions are set up on that subject type.
-   */
-  records: { subjectType: string; count: number }[]
+  /** The id of the event that reported the move, such as comments' `thread.moved`, which tells two moves apart. */
+  moveEventId: string
 }
 
 /** The events reactions emit. Browsers get them through `toClientEvent`, which checks the viewer can see the record. */
@@ -68,7 +65,7 @@ export const reactionEvents = {
   "user.removed": defineEvent<{ userId: string; orgId: string | null }>(),
   /**
    * Reactions finished moving after a record that moved to another organization, such as a comments' thread: the
-   * reactions on it, and on the records it had when it moved, are in the new organization. Browsers never get it.
+   * reactions on it, and on the records its move event listed, are in the new organization. Browsers never get it.
    */
   "move.finished": defineEvent<MoveFinishedData>(),
   /**

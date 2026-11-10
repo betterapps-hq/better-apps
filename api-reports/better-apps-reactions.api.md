@@ -100,10 +100,7 @@ export interface LiveViewer {
 // @public
 export interface MoveFinishedData {
     fromOrgId: string;
-    records: {
-        subjectType: string;
-        count: number;
-    }[];
+    moveEventId: string;
     subjectId: string;
     subjectType: string;
     toOrgId: string;

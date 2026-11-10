@@ -126,16 +126,15 @@ when a job stops partway. Each page of a move emits `subject.moved` for every re
 way, so a record without reactions gets none, and a busy one may get one per page. `subject.removed` and `user.removed`
 follow the actions above once they're done.
 
-`move.finished` follows the last page of a thread's move, once the reactions on the thread, and on the comments it had
-when it moved, are all in the new organization. It carries the thread as `subjectType` and `subjectId`, `fromOrgId` and
-`toOrgId`, and `records`, how many records of each subject type moved, such as
-`{ subjectType: "comments.comment", count: 12 }`, with reactions or not, and whether or not reactions are set up on that
-subject type. It's written with the last delivery's removal from the outbox, under an id derived from that delivery, so
-a retried delivery emits it once, and it reaches subscribers in the next `app.deliverEvents()` run. Delivery is at least
-once, as for every event, so skip an event id you've already handled. A move stopped by a newer move of the thread, or
-by its deletion, emits none. A thread that moves away and back before an older move to the same organization finishes
-lets that move run on, since its records belong there too, so each of the two moves reports `move.finished` with its own
-records. Browsers never get it.
+`move.finished` follows the last page of a thread's move, once the reactions on the thread, and on the comments its
+`thread.moved` event listed, are all in the new organization. It carries the thread as `subjectType` and `subjectId`,
+`fromOrgId`, `toOrgId`, and `moveEventId`, the id of that `thread.moved` event, which tells two moves of a thread apart.
+It's written with the last delivery's removal from the outbox, under an id derived from that delivery, so a retried
+delivery emits it once, and it reaches subscribers in the next `app.deliverEvents()` run. Delivery is at least once, as
+for every event, so skip an event id you've already handled. A move stopped by a newer move of the thread, or by its
+deletion, emits none. A thread that moves away and back before an older move to the same organization finishes lets that
+move run on, since its records belong there too, so both moves report `move.finished`, each with its own `moveEventId`.
+Browsers never get it.
 
 `toClientEvent({ event, viewer, request? })`, a server-only action, turns a reaction event into one a viewer's browser
 may see, or `null` when they can't see the record. With the viewer's request, grants it carries count as they do for

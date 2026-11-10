@@ -501,20 +501,21 @@ const cleanupBatches = 3
  */
 async function cleanUp(config: Config, writer: Writer & Pick<Context, "subjects">, job: Cleanup) {
   const { move } = job
-  const toOrgId = move?.toOrgId
   const records = job.records.filter(
     (record) => record.subjectIds.length > 0 && Object.hasOwn(config, record.subjectType)
   )
   if (move) {
-    // A move runs over several deliveries, so the record it follows may have moved again since, or gone; either stops
-    // it, so an older job never undoes a newer move. Records of its that went away meanwhile, such as a deleted comment,
-    // don't stop it: their reactions go with their own removal.
+    // A move runs over several deliveries, so the record it follows may have moved again since, which stops it, so an
+    // older job never undoes a newer move. So does its deletion, except for a move to no organization, which can't
+    // tell a deleted record from one without an organization; its own removal takes the reactions either way. Records
+    // of its that went away meanwhile, such as a deleted comment, don't stop it: their reactions go with their own
+    // removal.
     if ((await orgOf(writer.subjects, move.subject, null)) !== move.toOrgId) {
       return
     }
   }
   // One page's worth of reactions per delivery, over a few batches at most, such as a thread's and its comments'.
-  let room = toOrgId === undefined ? removalPage : movePageSize
+  let room = move ? movePageSize : removalPage
   let reads = cleanupReads
   for (let batches = 0; batches < cleanupBatches && room > 0 && reads > 0 && records.length > 0;) {
     const record = records[0] as Cleanup["records"][number]
@@ -522,7 +523,7 @@ async function cleanUp(config: Config, writer: Writer & Pick<Context, "subjects"
     let found = 0
     const find = async (limit: number) => {
       const page = await pageOf(writer.db, record.subjectType, record.subjectIds, Math.min(limit, room), {
-        notOrgId: toOrgId,
+        notOrgId: move?.toOrgId,
         maxReads: reads
       })
       rest = page.rest
@@ -530,9 +531,9 @@ async function cleanUp(config: Config, writer: Writer & Pick<Context, "subjects"
       reads -= page.reads
       return page.rows
     }
-    await (toOrgId === undefined
-      ? removePage(writer, find, "subjectRemoved")
-      : movePage(writer, settingsOf(config, record.subjectType), record.subjectType, find, toOrgId))
+    await (move
+      ? movePage(writer, settingsOf(config, record.subjectType), record.subjectType, find, move.toOrgId)
+      : removePage(writer, find, "subjectRemoved"))
     room -= found
     batches += found > 0 ? 1 : 0
     records[0] = { ...record, subjectIds: rest }
@@ -551,7 +552,7 @@ async function cleanUp(config: Config, writer: Writer & Pick<Context, "subjects"
         ...move.subject,
         fromOrgId: move.fromOrgId,
         toOrgId: move.toOrgId,
-        records: move.records
+        moveEventId: move.moveEventId
       } satisfies ReactionsEventData["move.finished"],
       { later: true }
     )
@@ -1086,18 +1087,13 @@ function commentHandlers(config: Config): Record<string, EventHandler> | null {
     },
     "thread.moved": async (event, context) => {
       const data = event.data as ThreadData & { fromOrgId: string }
-      const commentIds = data.commentIds ?? []
       await cleanUp(config, context, {
-        records: threadRecords([data.thread.id], commentIds),
+        records: threadRecords([data.thread.id], data.commentIds ?? []),
         move: {
           subject: { subjectType: commentTypes.thread, subjectId: data.thread.id },
           fromOrgId: data.fromOrgId,
           toOrgId: data.thread.orgId,
-          // What moved with the thread, whichever of its subject types reactions are set up on.
-          records: [
-            { subjectType: commentTypes.thread, count: 1 },
-            { subjectType: commentTypes.comment, count: new Set(commentIds).size }
-          ]
+          moveEventId: event.id
         }
       })
     }
