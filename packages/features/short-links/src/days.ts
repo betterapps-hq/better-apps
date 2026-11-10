@@ -7,17 +7,18 @@ const dayMs = 24 * 60 * 60 * 1000
 const scanMs = 15 * 60 * 60 * 1000
 
 /**
- * The first and last days clicks are counted on. Since 1980, every zone's offset has been a whole number of 15 minutes,
- * which slots rely on. Before then, some weren't, such as Monrovia's until 1972.
+ * The first and last days clicks are counted on. Since 2011, every zone's offset has been a whole number of 15 minutes
+ * and has changed only at a slot's edge without stepping the date back, which slots rely on. Before then, some didn't,
+ * such as St. John's, whose clocks went back at 00:01 until November 2010.
  */
-export const dayLimits = { first: "1980-01-01", last: "9998-12-31" } as const
+export const dayLimits = { first: "2011-01-01", last: "9998-12-31" } as const
 
 /** The longest range clicks are counted over, in days. */
 export const maxRangeDays = 366
 
 /**
- * The start of the 15-minute slot a time falls in, in UTC. Since 1980, every time zone's offset has been a whole number
- * of 15 minutes, so no slot spans two days in any zone.
+ * The start of the 15-minute slot a time falls in, in UTC. Since 2011, every time zone's offset has been a whole number
+ * of 15 minutes, changing only at a slot's edge, so no slot spans two days in any zone.
  */
 export function slotOf(date: Date): Date {
   return new Date(Math.floor(date.getTime() / slotMs) * slotMs)

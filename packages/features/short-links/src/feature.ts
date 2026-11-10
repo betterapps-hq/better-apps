@@ -39,7 +39,7 @@ import type {
 } from "./options.js"
 import { clickModel, linkModel, shortLinksSchema, type ClickRow, type LinkRow } from "./schema.js"
 
-/** A page of links, newest first. */
+/** A page of links, in the order `list` was asked for: newest first, or most opened first with `sort: "clicks"`. */
 export interface LinkPage {
   links: ShortLink[]
   /** The cursor for the next page, or `null` on the last one. */
@@ -565,6 +565,9 @@ const sortKeys: Record<LinkSort, readonly ("clicks" | "createdAt" | "id")[]> = {
   clicks: ["clicks", "createdAt", "id"]
 }
 
+/** The largest click count a cursor carries: the most a 32-bit integer column, as `clicks` is in most schemas, holds. */
+const maxClicks = 2_147_483_647
+
 /** A cursor after a row: its values of the order's sort keys. */
 function encodeCursor(row: LinkRow, sort: LinkSort): string {
   const values = sortKeys[sort].map((key) => (key === "createdAt" ? row.createdAt.toISOString() : row[key]))
@@ -577,13 +580,20 @@ function decodeCursor(cursor: string, sort: LinkSort): Partial<Pick<LinkRow, "cl
     const keys = sortKeys[sort]
     const [clicks, time, id] = keys.length === 3 ? values : [0, ...values]
     const createdAt = new Date(String(time))
+    const year = createdAt.getUTCFullYear()
+    // Values every database takes, so a tampered cursor fails here rather than in the query: clicks within a 32-bit
+    // integer column, a date within years 1 to 9999, and an id of printable characters.
     if (
       Array.isArray(values) &&
       values.length === keys.length &&
-      Number.isSafeInteger(clicks) &&
+      Number.isInteger(clicks) &&
+      (clicks as number) >= 0 &&
+      (clicks as number) <= maxClicks &&
       typeof time === "string" &&
+      year >= 1 &&
+      year <= 9999 &&
       typeof id === "string" &&
-      !Number.isNaN(createdAt.getTime())
+      /^[!-~]{1,255}$/.test(id)
     ) {
       return keys.length === 3 ? { clicks: clicks as number, createdAt, id } : { createdAt, id }
     }
@@ -933,15 +943,16 @@ async function recordClicks(config: Config, context: Context): Promise<ShortLink
   if (latest > context.now.getTime()) {
     throw new ShortLinksError("INVALID_INPUT", "Clicks can't be recorded later than now.")
   }
-  // Clicks per day need whole 15-minute offsets, which every zone has had since 1980.
+  // Clicks per day need offsets that change only at a slot's edge, as every zone's have since 2011.
   if (Math.min(...times) < Date.parse(`${dayLimits.first}T00:00:00Z`)) {
     throw new ShortLinksError("INVALID_INPUT", `Clicks can be recorded from ${dayLimits.first} on.`)
   }
   const lastClickedAt = new Date(Math.max(latest, row.lastClickedAt?.getTime() ?? latest))
   const gone = () => new ShortLinksError("NOT_FOUND", "That link doesn't exist, or you can't manage it.")
+  const writes = clickWrites(row.id, input.at, lastClickedAt)
   let updated: unknown
   try {
-    const written = await context.db.batch(clickWrites(row.id, input.at, lastClickedAt))
+    const written = await context.db.batch(writes)
     updated = written[0]
   } catch (error) {
     // A link removed since it was read fails the click rows' foreign key, and the batch rolls back.
@@ -951,6 +962,15 @@ async function recordClicks(config: Config, context: Context): Promise<ShortLink
     throw error
   }
   if (!updated || typeof updated !== "object") {
+    // Without enforced foreign keys, the batch wrote the rows of a link removed since it was read. They go again.
+    const ids = writes.flatMap((write) => (write.type === "createMany" ? write.data.map((data) => data.id) : []))
+    await context.db.batch(
+      chunks(ids).map((list) => ({
+        type: "deleteMany" as const,
+        model: clickModel,
+        where: [{ field: "id", operator: "in" as const, value: list }]
+      }))
+    )
     throw gone()
   }
   return present(prefixer(config, context.request), updated as LinkRow)

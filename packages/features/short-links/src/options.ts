@@ -254,7 +254,7 @@ export interface ClickTotalsInput extends DayRangeInput {
 /** The input of `recordClicks`: a link, and when it was opened. */
 export interface RecordClicksInput {
   code: string
-  /** Up to 500 times, from 1980 to now. */
+  /** Up to 500 times, from 2011 to now. */
   at: readonly (Date | string)[]
 }
 

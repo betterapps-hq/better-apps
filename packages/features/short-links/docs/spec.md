@@ -208,19 +208,22 @@ reader gets them, with names and no user ids, and who reacted shows only where i
   where it does, as [Opening a link](#opening-a-link) describes. Only that second host counts the click, so the visit
   counts once.
 - Clicks follow their link. Removing it, alone, with `removeSubject` or with `removeOwner`, removes its clicks through
-  the foreign key, in the same statement. A link stays in the organization it was made in when its record moves, and its
-  clicks stay with it. A link removed while its click is being written fails the click row's foreign key, and that
-  failed write goes to `onError` like any other.
+  the foreign key, in the same statement. That needs a database that enforces foreign keys, as D1, PostgreSQL and
+  MySQL's InnoDB do, and SQLite does with `PRAGMA foreign_keys = ON`. Elsewhere, a removed link's clicks stay behind,
+  though nothing reads them, since link ids aren't reused. A link stays in the organization it was made in when its
+  record moves, and its clicks stay with it. A link removed while its click is being written fails the click row's
+  foreign key, and that failed write goes to `onError` like any other.
 - Clicks emit no events.
 
 ### Clicks over time
 
-Since 1980, every IANA time zone's offset has been a whole number of 15 minutes, such as Kathmandu's 5:45. So each
-click's 15-minute `slot` falls on one day in every zone, and a day's clicks are the sum of its slots' counts. Before
-1980 some offsets weren't, such as Monrovia's until 1972, so ranges start in 1980 at the earliest.
+Since 2011, every IANA time zone's offset has been a whole number of 15 minutes, such as Kathmandu's 5:45, and has
+changed only at the edge of a 15-minute slot, without stepping the date back. So each click's `slot` falls on one day in
+every zone, and a day's clicks are the sum of its slots' counts. Before 2011 some zones broke this, such as St. John's,
+whose clocks went back from 00:01 to 23:01 the day before until November 2010, so ranges start in 2011 at the earliest.
 
 Both queries take a range of calendar days, `from` and `to` as `YYYY-MM-DD`, both included, up to 366 days, from
-`1980-01-01` to `9998-12-31`, in an IANA `timeZone`, `UTC` by default. Offsets such as `+05:30` aren't taken as zones. A
+`2011-01-01` to `9998-12-31`, in an IANA `timeZone`, `UTC` by default. Offsets such as `+05:30` aren't taken as zones. A
 range starts at the first moment of `from` in the zone and ends at the first moment after `to`. That's the first
 15-minute slot that falls on the day, found by stepping through the slots within 15 hours of its midnight in UTC, so a
 day whose midnight a change of offset skips or repeats starts at its first moment. Days with a change of offset are
@@ -242,8 +245,9 @@ link's `clicks`, and `list({ sort: "clicks" })` lists the most opened links firs
 `recordClicks({ code, at })`, server only, records up to 500 clicks at given times, such as a demo's history. It writes
 their rows, adds them to `clicks`, and sets `lastClickedAt` to the latest of them and the link's last click, in one
 batch, so a seeded link's counter, last click and chart agree. The rows take about 20 statements at most, well under
-D1's limit of queries per invocation. It refuses times later than now or before 1980, and links the caller doesn't
-manage, including one removed while the batch runs, and returns the link. It reads the link's last click before the
+D1's limit of queries per invocation. It refuses times later than now or before 2011, and links the caller doesn't
+manage, including one removed while the batch runs, and returns the link. Where foreign keys aren't enforced, such a
+batch writes the rows anyway, and they're deleted again before `NOT_FOUND`. It reads the link's last click before the
 batch, so a live click in between can leave `lastClickedAt` at the latest recorded time rather than that click's.
 
 ## The page a link opens

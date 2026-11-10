@@ -116,13 +116,31 @@ describe("recordClicks", () => {
     expect(clickRows(t)).toHaveLength(49)
   })
 
+  it("deletes the rows it wrote for a link removed meanwhile, where foreign keys aren't enforced", async () => {
+    const t = setup()
+    const link = await t.api.create({ target: docs }, t.as("ada"))
+    const { sqlite } = t.database
+    sqlite.exec("PRAGMA foreign_keys = OFF")
+    // The link goes just before the batch updates it, as another call removing it would.
+    const prepare = sqlite.prepare.bind(sqlite)
+    sqlite.prepare = ((sql: string) => {
+      if (/^update "shortLink"/i.test(sql)) {
+        prepare(`DELETE FROM "shortLink" WHERE "id" = ?`).run(link.id)
+      }
+      return prepare(sql)
+    }) as typeof sqlite.prepare
+    await expectCode(t.api.recordClicks({ code: link.code, at: at("2026-01-01T00:00:00Z") }), "NOT_FOUND")
+    sqlite.prepare = prepare
+    expect(clickRows(t)).toHaveLength(0)
+  })
+
   it("refuses times later than now and links the caller can't manage, and is server only", async () => {
     const t = setup()
     const link = await t.api.create({ target: docs }, t.as("ada"))
     await expectCode(t.api.recordClicks({ code: link.code, at: [new Date(Date.now() + 60 * 60_000)] }), "INVALID_INPUT")
     await expectCode(t.api.recordClicks({ code: link.code, at: at("2026-01-01T00:00:00Z") }, t.as("gus")), "NOT_FOUND")
     await expectCode(t.api.recordClicks({ code: "missing", at: at("2026-01-01T00:00:00Z") }), "NOT_FOUND")
-    await expectCode(t.api.recordClicks({ code: link.code, at: at("1979-12-31T23:59:59Z") }), "INVALID_INPUT")
+    await expectCode(t.api.recordClicks({ code: link.code, at: at("2010-12-31T23:59:59Z") }), "INVALID_INPUT")
     const posted = await t.post("recordClicks", { code: link.code, at: ["2026-01-01T00:00:00Z"] }, "ada")
     expect(posted.ok).toBe(false)
     expect(clickRows(t)).toHaveLength(0)
@@ -197,14 +215,14 @@ describe("clicksByDay", () => {
   it("starts a day at its first midnight where midnight happens twice, and gives a skipped day no clicks", async () => {
     const t = setup()
     const link = await t.api.create({ target: docs }, t.as("ada"))
-    // Amman turned its clocks back from 01:00 to 00:00 on 29 September 2000: 21:30 UTC was 00:30 there, the first time.
+    // Amman turned its clocks back from 01:00 to 00:00 on 25 October 2019: 21:30 UTC was 00:30 there, the first time.
     // Samoa skipped 30 December 2011, going from the 29th straight to the 31st.
     await t.api.recordClicks({
       code: link.code,
-      at: at("2000-09-28T21:30:00Z", "2011-12-30T09:59:00Z", "2011-12-30T10:00:00Z")
+      at: at("2019-10-24T21:30:00Z", "2011-12-30T09:59:00Z", "2011-12-30T10:00:00Z")
     })
     const amman = await t.api.clicksByDay(
-      { code: link.code, from: "2000-09-29", to: "2000-09-29", timeZone: "Asia/Amman" },
+      { code: link.code, from: "2019-10-25", to: "2019-10-25", timeZone: "Asia/Amman" },
       t.as("ada")
     )
     expect(amman.total).toBe(1)
@@ -243,7 +261,9 @@ describe("clicksByDay", () => {
       { from: "2025-01-01", to: "2026-01-02" },
       { from: "2026-01-01", to: "2026-01-02", timeZone: "Mars/Olympus" },
       { from: "2026-01-01", to: "2026-01-02", timeZone: "+05:07" },
-      { from: "1979-12-31", to: "1980-01-01" },
+      // Until November 2010, St. John's clocks went back at 00:01, in the middle of a slot.
+      { from: "2007-11-03", to: "2007-11-04", timeZone: "America/St_Johns" },
+      { from: "2010-12-31", to: "2011-01-01" },
       { from: "9998-12-31", to: "9999-12-31" }
     ]) {
       await expectCode(ask(range), "INVALID_INPUT")
@@ -309,6 +329,17 @@ describe("listing by clicks", () => {
     expect([...first.links, ...second.links].map((link) => link.code)).toEqual(
       [2, 3, 0, 4, 1].map((index) => made[index]?.code)
     )
+    // A tampered cursor fails as bad input, not in the database.
+    const tampered = (values: unknown[]) => btoa(JSON.stringify(values)).replace(/=+$/, "")
+    for (const values of [
+      [2 ** 40, "2026-01-01T00:00:00.000Z", "id"],
+      [-1, "2026-01-01T00:00:00.000Z", "id"],
+      [1.5, "2026-01-01T00:00:00.000Z", "id"],
+      [1, "+275760-01-01T00:00:00.000Z", "id"],
+      [1, "2026-01-01T00:00:00.000Z", "a b"]
+    ]) {
+      await expectCode(t.api.list({ sort: "clicks", cursor: tampered(values) }, t.as("ada")), "INVALID_INPUT")
+    }
     // A cursor from one order isn't one for the other.
     await expectCode(t.api.list({ cursor: first.cursor ?? "" }, t.as("ada")), "INVALID_INPUT")
     const newest = await t.api.list({ limit: 2 }, t.as("ada"))

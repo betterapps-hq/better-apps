@@ -146,7 +146,7 @@ link previews chat apps fetch. A click row holds the link and the time, and noth
 ## Clicks over time
 
 Two actions count clicks over a range of calendar days, `from` and `to` as `YYYY-MM-DD`, both included, up to 366 days,
-from 1980 on, in an IANA `timeZone`, `UTC` by default. Each is for the links' managers and trusted server code, like
+from 2011 on, in an IANA `timeZone`, `UTC` by default. Each is for the links' managers and trusted server code, like
 `get`:
 
 ```ts
@@ -166,9 +166,9 @@ const { links } = await app.api.shortLinks.clickTotals(
 `clickTotals` leaves out codes of no link and links the caller doesn't manage. Lifetime counts are each link's `clicks`,
 and `list({ sort: "clicks" })` lists the most opened links first.
 
-`recordClicks({ code, at })`, server only, records up to 500 clicks at given times, such as a demo's history, from 1980
-to now. It adds them to `clicks` and moves `lastClickedAt` to the latest of them, in one batch with their rows, so a
-seeded link's counter and chart agree, and returns the link.
+`recordClicks({ code, at })`, server only, records up to 500 clicks at given times, such as a demo's history, from 2011
+to now. It adds them to `clicks` and moves `lastClickedAt` to the latest of them and the link's last click, in one batch
+with their rows, so a seeded link's counter and chart agree, and returns the link.
 
 ## Which link opened a page
 
@@ -306,6 +306,7 @@ const { links, state, cursor, loadMore, client } = useLinks({ subjectType: "invo
 
 `shortLink` holds the links, with a unique index on `code`, indexes on the owner and on the organization, each with the
 creation time, for lists, and one on the record and creation time for a record's links and their cleanup.
-`shortLinkClick` holds a row per click, with a foreign key to its link, so removing a link removes its clicks, and an
-index on the link and the click's 15-minute slot for clicks over time. Run `better-apps generate` from
-[`@better-apps/cli`](../../tooling/cli/README.md) to add them to your schema.
+`shortLinkClick` holds a row per click, with a foreign key to its link, so removing a link removes its clicks where the
+database enforces foreign keys, as D1, PostgreSQL and MySQL's InnoDB do, and SQLite does with
+`PRAGMA foreign_keys = ON`. It has an index on the link and the click's 15-minute slot for clicks over time. Run
+`better-apps generate` from [`@better-apps/cli`](../../tooling/cli/README.md) to add them to your schema.
