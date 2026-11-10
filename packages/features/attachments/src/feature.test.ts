@@ -260,7 +260,10 @@ describe("the upload route", () => {
     const created = await api.createUpload({ ...inv1, name: "a.txt", contentType: "text/plain", size: 3 }, as("bob"))
     await send(created.upload, "abc")
     const batch = app.db.batch.bind(app.db)
-    let race: (() => Promise<unknown>) | undefined = async () => api.deleteFile({ fileId: created.file.id }, as("bob"))
+    let deleted: unknown
+    let race: (() => Promise<unknown>) | undefined = async () => {
+      deleted = await api.deleteFile({ fileId: created.file.id }, as("bob"))
+    }
     // The delete takes the file between the finish's reads and its write.
     app.db.batch = async (operations) => {
       const run = race
@@ -271,6 +274,7 @@ describe("the upload route", () => {
     await expect(api.completeUpload({ fileId: created.file.id }, as("bob"))).rejects.toMatchObject({
       code: "NOT_FOUND"
     })
+    expect(deleted).toEqual({ deleted: true })
     // The finish's attachment went in with its batch and came back off, as for any finish that lost its file.
     expect(count(attachmentModel)).toBe(0)
     expect(events("attachment.removed").map((event) => (event.data as { reason: string }).reason)).toEqual([
@@ -461,7 +465,7 @@ describe("drafts", () => {
     await expect(api.createUpload(draft, as("bob"))).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" })
     await api.createUpload(draft, as("cy"))
     // A deleted upload's address still takes bytes until it closes, so it counts until then.
-    await api.deleteFile({ fileId: pending.file.id }, as("bob"))
+    expect(await api.deleteFile({ fileId: pending.file.id }, as("bob"))).toEqual({ deleted: true })
     await expect(api.createUpload(draft, as("bob"))).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" })
     // Files a record keeps don't count once they're attached.
     await api.attach({ ...inv1, fileIds: [kept.file.id] }, as("bob"))

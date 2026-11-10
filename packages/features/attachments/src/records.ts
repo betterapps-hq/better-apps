@@ -16,7 +16,7 @@ import { checkLimits, limits, settingsOf, type Config, type Settings } from "./c
 import { AttachmentsError } from "./errors.js"
 import type { AttachInput, DetachInput, ListFilesInput, ListOwnFilesInput, ReorderInput } from "./options.js"
 import { byPosition, eventFile, present, presentAttached, type AttachedFile, type FileInfo } from "./present.js"
-import { deleteFiles, filesById, removeLinks, retried } from "./removals.js"
+import { deleteFiles, filesById, purge, removeLinks, retried } from "./removals.js"
 import { attachmentModel, fileModel, type Attachment, type AttachmentFile } from "./schema.js"
 
 const fileNotFound = () => new AttachmentsError("NOT_FOUND", "That file doesn't exist, or you can't see it.")
@@ -419,6 +419,9 @@ export async function deleteFile(config: Config, context: Context): Promise<{ de
     if (!taken) {
       return deleteFile(config, context)
     }
+    // An unfinished upload is on no record and was never reported, so only its bytes and row are left to go.
+    await purge(config, context.db, [file])
+    return { deleted: true }
   }
   return { deleted: await deleteFiles(config, context, [file], "deleted") }
 }
