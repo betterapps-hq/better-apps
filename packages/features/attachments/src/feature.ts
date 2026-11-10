@@ -256,7 +256,10 @@ export function attachments<const Options extends AttachmentsOptions>(options: O
         { moved: number } & BulkStep
       >(inputs.moveSubject, moveSubject),
       removeUser: serverAction<{ userId: string }, { removed: number } & BulkStep>(inputs.removeUser, removeUser),
-      moveUser: serverAction<{ userId: string; toUserId: string }, { moved: number }>(inputs.moveUser, moveUser),
+      moveUser: serverAction<{ userId: string; toUserId: string }, { files: number; attachments: number }>(
+        inputs.moveUser,
+        moveUser
+      ),
       toClientEvent: serverAction<{ event: BetterAppsEvent; viewer: Actor | null }, ClientAttachmentEvent | null>(
         null,
         async (config, context) => {

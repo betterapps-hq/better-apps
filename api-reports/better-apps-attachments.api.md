@@ -285,7 +285,8 @@ export function attachments<const Options extends AttachmentsOptions>(options: O
         userId: string;
         toUserId: string;
         }>, {
-        moved: number;
+        files: number;
+        attachments: number;
         }> & {
             serverOnly?: true | undefined;
         };

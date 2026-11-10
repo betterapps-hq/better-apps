@@ -185,7 +185,8 @@ export async function removeLinks(
 /**
  * Deletes files, such as a person's own or a draft. Each comes off the records it's on: the first hundred of those are
  * reported, with `attachment.removed` and one `subject.changed` per record, and the rest go with the file's row. Returns
- * whether this call deleted them, rather than another removal, such as the sweep, that took them all first.
+ * whether this call deleted them all, rather than another removal, such as the sweep, that took them first, or an attach
+ * or a finish that put a draft or an upload on a record meanwhile.
  */
 export async function deleteFiles(
   config: Config,
@@ -226,25 +227,23 @@ export async function deleteFiles(
   for (const record of recordsOf(links)) {
     writer.emit("subject.changed", record)
   }
-  for (const file of live) {
+  // A draft or an upload under way goes only while nothing keeps it, so one that an attach or a finish put on a record
+  // since it was read stays there. Whether it went is known only once the batch ran, so its `file.deleted` is emitted
+  // then, and written after it.
+  const unkept = live.filter(isUnkept)
+  const others = live.filter((file) => !isUnkept(file))
+  for (const file of others) {
     if (file.status === "ready") {
       writer.emit("file.deleted", { file: eventFile(file), reason })
     }
   }
   const notDeleted: Where = { field: "status", operator: "ne", value: "deleted" }
-  // A draft or an upload under way goes only while nothing keeps it, so one that an attach or a finish put on a record
-  // since it was read stays there.
-  const unkept = live.filter(isUnkept)
   const unkeptMarks = markDeleted(unkept, [notDeleted, { field: "expiresAt", operator: "gt", value: new Date(0) }])
-  const removals = linkRemovals(links, live)
   let results: unknown[]
   try {
     results = await writer.db.batch([
-      ...removals,
-      ...markDeleted(
-        live.filter((file) => !isUnkept(file)),
-        [notDeleted]
-      ),
+      ...linkRemovals(links, live),
+      ...markDeleted(others, [notDeleted]),
       ...unkeptMarks
     ])
   } catch (error) {
@@ -259,31 +258,37 @@ export async function deleteFiles(
     }
     return false
   }
-  const marked =
-    unkeptMarks.length === 0 ? 0 : results.slice(-unkeptMarks.length).reduce<number>((sum, n) => sum + Number(n), 0)
+  const marked = results.slice(results.length - unkeptMarks.length).reduce<number>((sum, n) => sum + Number(n), 0)
+  const kept = new Set<string>()
   if (marked < unkept.length) {
-    // Only a race with an attach or a finish gets here: the files it kept stay, with their bytes, and aren't remembered
-    // as removed, so they can be removed later. Their `file.deleted` was written with the batch.
+    // Only a race with an attach or a finish gets here. The files it kept stay, with their bytes, and aren't remembered
+    // as removed, so they can be removed later.
     const after = await filesById(
       writer.db,
       unkept.map((file) => file.id)
     )
-    const kept = unkept.filter((file) => after.get(file.id)?.status !== "deleted").map((file) => file.id)
+    for (const file of unkept) {
+      if (after.get(file.id)?.status !== "deleted") {
+        kept.add(file.id)
+      }
+    }
     await writer.db.batch(
-      chunks(kept).map((ids) => ({
+      chunks([...kept]).map((ids) => ({
         type: "deleteMany" as const,
         model: removalModel,
         where: [{ field: "id", operator: "in" as const, value: ids }]
       }))
     )
-    const keptIds = new Set(kept)
-    await purge(
-      config,
-      writer.db,
-      files.filter((file) => !keptIds.has(file.id))
-    )
-    return true
   }
-  await purge(config, writer.db, files)
-  return true
+  for (const file of unkept) {
+    if (file.status === "ready" && !kept.has(file.id)) {
+      writer.emit("file.deleted", { file: eventFile(file), reason })
+    }
+  }
+  await purge(
+    config,
+    writer.db,
+    files.filter((file) => !kept.has(file.id))
+  )
+  return kept.size === 0
 }

@@ -324,15 +324,16 @@ export async function removeUser(config: Config, context: Context): Promise<{ re
 /**
  * Hands a person's files to another user, such as when an anonymous guest signs up and becomes a new user: the files they
  * keep on their own, their drafts and unfinished uploads, and the attachments they made, so they can still attach their
- * drafts and take their files off records. Each kind moves in one statement, so it takes one call.
+ * drafts and take their files off records. Each kind moves in one statement, so it takes one call. Returns how many
+ * files they uploaded and how many attachments they made.
  */
-export async function moveUser(_config: Config, context: Context): Promise<{ moved: number }> {
+export async function moveUser(_config: Config, context: Context): Promise<{ files: number; attachments: number }> {
   const { userId, toUserId } = context.input as { userId: string; toUserId: string }
   if (userId === toUserId) {
-    return { moved: 0 }
+    return { files: 0, attachments: 0 }
   }
   context.emit("user.moved", { userId, toUserId })
-  const [, uploaded] = await context.db.batch([
+  const [, uploaded, attached] = await context.db.batch([
     {
       type: "updateMany",
       model: fileModel,
@@ -352,7 +353,8 @@ export async function moveUser(_config: Config, context: Context): Promise<{ mov
       update: { createdBy: toUserId }
     }
   ])
-  return { moved: Number(uploaded) }
+  // Files a person keeps on their own are ones they uploaded, so `files` counts each file once.
+  return { files: Number(uploaded), attachments: Number(attached) }
 }
 
 /**

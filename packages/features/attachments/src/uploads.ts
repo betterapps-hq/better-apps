@@ -275,6 +275,7 @@ export async function completeUpload(config: Config, context: Context): Promise<
     }
     const [attached] = await addLinks(config, context, ref, [ready], {
       orgId,
+      attachedBy: file.createdBy,
       before: [markReady],
       guarded: [file.id],
       conflict: expiredUpload().message,

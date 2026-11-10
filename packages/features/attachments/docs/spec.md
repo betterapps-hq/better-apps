@@ -194,9 +194,14 @@ All of them go through subject types, so a file follows its record's access.
   draft for one subject type can go on a record of another. A person's own files and drafts go on records in any
   organization, such as an anonymous guest's documents on a booking: a draft holds only its uploader's bytes, so
   attaching it moves no organization's data, and the person could upload the same bytes there directly. Anyone else's
-  file, an organization's included, goes only on records in the organization it's in. Trusted server code attaches
-  anyone's drafts, and files kept on their own to records in the organization they're in, without `canView` or
-  `canUpload`, such as a payment webhook attaching a guest's drafts to the booking it creates.
+  file, an organization's included, goes only on records in the organization it's in, and one in no organization only
+  where its owner puts it.
+- **Attaching from trusted server code** skips `canView` and `canUpload`, so it can attach to a record the person can't
+  see yet, such as a booking it just created. Pass the person as `author: { type: "user", userId }` and it acts for
+  them: only their drafts, and their own files as they could attach them, credited to them. Always do that when the file
+  ids came from a browser, or anyone's draft id would do. Without an `author`, it attaches anyone's drafts, and files
+  kept on their own only in their organization, credited to no one (`attachedBy: ""`), so only `canModerate` takes them
+  off. Attach when the person submits, not from a later job such as a payment webhook: a draft expires after `draftTtl`.
 - **Taking a file off a record** needs the person who attached it, or someone `canModerate` allows. **Reordering** needs
   `canUpload`.
 - **Deleting a file kept on its own** needs its owner, or a member `canManage` allows. It comes off every record too.
@@ -331,8 +336,11 @@ another removal, is read again.
 
 `moveUser({ userId, toUserId })`, also server only, hands a person's files to another user: the files they keep on their
 own, their drafts and unfinished uploads, and the attachments they made. Call it when one user becomes another, such as
-from Better Auth's anonymous plugin `onLinkAccount`, so a guest who signs up mid-form can still attach their drafts. It
-moves everything in one call, emitting `user.moved`.
+from Better Auth's anonymous plugin `onLinkAccount`, so a guest who signs up mid-form can still attach their drafts. The
+new user gets every right the old one had over those files: attaching, taking off and deleting them. So call it only
+once the app knows both are the same person, and after the old session stops, since an attach the old user started after
+the move fails rather than landing under them. It moves everything in one call, emitting `user.moved`, and returns
+`{ files, attachments }`, how many files they uploaded and attachments they made.
 
 With files on comments' threads or comments, attachments follow comments' events, as reactions do: a deleted comment or
 thread loses its files, and a moved thread takes its and its comments' files along. Each delivery handles one page,
@@ -354,11 +362,10 @@ written and takes the file back off when the record went away meanwhile.
 - `subject.changed` for each record a page of a bulk removal touched, `subject.moved` for each record a page of a move
   touched, and `subject.removed` and `user.removed` once those finish. `user.moved` when `moveUser` hands a person's
   files to another user.
+- `cleanup.continued`, attachments' own, for cleanups that continue in the next run.
 
 A draft's `file.uploaded` carries `orgId: ""`, and it joins an organization in its `attachment.added`, so count an
 organization's files from attachment events rather than `file.uploaded`.
-
-- `cleanup.continued`, attachments' own, for cleanups that continue in the next run.
 
 `toClientEvent({ event, viewer })` and `toClientEvents({ event, viewers })`, server only, turn an event into what a
 browser may see: `{ id, type: "subject.changed", subjectType, subjectId }` for any change to a record's files that the
@@ -371,10 +378,11 @@ enough.
   `getFile({ fileId })`; `listOwnFiles({ owner, cursor?, limit? })` pages a person's or an organization's own files,
   newest first; `getSettings({ subjectType })` returns the limits, for a picker's `accept` and checks before sending.
 - Writes: `createUpload`, `completeUpload`, `attach`, `detach`, `reorder({ subjectType, subjectId, fileIds })` and
-  `deleteFile`, which also cancels an upload or a draft of the caller's. It takes an unfinished upload only while it's
-  still pending, so a finish can't put it on its record meanwhile; one that finished onto its record first answers
-  `INVALID_INPUT`, as any file on a record does, to be detached instead. `reorder` writes every file's position in one
-  batch, so when two people reorder a record at once, it ends in the order of whichever saves last.
+  `deleteFile`, which also cancels an upload or a draft of the caller's, answering `{ deleted: false }` for one an
+  attach put on a record meanwhile, which stays there. It takes an unfinished upload only while it's still pending, so a
+  finish can't put it on its record meanwhile; one that finished onto its record first answers `INVALID_INPUT`, as any
+  file on a record does, to be detached instead. `reorder` writes every file's position in one batch, so when two people
+  reorder a record at once, it ends in the order of whichever saves last.
 - Server only: `sweep`, `removeSubject`, `moveSubject`, `removeUser`, `moveUser`, `toClientEvent` and `toClientEvents`.
 
 Errors are `AttachmentsError`s: `UNAUTHENTICATED`, `NOT_FOUND`, `FORBIDDEN`, `INVALID_INPUT` for a type, name or file

@@ -81,12 +81,12 @@ export function ownsFile(actor: Actor, file: AttachmentFile): boolean {
 }
 
 /**
- * Whether someone can put a file kept on its own on a record in an organization: their own files go on records in any
- * organization, and anyone else's, an organization's included, only on records in the organization the file is in.
- * Trusted server code, `null`, has no files of its own.
+ * Whether a user can put a file kept on its own on a record in an organization: their own files go on records in any
+ * organization, and anyone else's, an organization's included, only on records in the organization the file is in. A
+ * file in no organization goes only where its owner puts it. `null` is trusted server code acting for no one.
  */
-export function canPlaceIn(actor: Actor | null, file: AttachmentFile, orgId: string): boolean {
-  return file.orgId === orgId || (actor !== null && file.owner === userOwner(actor.userId))
+export function canPlaceIn(userId: string | null, file: AttachmentFile, orgId: string): boolean {
+  return (file.orgId !== "" && file.orgId === orgId) || (userId !== null && file.owner === userOwner(userId))
 }
 
 /** Whether a file is a draft or an upload under way: nothing keeps it yet. */

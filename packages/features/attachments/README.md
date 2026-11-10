@@ -102,9 +102,10 @@ them besides actions, and an app's catch-all route for its base path reaches the
 Attach drafts with `attach({ subjectType, subjectId, fileIds })` once the record exists. Drafts that aren't attached
 expire after `draftTtl`, a day by default. A draft is in no organization until it's attached, then joins its record's,
 so a person with no active organization, such as an anonymous guest, can upload before the record exists. Only its
-uploader, or trusted server code such as a payment webhook, can attach it. When a guest signs up and becomes another
-user, call `moveUser({ userId, toUserId })` so their drafts and files go with them. A person's own files go on records
-in any organization too, but anyone else's stay in the organization they're in.
+uploader can attach it. Server code can attach to a record the person can't see yet, such as a booking it just created:
+call `attach` with `author: { type: "user", userId }` so it attaches only that person's drafts. When a guest signs up
+and becomes another user, call `moveUser({ userId, toUserId })` so their drafts and files go with them. A person's own
+files go on records in any organization too, but anyone else's stay in the organization they're in.
 
 The upload route counts a body that comes without a length, such as a chunked one, so it never stores more than the
 declared size.

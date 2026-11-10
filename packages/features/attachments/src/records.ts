@@ -52,6 +52,8 @@ async function attachmentsOn(context: Pick<Context, "db">, ref: SubjectRef, orgI
 interface LinkOptions {
   /** The record's organization, as the caller read it and wrote it into the files in `before`. */
   orgId: string
+  /** Who the attachments name as having attached the files, or `""` for trusted server code acting for no one. */
+  attachedBy: string
   /** Writes that run first in the same batch, such as marking an upload ready. */
   before: readonly WriteOperation[]
   /** The files whose update in `before` must match, in the same order. */
@@ -75,7 +77,7 @@ export async function addLinks(
   context: Context,
   ref: SubjectRef,
   files: readonly AttachmentFile[],
-  { orgId, before, guarded, conflict, committed }: LinkOptions
+  { orgId, attachedBy, before, guarded, conflict, committed }: LinkOptions
 ): Promise<AttachedFile[]> {
   const settings = settingsOf(config, ref.subjectType)
   const { actor } = context
@@ -97,7 +99,7 @@ export async function addLinks(
       subjectId: ref.subjectId,
       position: first + index,
       slot: slots[index] as number,
-      createdBy: actor?.userId ?? file.createdBy,
+      createdBy: attachedBy,
       createdAt: now
     }))
     for (const [index, link] of links.entries()) {
@@ -137,9 +139,10 @@ export async function addLinks(
 }
 
 /**
- * Puts drafts and files kept on their own on a record: the uploader's drafts and files they can see, or, from trusted
- * server code, anyone's drafts and the record's organization's files, such as a webhook attaching a guest's drafts to the
- * booking it creates.
+ * Puts drafts and files kept on their own on a record: the caller's drafts and files they can see. Trusted server code
+ * skips the record's access checks. With an `author` user, it acts for them: only their drafts, and their own files
+ * as they could. Without one, it attaches anyone's drafts and files kept on their own in the record's organization,
+ * credited to no one.
  */
 export async function attach(config: Config, context: Context): Promise<{ files: AttachedFile[] }> {
   const input = context.input as AttachInput
@@ -147,6 +150,8 @@ export async function attach(config: Config, context: Context): Promise<{ files:
   const ref: SubjectRef = { subjectType: input.subjectType, subjectId: input.subjectId }
   const trusted = isTrusted(context)
   const actor = trusted ? null : await requireUploader(settings, context, ref)
+  const { author } = context
+  const userId = actor?.userId ?? (author?.type === "user" ? author.userId : null)
   const fileIds = [...new Set(input.fileIds)]
   const found = await filesById(context.db, fileIds)
   const files = fileIds.map((id) => found.get(id)).filter((file) => file?.status === "ready") as AttachmentFile[]
@@ -161,7 +166,7 @@ export async function attach(config: Config, context: Context): Promise<{ files:
   let onRecord: Set<string> | undefined
   for (const file of files) {
     if (isUnkept(file)) {
-      if (actor && file.createdBy !== actor.userId) {
+      if (userId !== null && file.createdBy !== userId) {
         throw fileNotFound()
       }
       if ((file.expiresAt as Date).getTime() <= now.getTime()) {
@@ -173,7 +178,7 @@ export async function attach(config: Config, context: Context): Promise<{ files:
       if (!seen[kept.indexOf(file)]) {
         throw fileNotFound()
       }
-      if (!canPlaceIn(actor, file, orgId)) {
+      if (!canPlaceIn(userId, file, orgId)) {
         throw new AttachmentsError("INVALID_INPUT", "That file can't go on records in this organization.")
       }
     } else {
@@ -191,14 +196,19 @@ export async function attach(config: Config, context: Context): Promise<{ files:
     where: [
       { field: "id", value: id },
       { field: "status", value: "ready" },
-      { field: "expiresAt", operator: "gt", value: now }
+      { field: "expiresAt", operator: "gt", value: now },
+      // A draft handed to another user meanwhile, by `moveUser`, is no longer this caller's to attach.
+      ...(userId === null ? [] : [{ field: "createdBy", value: userId }])
     ],
     update: { expiresAt: null, subjectType: input.subjectType, orgId }
   }))
-  const attaching = files.map((file) => (drafts.includes(file.id) ? { ...file, expiresAt: null, orgId } : file))
+  const attaching = files.map((file) =>
+    drafts.includes(file.id) ? { ...file, expiresAt: null, subjectType: input.subjectType, orgId } : file
+  )
   return {
     files: await addLinks(config, context, ref, attaching, {
       orgId,
+      attachedBy: userId ?? "",
       before,
       guarded: drafts,
       conflict: "That file was added somewhere else, or it expired. Upload it again."
