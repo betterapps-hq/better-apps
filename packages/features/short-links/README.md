@@ -47,8 +47,8 @@ with a catch-all route at `/s` in TanStack Start.
   Without it, any URL is allowed, but not `javascript:`, `data:`, `vbscript:` and `file:` ones.
 - `canManage({ actor, orgId })` says who manages an organization's links, the ones it owns and the ones its members made
   in it, and who makes its URL links: every member, by default. Who shares records is up to `canShare`.
-- `path` is where links open, `/s` by default. `baseUrl`, such as `https://go.example.com`, is the origin of the short
-  URLs actions return: the request's, by default.
+- `path` is where links open, `/s` by default. `baseUrl`, such as `https://go.example.com`, is where the short URLs
+  actions return start, before the path and code: the request's origin, by default.
 - `hosts` opens links on organizations' own domains, each only its organization's, and shares them there. It needs
   `baseUrl`. See [Organizations' domains](#organizations-domains).
 - `codeLength` sets the length of generated codes, from 6 to 32: 8 by default.
@@ -187,55 +187,29 @@ such as a booking's source. It works whichever host the page is on, unlike a coo
 
 `hosts` lets an organization share its links on its own domain, such as `links.acme.com/s/abc123` or
 `acme.yourapp.com/s/abc123`. Short links never import the domains feature. The app connects the two with
-[`@better-apps/domains`](../domains/README.md)' server-only `lookup` and `getPrimary`. The app's file imports the
-features, so the features can't import the app. The app passes its domains in once it exists:
+[`@better-apps/domains`](../domains/README.md)' `domainHosts`, which asks domains whose host it is and where an
+organization's links are shared. The app's file imports the features, so the features can't import the app. The app
+connects its domains once it exists:
 
 ```ts
 // features.ts
-import type { Domain, HostnameMatch } from "@better-apps/domains"
+import { domainHosts } from "@better-apps/domains"
 
-interface LinkDomains {
-  lookup(input: { hostname: string }): Promise<HostnameMatch | null>
-  getPrimary(input: { orgId: string | null }): Promise<Domain | null>
-}
-let connected: LinkDomains | undefined
-
-export function connectLinkDomains(api: LinkDomains) {
-  connected = api
-}
-
-function linkDomains(): LinkDomains {
-  if (!connected) {
-    throw new Error("Call connectLinkDomains(app.api.domains) once the app is created.")
-  }
-  return connected
-}
+const appUrl = "https://app.yourapp.com"
+export const linkHosts = domainHosts({ url: appUrl })
 
 export const links = shortLinks({
-  subjects: { invoice: { url: ({ subjectId }) => `https://app.yourapp.com/invoices/${subjectId}`, grantView: true } },
-  baseUrl: "https://app.yourapp.com",
-  hosts: {
-    resolve: async ({ hostname }) => {
-      if (hostname === "app.yourapp.com") {
-        return "app"
-      }
-      const match = await linkDomains().lookup({ hostname })
-      return match?.verified && match.orgId ? { orgId: match.orgId } : null
-    },
-    origin: async ({ orgId }) => {
-      if (orgId === null) {
-        return null
-      }
-      const primary = await linkDomains().getPrimary({ orgId })
-      return primary?.status === "active" ? `https://${primary.hostname}` : null
-    }
-  }
+  subjects: { invoice: { url: ({ subjectId }) => `${appUrl}/invoices/${subjectId}`, grantView: true } },
+  baseUrl: appUrl,
+  hosts: linkHosts.hosts
 })
 
 // app.ts
 const app = createBetterApps({ features: [links, domains({ subdomains: { zone: "yourapp.com" } })] })
-connectLinkDomains(app.api.domains)
+linkHosts.connect(app.api.domains)
 ```
+
+An app can write its own `hosts` instead, with the rules below.
 
 - `baseUrl` is the app's own origin, which `resolve` calls `"app"`. `hosts` needs it: links that no organization's
   domain opens are shared there, whichever host an action is called from.

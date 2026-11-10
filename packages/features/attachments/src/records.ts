@@ -1,13 +1,16 @@
 // Files on records: attaching, taking off, reordering and listing them, a person's own files, and deleting files.
 import type { Actor, SubjectRef, WriteOperation } from "better-apps"
 import {
+  canPlaceIn,
   canSeeFiles,
   isTrusted,
   isUnkept,
   orgOf,
+  orgOwner,
   orgsOf,
   ownsFile,
   requireActor,
+  userOwner,
   viewable,
   type Context
 } from "./access.js"
@@ -47,6 +50,10 @@ async function attachmentsOn(context: Pick<Context, "db">, ref: SubjectRef, orgI
 
 /** Options for `addLinks`. */
 interface LinkOptions {
+  /** The record's organization, as the caller read it and wrote it into the files in `before`. */
+  orgId: string
+  /** Who the attachments name as having attached the files, or `""` for trusted server code acting for no one. */
+  attachedBy: string
   /** Writes that run first in the same batch, such as marking an upload ready. */
   before: readonly WriteOperation[]
   /** The files whose update in `before` must match, in the same order. */
@@ -62,18 +69,18 @@ interface LinkOptions {
  * uploads finish at once. A `guarded` file whose update matched nothing, because it expired, was deleted or was
  * attached elsewhere meanwhile, takes its attachment back off and leaves the file to whatever changed it. Then the
  * record is checked again, and files on a record that went away, or out of reach, meanwhile come back off as
- * `withdrawn`.
+ * `withdrawn`, as do files on a record that moved to another organization since the caller read `orgId`, so a file and
+ * its attachment always agree on the organization.
  */
 export async function addLinks(
   config: Config,
   context: Context,
   ref: SubjectRef,
   files: readonly AttachmentFile[],
-  { before, guarded, conflict, committed }: LinkOptions
+  { orgId, attachedBy, before, guarded, conflict, committed }: LinkOptions
 ): Promise<AttachedFile[]> {
   const settings = settingsOf(config, ref.subjectType)
   const { actor } = context
-  const orgId = await orgOf(context.subjects, ref, actor)
   const added = await retried(async () => {
     const existing = await attachmentsOn(context, ref, orgId)
     const already = new Set(existing.map((row) => row.fileId))
@@ -92,7 +99,7 @@ export async function addLinks(
       subjectId: ref.subjectId,
       position: first + index,
       slot: slots[index] as number,
-      createdBy: actor?.userId ?? file.createdBy,
+      createdBy: attachedBy,
       createdAt: now
     }))
     for (const [index, link] of links.entries()) {
@@ -119,12 +126,10 @@ export async function addLinks(
   if (added.failed.size === 0) {
     committed?.()
   }
-  if (!isTrusted(context)) {
-    const visible = actor !== null && (await context.subjects.canView(actor, ref))
-    if (!visible || (await orgOf(context.subjects, ref, actor)) !== orgId) {
-      await removeLinks(config, context, added.links, "withdrawn")
-      throw new AttachmentsError("NOT_FOUND", "That record doesn't exist, or you can't see it.")
-    }
+  const visible = isTrusted(context) || (actor !== null && (await context.subjects.canView(actor, ref)))
+  if (!visible || (await orgOf(context.subjects, ref, actor)) !== orgId) {
+    await removeLinks(config, context, added.links, "withdrawn")
+    throw new AttachmentsError("NOT_FOUND", "That record doesn't exist, or you can't see it.")
   }
   const byId = new Map(files.map((file) => [file.id, file]))
   const now = Date.now()
@@ -133,12 +138,20 @@ export async function addLinks(
   )
 }
 
-/** Puts drafts and files kept on their own on a record. */
+/**
+ * Puts drafts and files kept on their own on a record: the caller's drafts and files they can see. Trusted server code
+ * skips the record's access checks. With an `author` user, it acts for them: only their drafts and the files they keep
+ * on their own. Without one, it attaches anyone's drafts and files kept on their own in the record's organization,
+ * credited to no one.
+ */
 export async function attach(config: Config, context: Context): Promise<{ files: AttachedFile[] }> {
   const input = context.input as AttachInput
   const settings = settingsOf(config, input.subjectType)
   const ref: SubjectRef = { subjectType: input.subjectType, subjectId: input.subjectId }
-  const actor = await requireUploader(settings, context, ref)
+  const trusted = isTrusted(context)
+  const actor = trusted ? null : await requireUploader(settings, context, ref)
+  const { author } = context
+  const userId = actor?.userId ?? (author?.type === "user" ? author.userId : null)
   const fileIds = [...new Set(input.fileIds)]
   const found = await filesById(context.db, fileIds)
   const files = fileIds.map((id) => found.get(id)).filter((file) => file?.status === "ready") as AttachmentFile[]
@@ -146,33 +159,37 @@ export async function attach(config: Config, context: Context): Promise<{ files:
     throw fileNotFound()
   }
   const kept = files.filter((file) => file.owner !== null)
-  const seen = await canSeeFiles(context, actor, kept)
+  // Server code acting for someone attaches only the files they keep, since it can't check what else they could see.
+  const seen = actor
+    ? await canSeeFiles(context, actor, kept)
+    : kept.map((file) => userId === null || file.owner === userOwner(userId))
   const orgId = await orgOf(context.subjects, ref, actor)
   const now = new Date()
   const drafts: string[] = []
+  let onRecord: Set<string> | undefined
   for (const file of files) {
     if (isUnkept(file)) {
-      if (file.createdBy !== actor.userId) {
+      if (userId !== null && file.createdBy !== userId) {
         throw fileNotFound()
       }
       if ((file.expiresAt as Date).getTime() <= now.getTime()) {
         throw new AttachmentsError("CONFLICT", "That upload expired. Upload the file again.")
       }
+      // A draft holds only its uploader's own bytes, so it goes on a record in any organization and joins the record's.
       drafts.push(file.id)
     } else if (file.owner !== null) {
       if (!seen[kept.indexOf(file)]) {
         throw fileNotFound()
       }
+      if (!canPlaceIn(userId, file, orgId)) {
+        throw new AttachmentsError("INVALID_INPUT", "That file can't go on records in this organization.")
+      }
     } else {
-      const on = await attachmentsOn(context, ref, orgId)
-      if (!on.some((row) => row.fileId === file.id)) {
+      onRecord ??= new Set((await attachmentsOn(context, ref, orgId)).map((row) => row.fileId))
+      if (!onRecord.has(file.id)) {
         throw new AttachmentsError("INVALID_INPUT", "That file is on another record. Upload it again to add it here.")
       }
       continue
-    }
-    // Files stay in their organization, except that a person can take their own to any organization they're in.
-    if (file.orgId !== orgId && file.owner !== `user:${actor.userId}`) {
-      throw new AttachmentsError("INVALID_INPUT", "That file belongs to another organization.")
     }
     checkLimits(settings, file.contentType, file.size)
   }
@@ -182,13 +199,19 @@ export async function attach(config: Config, context: Context): Promise<{ files:
     where: [
       { field: "id", value: id },
       { field: "status", value: "ready" },
-      { field: "expiresAt", operator: "gt", value: now }
+      { field: "expiresAt", operator: "gt", value: now },
+      // A draft handed to another user meanwhile, by `moveUser`, is no longer this caller's to attach.
+      ...(userId === null ? [] : [{ field: "createdBy", value: userId }])
     ],
-    update: { expiresAt: null, subjectType: input.subjectType }
+    update: { expiresAt: null, subjectType: input.subjectType, orgId }
   }))
-  const attaching = files.map((file) => (drafts.includes(file.id) ? { ...file, expiresAt: null } : file))
+  const attaching = files.map((file) =>
+    drafts.includes(file.id) ? { ...file, expiresAt: null, subjectType: input.subjectType, orgId } : file
+  )
   return {
     files: await addLinks(config, context, ref, attaching, {
+      orgId,
+      attachedBy: userId ?? "",
       before,
       guarded: drafts,
       conflict: "That file was added somewhere else, or it expired. Upload it again."
@@ -196,7 +219,10 @@ export async function attach(config: Config, context: Context): Promise<{ files:
   }
 }
 
-/** Takes a file off a record: the person who put it there, a moderator, or trusted server code. */
+/**
+ * Takes a file off a record: the person who put it there while `canUpload` allows them, so a locked record keeps its
+ * files, a moderator, or trusted server code.
+ */
 export async function detach(config: Config, context: Context): Promise<{ removed: boolean }> {
   const input = context.input as DetachInput
   const settings = settingsOf(config, input.subjectType)
@@ -232,6 +258,9 @@ export async function detach(config: Config, context: Context): Promise<{ remove
       (await settings.rules.canModerate({ actor, ...ref })))
   if (!own && !moderator) {
     throw new AttachmentsError("FORBIDDEN", "You can't remove other people's files here.")
+  }
+  if (!moderator && actor && settings.rules.canUpload && !(await settings.rules.canUpload({ actor, ...ref }))) {
+    throw new AttachmentsError("FORBIDDEN", "You can't remove files here.")
   }
   try {
     await removeLinks(config, context, [link], own ? "detached" : "moderated")
@@ -354,10 +383,11 @@ export async function listOwnFiles(
 ): Promise<{ files: FileInfo[]; cursor: string | null }> {
   const input = context.input as ListOwnFilesInput
   const actor = requireActor(context, "Sign in to see your files.")
-  if (input.owner === "org" && !actor.orgId) {
+  const orgId = actor.orgId ?? ""
+  if (input.owner === "org" && !orgId) {
     throw new AttachmentsError("INVALID_INPUT", "You aren't in an organization.")
   }
-  const owner = input.owner === "org" ? `org:${actor.orgId}` : `user:${actor.userId}`
+  const owner = input.owner === "org" ? orgOwner(orgId) : userOwner(actor.userId)
   const limit = input.limit ?? limits.ownFilesPerPage
   const rows = await context.db.findMany<AttachmentFile>({
     model: fileModel,
@@ -423,7 +453,7 @@ export async function deleteFile(config: Config, context: Context): Promise<{ de
     await purge(config, context.db, [file])
     return { deleted: true }
   }
-  return { deleted: await deleteFiles(config, context, [file], "deleted") }
+  return { deleted: (await deleteFiles(config, context, [file], "deleted")) > 0 }
 }
 
 /** What files a record of a subject type takes, or a file on its own without one. */

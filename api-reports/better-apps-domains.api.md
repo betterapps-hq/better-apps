@@ -129,6 +129,39 @@ export const domainEvents: {
 };
 
 // @public
+export interface DomainHosts {
+    connect: (api: DomainHostsApi) => void;
+    hosts: {
+        resolve: (args: {
+            hostname: string;
+        }) => Promise<HostOwner>;
+        origin: (args: {
+            orgId: string | null;
+        }) => Promise<string | null>;
+    };
+}
+
+// @public
+export function domainHosts(options: DomainHostsOptions): DomainHosts;
+
+// @public
+export interface DomainHostsApi {
+    getPrimary(input: {
+        orgId: string | null;
+    }): Promise<Domain | null>;
+    lookup(input: {
+        hostname: string;
+    }): Promise<HostnameMatch | null>;
+}
+
+// @public
+export interface DomainHostsOptions {
+    hostnames?: readonly string[] | undefined;
+    localSuffix?: string | undefined;
+    url: string | URL;
+}
+
+// @public
 export interface DomainInput {
     // (undocumented)
     domainId: string;
@@ -361,6 +394,11 @@ export class HostnameProviderError extends Error {
 
 // @public
 export type HostnameProviderErrorCode = "INVALID_HOSTNAME" | "QUOTA_EXCEEDED" | "UNAVAILABLE";
+
+// @public
+export type HostOwner = "app" | {
+    orgId: string;
+} | null;
 
 // @public
 export const limits: {

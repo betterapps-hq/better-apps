@@ -279,5 +279,13 @@ describe("organizations' domains", () => {
     expect(() => shortLinks({ hosts: hostsFor() })).toThrow("need `baseUrl`")
     const t = setup({ baseUrl: "https://app.test", hosts: { resolve: () => "app", origin: () => "links.acme.test" } })
     await expect(t.api.create({ target: docs }, t.as("ada"))).rejects.toThrow("isn't an http or https origin")
+    // Checked as baseUrl is, so an http URL without its slashes isn't taken as one.
+    const slashless = setup({
+      baseUrl: "https://app.test",
+      hosts: { resolve: () => "app", origin: () => "http:links.acme.test" }
+    })
+    await expect(slashless.api.create({ target: docs }, slashless.as("ada"))).rejects.toThrow(
+      "isn't an http or https origin"
+    )
   })
 })

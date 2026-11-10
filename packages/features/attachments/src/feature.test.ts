@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test"
-import { inv1, invoices, secret, setup, vanishing } from "../test/app.js"
+import { bookAcme, bookGlobex, inv1, invoices, moving, secret, setup, vanishing } from "../test/app.js"
 import { attachmentModel, attachments, fileModel, memoryStorage } from "./index.js"
 
 /** A call from a signed-out visitor: a request with no sign-in, rather than trusted server code. */
@@ -30,6 +30,55 @@ describe("uploads onto a record", () => {
       subjectId: "inv-1",
       orgId: "acme"
     })
+  })
+
+  it("join the organization their record is in when they finish, after it moved", async () => {
+    const { api, as, send } = setup()
+    const created = await api.createUpload(
+      { ...bookAcme, name: "a.txt", contentType: "text/plain", size: 3 },
+      as("solo")
+    )
+    expect(created.file.orgId).toBe("acme")
+    await send(created.upload, "abc")
+    moving.set("book-acme", { checks: -1, toOrgId: "globex" })
+    try {
+      const { file, attachment } = await api.completeUpload({ fileId: created.file.id }, as("solo"))
+      expect([file.orgId, attachment?.orgId]).toEqual(["globex", "globex"])
+    } finally {
+      moving.clear()
+    }
+  })
+
+  it("finish only for whoever has them, when moveUser hands them over meanwhile", async () => {
+    const { app, api, as, send } = setup()
+    const created = await api.createUpload(
+      { ...bookAcme, name: "a.txt", contentType: "text/plain", size: 3 },
+      as("solo")
+    )
+    await send(created.upload, "abc")
+    const batch = app.db.batch.bind(app.db)
+    let reached!: () => void
+    const atBatch = new Promise<void>((resolve) => (reached = resolve))
+    let release!: () => void
+    const mayGo = new Promise<void>((resolve) => (release = resolve))
+    let calls = 0
+    // The finish read the upload before the move, and writes after it.
+    app.db.batch = async (operations) => {
+      calls += 1
+      if (calls === 1) {
+        reached()
+        await mayGo
+      }
+      return batch(operations)
+    }
+    const finishing = api.completeUpload({ fileId: created.file.id }, as("solo"))
+    await atBatch
+    await api.moveUser({ userId: "solo", toUserId: "bob" })
+    release()
+    await expect(finishing).rejects.toMatchObject({ code: "NOT_FOUND" })
+    app.db.batch = batch
+    const { attachment } = await api.completeUpload({ fileId: created.file.id }, as("bob"))
+    expect(attachment).toMatchObject({ id: created.file.id, attachedBy: "bob" })
   })
 
   it("go straight to storage when it signs uploads", async () => {
@@ -442,6 +491,190 @@ describe("drafts", () => {
     await expect(api.attach({ ...inv1, fileIds: [file.id] }, as("bob"))).rejects.toMatchObject({
       code: "INVALID_INPUT"
     })
+  })
+
+  it("go on a record in another organization from someone outside any, and join it", async () => {
+    const { api, as, upload, events } = setup()
+    const { file } = await upload("solo", { subjectType: "booking" })
+    expect(file.orgId).toBe("")
+    const { files } = await api.attach({ ...bookAcme, fileIds: [file.id] }, as("solo"))
+    expect(files[0]).toMatchObject({ id: file.id, orgId: "acme", owner: null, expiresAt: null })
+    expect(await api.getFile({ fileId: file.id }, as("solo"))).toMatchObject({ orgId: "acme", expiresAt: null })
+    expect(events("attachment.added")[0]?.data).toMatchObject({ orgId: "acme", file: { orgId: "acme" } })
+    const listed = await api.listFiles({ subjectType: "booking", subjectIds: ["book-acme"] }, as("bob"))
+    expect(listed["book-acme"]?.map((entry) => entry.id)).toEqual([file.id])
+    // The booking keeps it now: it can't go on another record, and its uploader's removal leaves it.
+    await expect(api.attach({ ...bookGlobex, fileIds: [file.id] }, as("solo"))).rejects.toMatchObject({
+      code: "INVALID_INPUT"
+    })
+    expect(await api.removeUser({ userId: "solo" })).toEqual({ removed: 0, done: true })
+    expect((await api.getFile({ fileId: file.id }, as("bob"))).id).toBe(file.id)
+  })
+
+  it("go on a record in another organization from their uploader's, but never from anyone else", async () => {
+    const { api, as, upload } = setup()
+    const { file } = await upload("gus", { subjectType: "booking" })
+    expect(file.orgId).toBe("")
+    await expect(api.attach({ ...bookAcme, fileIds: [file.id] }, as("bob"))).rejects.toMatchObject({
+      code: "NOT_FOUND"
+    })
+    const { files } = await api.attach({ ...bookAcme, fileIds: [file.id] }, as("gus"))
+    expect(files[0]).toMatchObject({ id: file.id, orgId: "acme" })
+  })
+
+  it("still need the target to take files, and to allow their type and size", async () => {
+    const { api, as, upload } = setup()
+    const draft = await upload("solo", { subjectType: "booking" })
+    await expect(
+      api.attach({ subjectType: "booking", subjectId: "book-closed", fileIds: [draft.file.id] }, as("solo"))
+    ).rejects.toMatchObject({ code: "FORBIDDEN" })
+    // Bookings take any type, invoices don't, so the invoice's limits apply when the draft goes there.
+    const zip = await upload("bob", { subjectType: "booking" }, { name: "a.zip", contentType: "application/zip" })
+    await expect(api.attach({ ...inv1, fileIds: [zip.file.id] }, as("bob"))).rejects.toMatchObject({
+      code: "INVALID_INPUT"
+    })
+  })
+
+  it("go on a record outside any organization, and go with it", async () => {
+    const about = { subjectType: "page", subjectId: "about" } as const
+    const { api, as, upload } = setup()
+    const { file } = await upload("bob", { subjectType: "page" })
+    const { files } = await api.attach({ ...about, fileIds: [file.id] }, as("bob"))
+    expect(files[0]).toMatchObject({ id: file.id, orgId: "" })
+    const listed = await api.listFiles({ subjectType: "page", subjectIds: ["about"] }, signedOut())
+    expect(listed.about?.map((entry) => entry.id)).toEqual([file.id])
+    expect(await api.removeSubject(about)).toEqual({ removed: 1, done: true })
+    await expect(api.getFile({ fileId: file.id }, as("bob"))).rejects.toMatchObject({ code: "NOT_FOUND" })
+  })
+
+  it("come back off a record that moved to another organization while they were attached", async () => {
+    const { api, as, upload, count, events } = setup()
+    const { file } = await upload("solo", { subjectType: "booking" })
+    moving.set("book-acme", { checks: 1, toOrgId: "globex" })
+    try {
+      await expect(api.attach({ ...bookAcme, fileIds: [file.id] }, as("solo"))).rejects.toMatchObject({
+        code: "NOT_FOUND"
+      })
+    } finally {
+      moving.clear()
+    }
+    expect([count(fileModel), count(attachmentModel)]).toEqual([0, 0])
+    expect(events("attachment.removed")[0]?.data).toMatchObject({ orgId: "acme", reason: "withdrawn" })
+  })
+
+  it("join the organization of the record that wins when records in two race for one", async () => {
+    const { api, as, upload, count } = setup()
+    const { file } = await upload("solo", { subjectType: "booking" })
+    const results = await Promise.allSettled([
+      api.attach({ ...bookAcme, fileIds: [file.id] }, as("solo")),
+      api.attach({ ...bookGlobex, fileIds: [file.id] }, as("solo"))
+    ])
+    const won = results.findIndex((result) => result.status === "fulfilled")
+    expect(results.map((result) => result.status).sort()).toEqual(["fulfilled", "rejected"])
+    expect([count(fileModel), count(attachmentModel)]).toEqual([1, 1])
+    const listed = await api.listFiles({ subjectType: "booking", subjectIds: ["book-acme", "book-globex"] }, as("solo"))
+    const winner = won === 0 ? "acme" : "globex"
+    expect(listed[`book-${winner}`]?.map((entry) => entry.id)).toEqual([file.id])
+    expect(await api.getFile({ fileId: file.id }, as("solo"))).toMatchObject({ orgId: winner })
+  })
+
+  it("go on records from trusted server code for the person it names, and only theirs", async () => {
+    const { api, upload, events } = setup()
+    const solo = { author: { type: "user", userId: "solo" } } as const
+    const draft = await upload("solo", { subjectType: "booking" })
+    const own = await upload("solo", { owner: "user" })
+    await expect(
+      api.attach({ ...bookAcme, fileIds: [draft.file.id] }, { author: { type: "user", userId: "bob" } })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" })
+    // Server code skips the record's checks, so it attaches to a booking that takes no more files from people.
+    const closed = { subjectType: "booking", subjectId: "book-closed" } as const
+    const { files } = await api.attach({ ...closed, fileIds: [draft.file.id, own.file.id] }, solo)
+    expect(files.map((file) => [file.id, file.orgId, file.attachedBy])).toEqual([
+      [draft.file.id, "acme", "solo"],
+      [own.file.id, "", "solo"]
+    ])
+    expect(
+      events("attachment.added").map((event) => (event.data as { file: { subjectType: string } }).file.subjectType)
+    ).toEqual(["booking", null])
+    // Acme's files, and an Acme member's own, aren't Solo's, even on a booking in Acme.
+    for (const other of [await upload("bob", {}), await upload("bob", { owner: "user" })]) {
+      expect(other.file.orgId).toBe("acme")
+      await expect(api.attach({ ...bookAcme, fileIds: [other.file.id] }, solo)).rejects.toMatchObject({
+        code: "NOT_FOUND"
+      })
+    }
+  })
+
+  it("stay on a locked record, even from the person who attached them, until a moderator takes them off", async () => {
+    const { api, as, upload } = setup()
+    const locked = { subjectType: "invoice", subjectId: "inv-locked" } as const
+    const draft = await upload("bob", { subjectType: "invoice" })
+    // Server code puts it there for Bob, as a booking's required documents are, after which the record locks.
+    await api.attach({ ...locked, fileIds: [draft.file.id] }, { author: { type: "user", userId: "bob" } })
+    await expect(api.detach({ ...locked, fileId: draft.file.id }, as("bob"))).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: "You can't remove files here."
+    })
+    expect(await api.detach({ ...locked, fileId: draft.file.id }, as("ada"))).toEqual({ removed: true })
+  })
+
+  it("go on records from trusted server code acting for no one, credited to no one", async () => {
+    const { api, as, upload } = setup()
+    const draft = await upload("solo", { subjectType: "booking" })
+    const { files } = await api.attach({ ...bookAcme, fileIds: [draft.file.id] })
+    expect(files[0]).toMatchObject({ id: draft.file.id, orgId: "acme", attachedBy: "" })
+    // Only a moderator takes it off, not its uploader.
+    await expect(api.detach({ ...bookAcme, fileId: draft.file.id }, as("solo"))).rejects.toMatchObject({
+      code: "FORBIDDEN"
+    })
+    const own = await upload("solo", { owner: "user" })
+    await expect(api.attach({ ...bookAcme, fileIds: [own.file.id] })).rejects.toMatchObject({ code: "INVALID_INPUT" })
+    const ours = await upload("bob", {})
+    await expect(api.attach({ ...bookGlobex, fileIds: [ours.file.id] })).rejects.toMatchObject({
+      code: "INVALID_INPUT"
+    })
+    expect((await api.attach({ ...inv1, fileIds: [ours.file.id] })).files.map((file) => file.id)).toEqual([
+      ours.file.id
+    ])
+    await expect(
+      api.attach({ ...bookAcme, fileIds: [(await upload("bob", { owner: "user" })).file.id] }, signedOut())
+    ).rejects.toMatchObject({ code: "UNAUTHENTICATED" })
+  })
+
+  it("take the record's subject type when they go on a record of another", async () => {
+    const { api, as, upload, events } = setup()
+    const { file } = await upload("bob", { subjectType: "booking" })
+    await api.attach({ ...inv1, fileIds: [file.id] }, as("bob"))
+    expect(events("attachment.added")[0]?.data).toMatchObject({ file: { subjectType: "invoice" } })
+  })
+
+  it("fail to attach once moveUser handed them to another user meanwhile", async () => {
+    const { app, api, as, upload } = setup()
+    const { file } = await upload("solo", { subjectType: "booking" })
+    const batch = app.db.batch.bind(app.db)
+    let reached!: () => void
+    const atBatch = new Promise<void>((resolve) => (reached = resolve))
+    let release!: () => void
+    const mayGo = new Promise<void>((resolve) => (release = resolve))
+    let calls = 0
+    // The attach read the draft before the move, and writes after it.
+    app.db.batch = async (operations) => {
+      calls += 1
+      if (calls === 1) {
+        reached()
+        await mayGo
+      }
+      return batch(operations)
+    }
+    const attaching = api.attach({ ...bookAcme, fileIds: [file.id] }, as("solo"))
+    await atBatch
+    expect(await api.moveUser({ userId: "solo", toUserId: "bob" })).toEqual({ files: 1, attachments: 0 })
+    release()
+    await expect(attaching).rejects.toMatchObject({ code: "CONFLICT" })
+    app.db.batch = batch
+    expect((await api.attach({ ...bookAcme, fileIds: [file.id] }, as("bob"))).files.map((entry) => entry.id)).toEqual([
+      file.id
+    ])
   })
 
   it("stay on the record that wins when two records race for one", async () => {
@@ -881,6 +1114,25 @@ describe("files on their own", () => {
     await expect(api.attach({ ...globex, fileIds: [ours.file.id] }, elsewhere)).rejects.toMatchObject({
       code: "NOT_FOUND"
     })
+    // Gus sees Acme's file on a booking anyone can see, but it stays in Acme. Bob sees Solo's own file on a page, but
+    // it isn't his to bring into Acme.
+    await api.attach({ ...bookAcme, fileIds: [ours.file.id] }, as("bob"))
+    await expect(api.attach({ ...globex, fileIds: [ours.file.id] }, as("gus"))).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+      message: "That file can't go on records in this organization."
+    })
+    const solos = await upload("solo", { owner: "user" })
+    await api.attach({ subjectType: "page", subjectId: "about", fileIds: [solos.file.id] }, as("solo"))
+    await expect(api.attach({ ...inv1, fileIds: [solos.file.id] }, as("bob"))).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+      message: "That file can't go on records in this organization."
+    })
+    // It's in no organization, so it can't go on another page outside any either, except by its owner.
+    const contact = { subjectType: "page", subjectId: "contact" } as const
+    await expect(api.attach({ ...contact, fileIds: [solos.file.id] }, as("bob"))).rejects.toMatchObject({
+      code: "INVALID_INPUT"
+    })
+    expect((await api.attach({ ...contact, fileIds: [solos.file.id] }, as("solo"))).files).toHaveLength(1)
   })
 
   it("page newest first", async () => {
@@ -983,6 +1235,84 @@ describe("records that change", () => {
     expect(await api.removeUser({ userId: "bob" })).toEqual({ removed: 2, done: true })
     expect([...storage.objects.keys()]).toEqual([`attachments/${onRecord.file.id}`])
     expect(events("user.removed")).toHaveLength(1)
+  })
+
+  it("keep a draft that an attach put on a record while its uploader was being removed", async () => {
+    const { app, api, as, upload, storage, events } = setup()
+    const { file } = await upload("solo", { subjectType: "booking" })
+    const batch = app.db.batch.bind(app.db)
+    let reached!: () => void
+    const atBatch = new Promise<void>((resolve) => (reached = resolve))
+    let release!: () => void
+    const mayGo = new Promise<void>((resolve) => (release = resolve))
+    let calls = 0
+    // The removal read the draft before the attach, and writes after it.
+    app.db.batch = async (operations) => {
+      calls += 1
+      if (calls === 1) {
+        reached()
+        await mayGo
+      }
+      return batch(operations)
+    }
+    const removing = api.removeUser({ userId: "solo" })
+    await atBatch
+    await api.attach({ ...bookAcme, fileIds: [file.id] }, as("solo"))
+    release()
+    expect(await removing).toEqual({ removed: 0, done: true })
+    app.db.batch = batch
+    expect(await api.getFile({ fileId: file.id }, as("bob"))).toMatchObject({ status: "ready", orgId: "acme" })
+    expect(storage.objects.has(`attachments/${file.id}`)).toBe(true)
+    expect(events("file.deleted")).toEqual([])
+    // It isn't remembered as removed, so it can still come off its record.
+    expect(await api.detach({ ...bookAcme, fileId: file.id }, as("solo"))).toEqual({ removed: true })
+  })
+
+  it("go to another user with their uploader, such as a guest who signs up", async () => {
+    const { api, as, upload, events } = setup()
+    const draft = await upload("solo", { subjectType: "booking" })
+    const own = await upload("solo", { owner: "user" })
+    const attached = await upload("solo", { subjectType: "booking" })
+    await api.attach({ ...bookAcme, fileIds: [attached.file.id] }, as("solo"))
+    expect(await api.moveUser({ userId: "solo", toUserId: "bob" })).toEqual({ files: 3, attachments: 1 })
+    expect(events("user.moved")[0]?.data).toEqual({ userId: "solo", toUserId: "bob" })
+    await expect(api.attach({ ...bookAcme, fileIds: [draft.file.id] }, as("solo"))).rejects.toMatchObject({
+      code: "NOT_FOUND"
+    })
+    const { files } = await api.attach({ ...bookAcme, fileIds: [draft.file.id, own.file.id] }, as("bob"))
+    expect(files.map((file) => file.id)).toEqual([draft.file.id, own.file.id])
+    expect((await api.listOwnFiles({ owner: "user" }, as("bob"))).files.map((file) => file.id)).toEqual([own.file.id])
+    expect(await api.detach({ ...bookAcme, fileId: attached.file.id }, as("bob"))).toEqual({ removed: true })
+    expect(await api.moveUser({ userId: "bob", toUserId: "bob" })).toEqual({ files: 0, attachments: 0 })
+  })
+
+  it("keep a draft that an attach put on a record while it was being deleted", async () => {
+    const { app, api, as, upload, storage, events } = setup()
+    const { file } = await upload("solo", { subjectType: "booking" })
+    const batch = app.db.batch.bind(app.db)
+    let reached!: () => void
+    const atBatch = new Promise<void>((resolve) => (reached = resolve))
+    let release!: () => void
+    const mayGo = new Promise<void>((resolve) => (release = resolve))
+    let calls = 0
+    // The delete read the draft before the attach, and writes after it.
+    app.db.batch = async (operations) => {
+      calls += 1
+      if (calls === 1) {
+        reached()
+        await mayGo
+      }
+      return batch(operations)
+    }
+    const deleting = api.deleteFile({ fileId: file.id }, as("solo"))
+    await atBatch
+    await api.attach({ ...bookAcme, fileIds: [file.id] }, as("solo"))
+    release()
+    expect(await deleting).toEqual({ deleted: false })
+    app.db.batch = batch
+    expect(storage.objects.has(`attachments/${file.id}`)).toBe(true)
+    expect(events("file.deleted")).toEqual([])
+    expect(await api.getFile({ fileId: file.id }, as("bob"))).toMatchObject({ status: "ready" })
   })
 
   it("lose a person's unfinished uploads when the person is removed, an organization's too, a page a call", async () => {

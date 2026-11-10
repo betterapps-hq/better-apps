@@ -14,6 +14,7 @@ import {
   commentHandlers,
   moveSubject,
   removeSubject,
+  moveUser,
   removeUser,
   sweep,
   type Cleanup,
@@ -98,7 +99,8 @@ const inputs = {
   settings: z.object({ subjectType: subjectType.optional() }),
   record,
   moveSubject: record.extend({ toOrgId: z.string().max(255).nullable() }),
-  removeUser: z.object({ userId: z.string().min(1).max(255) })
+  removeUser: z.object({ userId: z.string().min(1).max(255) }),
+  moveUser: z.object({ userId: z.string().min(1).max(255), toUserId: z.string().min(1).max(255) })
 }
 
 /** Which records an event changed, for browsers: added, removed, reordered or changed in bulk. */
@@ -254,6 +256,10 @@ export function attachments<const Options extends AttachmentsOptions>(options: O
         { moved: number } & BulkStep
       >(inputs.moveSubject, moveSubject),
       removeUser: serverAction<{ userId: string }, { removed: number } & BulkStep>(inputs.removeUser, removeUser),
+      moveUser: serverAction<{ userId: string; toUserId: string }, { files: number; attachments: number }>(
+        inputs.moveUser,
+        moveUser
+      ),
       toClientEvent: serverAction<{ event: BetterAppsEvent; viewer: Actor | null }, ClientAttachmentEvent | null>(
         null,
         async (config, context) => {

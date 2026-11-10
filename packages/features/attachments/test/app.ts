@@ -1,5 +1,6 @@
-// A test app with files on invoices, where each invoice belongs to an organization and may be locked, on public pages
-// anyone can read, and on their own. A `feed` feature records every attachments event it's delivered.
+// A test app with files on invoices, where each invoice belongs to an organization and may be locked, on bookings any
+// signed-in person can see, such as a guest booking with an organization, on public pages anyone can read, and on their
+// own. A `feed` feature records every attachments event it's delivered.
 import { createTestApp, type TestUser } from "@better-apps/testing"
 import { defineFeature, type BetterAppsEvent, type EventHandler, type SubjectDefinition } from "better-apps"
 import { attachmentEvents, attachments, fileModel, memoryStorage, type AttachmentsOptions } from "../src/index.js"
@@ -24,6 +25,38 @@ export const invoices = new Map<string, { orgId: string; locked?: boolean }>([
 const orgOfInvoice = (subjectId: string) => invoices.get(subjectId)?.orgId ?? null
 
 /**
+ * Bookings by organization. Any signed-in person sees them, whatever their organization. `book-closed` takes no more
+ * files.
+ */
+const bookings = new Map<string, string>([
+  ["book-acme", "acme"],
+  ["book-globex", "globex"],
+  ["book-closed", "acme"]
+])
+
+export const bookAcme = { subjectType: "booking", subjectId: "book-acme" } as const
+export const bookGlobex = { subjectType: "booking", subjectId: "book-globex" } as const
+
+/**
+ * Bookings that pass this many more view checks, then move to another organization, as one moved while a file is
+ * attached to it. Clear it to move them back.
+ */
+export const moving = new Map<string, { checks: number; toOrgId: string }>()
+
+const orgOfBooking = (subjectId: string) => {
+  const move = moving.get(subjectId)
+  return move && move.checks < 0 ? move.toOrgId : (bookings.get(subjectId) ?? null)
+}
+
+function viewBooking(subjectId: string): boolean {
+  const move = moving.get(subjectId)
+  if (move) {
+    move.checks -= 1
+  }
+  return bookings.has(subjectId)
+}
+
+/**
  * Invoices that pass this many more access checks, then can't be seen, as one deleted while a file is attached to it.
  */
 export const vanishing = new Map<string, number>()
@@ -42,6 +75,10 @@ export const subjects = {
     getOrgId: ({ subjectId }) => orgOfInvoice(subjectId),
     canView: ({ actor, subjectId }) =>
       actor.orgId !== null && actor.orgId === orgOfInvoice(subjectId) && stillVisible(subjectId)
+  },
+  booking: {
+    getOrgId: ({ subjectId }) => orgOfBooking(subjectId),
+    canView: ({ subjectId }) => viewBooking(subjectId)
   },
   page: { publicRead: true, canView: () => true, getOrgId: () => null }
 } satisfies Record<string, SubjectDefinition>
@@ -74,6 +111,7 @@ export function setup(extra: Partial<AttachmentsOptions> = {}, { signedUploads =
         maxSize: 1000,
         maxFiles: 3
       },
+      booking: { canUpload: ({ subjectId }) => subjectId !== "book-closed" },
       page: {}
     },
     standalone: { canManage: ({ actor }) => actor.roles.includes("admin") },
@@ -106,7 +144,7 @@ export function setup(extra: Partial<AttachmentsOptions> = {}, { signedUploads =
   /** Uploads a file all the way, as a user. */
   const upload = async (
     userId: UserId,
-    target: { subjectType?: "invoice" | "page"; subjectId?: string; owner?: "user" | "org" },
+    target: { subjectType?: "invoice" | "booking" | "page"; subjectId?: string; owner?: "user" | "org" },
     {
       name = "notes.txt",
       contentType = "text/plain",

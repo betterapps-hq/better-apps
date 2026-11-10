@@ -91,6 +91,17 @@ interface Config {
   source: LinkSource | undefined
 }
 
+/** An http or https URL, with any host, including `127.0.0.1` and `[::1]`. */
+// `abort` stops at a value that isn't a URL, so later checks can parse it.
+const httpUrl = z.url({ protocol: /^https?$/, abort: true })
+
+/** `baseUrl`: an http or https URL that short URLs can follow with a path, so without credentials, query or fragment. */
+const baseUrlSchema = httpUrl.refine((value) => {
+  const url = new URL(value)
+  // A parsed URL escapes `?` and `#` in its path, so either one in `href` starts a query or a fragment.
+  return url.username === "" && url.password === "" && !/[?#]/.test(url.href)
+})
+
 const refusedSchemes = new Set(["javascript:", "data:", "vbscript:", "file:"])
 
 const notFoundPage = () =>
@@ -112,11 +123,13 @@ function resolve(options: ShortLinksOptions): Config {
   }
   let baseUrl: string | undefined
   if (options.baseUrl !== undefined) {
-    const parsed = URL.canParse(options.baseUrl) ? new URL(options.baseUrl) : null
-    if (!parsed || (parsed.protocol !== "https:" && parsed.protocol !== "http:")) {
-      throw new Error(`\`baseUrl\` must be an http or https URL, such as https://go.example.com.`)
+    const parsed = baseUrlSchema.safeParse(options.baseUrl)
+    if (!parsed.success) {
+      throw new Error(
+        `\`baseUrl\` must be an http or https URL without credentials, a query or a fragment, such as https://go.example.com.`
+      )
     }
-    baseUrl = parsed.href.replace(/\/+$/, "")
+    baseUrl = new URL(parsed.data).href.replace(/\/+$/, "")
   }
   let hosts: Config["hosts"]
   if (options.hosts !== undefined) {
@@ -171,13 +184,13 @@ function prefixOf(config: Config, request: Request | null): string {
 
 /** The origin `hosts.origin` returned, or the setup error that says it isn't one. */
 function originOf(value: string): string {
-  const url = URL.canParse(value) ? new URL(value) : null
-  if (!url || (url.protocol !== "https:" && url.protocol !== "http:")) {
+  const parsed = httpUrl.safeParse(value)
+  if (!parsed.success) {
     throw new Error(
       `Short links' \`hosts.origin\` returned "${value}", which isn't an http or https origin, such as https://links.acme.com.`
     )
   }
-  return url.origin
+  return new URL(parsed.data).origin
 }
 
 /** Where links' short URLs go within one call. */

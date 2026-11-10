@@ -85,8 +85,9 @@ shortLinks({
   in it, and who makes its URL links. Every member, by default. Who shares records is up to `canShare`.
 - `path` is where links open, `/s` by default. It can't be directly under the app's `basePath`, where a link's URL would
   look like an action's.
-- `baseUrl` is the origin of the short URLs the actions return, such as a shorter domain that serves the same app. The
-  request's origin, by default. `hosts` needs it.
+- `baseUrl` is where the short URLs the actions return start, such as a shorter domain that serves the same app. The
+  request's origin, by default. `hosts` needs it. It's an `http` or `https` URL, which may have a path but no
+  credentials, query or fragment, since short URLs follow it with the path and code.
 - `hosts` opens links on organizations' own domains and shares them there, as
   [Organizations' domains](#organizations-domains) describes. Without it, every host that serves the app opens every
   link.
@@ -351,28 +352,17 @@ before the cleanup runs, still redirects; the app's own page answers for the mis
 
 An organization with a ready domain, a subdomain such as `acme.yourapp.com` or its own such as `links.acme.com`, can
 share its links there: `links.acme.com/s/abc123`. Short links never import the domains feature. The app connects them
-through `hosts`, usually with [`@better-apps/domains`](../../domains/docs/spec.md)' server-only `lookup` and
-`getPrimary`. The app's file imports the features, so `linkDomains()` returns the domains the app passes in once it
-exists, and throws before then, as the [README](../README.md#organizations-domains) shows:
+through `hosts`, usually with [`@better-apps/domains`](../../domains/docs/spec.md#hosts-for-other-features)'
+`domainHosts`, which answers from domains' server-only `lookup` and `getPrimary`. The app's file imports the features,
+so the app connects its domains once it exists, as the [README](../README.md#organizations-domains) shows:
 
 ```ts
-baseUrl: "https://app.yourapp.com",
-hosts: {
-  resolve: async ({ hostname }) => {
-    if (hostname === "app.yourapp.com") {
-      return "app"
-    }
-    const match = await linkDomains().lookup({ hostname })
-    return match?.verified && match.orgId ? { orgId: match.orgId } : null
-  },
-  origin: async ({ orgId }) => {
-    if (orgId === null) {
-      return null
-    }
-    const primary = await linkDomains().getPrimary({ orgId })
-    return primary?.status === "active" ? `https://${primary.hostname}` : null
-  }
-}
+const appUrl = "https://app.yourapp.com"
+const linkHosts = domainHosts({ url: appUrl })
+
+shortLinks({ baseUrl: appUrl, hosts: linkHosts.hosts })
+// Once the app is created:
+linkHosts.connect(app.api.domains)
 ```
 
 `hosts` needs `baseUrl`, the app's own origin, which `resolve` calls `"app"`. An action can be called from an
@@ -397,7 +387,7 @@ Codes stay unique across the app, so a code means the same link on every host th
 one read.
 
 An app without organizations, such as one whose workspace has its own domains, can return `"app"` for its workspace's
-ready domains, so they open every link.
+ready domains, so they open every link. `domainHosts` does.
 
 ### Where links open
 

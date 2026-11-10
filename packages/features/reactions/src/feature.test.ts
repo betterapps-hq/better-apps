@@ -7,7 +7,7 @@ import {
   type EventHandler,
   type SubjectDefinition
 } from "better-apps"
-import { describe, expect, it } from "vite-plus/test"
+import { describe, expect, it, vi } from "vite-plus/test"
 import { expectCode, invoices, setup, subjects, users } from "../test/app.js"
 import { isEmoji, normalizeEmoji, reactionEvents, reactionModel, reactions } from "./index.js"
 
@@ -642,7 +642,8 @@ describe("with comments", () => {
   function withComments({ open = false } = {}) {
     const threads = new Map([["t-1", { orgId: "acme", comments: new Set(["c-1", "c-2"]) }]])
     // Runs once, right after the next organization lookup, such as to move a thread while a reaction is saved.
-    const hooks: { afterOrg?: (() => void) | undefined } = {}
+    // `failOnce` fails the next delivery of that reactions event once, after reactions handled it, as a crash would.
+    const hooks: { afterOrg?: (() => void) | undefined; failOnce?: string | undefined } = {}
     const threadOf = (commentId: string) => [...threads].find(([, thread]) => thread.comments.has(commentId))
     // A comment in `vanishing` passes one access check, then is gone, as one deleted while a reaction is saved.
     const vanishing = new Set<string>()
@@ -679,7 +680,13 @@ describe("with comments", () => {
     })
     const feature = reactions({ subjects: { "comments.comment": {}, "comments.thread": {} } })
     const delivered: BetterAppsEvent[] = []
-    const record: EventHandler = (event) => void delivered.push(event)
+    const record: EventHandler = (event) => {
+      if (hooks.failOnce === event.type) {
+        hooks.failOnce = undefined
+        throw new Error("Crashed")
+      }
+      delivered.push(event)
+    }
     const feed = defineFeature({
       id: "feed",
       on: { reactions: Object.fromEntries(Object.keys(reactionEvents).map((type) => [type, record])) }
@@ -688,6 +695,8 @@ describe("with comments", () => {
     const events = (type: string) => delivered.filter((event) => event.type === type)
     const as = (userId: "ada" | "bob" | "gus") => ({ actor: identity.actor(userId) })
     const count = () => database.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${reactionModel}`).get()
+    const inOrg = (orgId: string) =>
+      database.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${reactionModel} WHERE orgId = ?`).get(orgId)
     return {
       api: app.api.reactions,
       emit: app.api.comments.emit,
@@ -697,10 +706,15 @@ describe("with comments", () => {
       vanishing,
       hooks,
       count,
+      inOrg,
       database,
       events
     }
   }
+  const moved = (threadId: string, toOrgId: string, commentIds: string[], fromOrgId = "acme") => ({
+    type: "thread.moved",
+    data: { thread: { id: threadId, orgId: toOrgId }, fromOrgId, commentIds }
+  })
   const comment = (id: string) => ({ subjectType: "comments.comment", subjectId: id }) as const
 
   it("subscribe only when comments' records have reactions", () => {
@@ -739,16 +753,28 @@ describe("with comments", () => {
   })
 
   it("move a thread's reactions, and its comments', with it", async () => {
-    const { api, emit, as, threads, events } = withComments()
+    const { api, emit, deliver, as, threads, events } = withComments()
     await api.react({ ...comment("c-1"), emoji: "👍" }, as("ada"))
     threads.set("t-1", { orgId: "globex", comments: new Set(["c-1", "c-2"]) })
     const list = { subjectType: "comments.comment", subjectIds: ["c-1"] } as const
     expect(await api.listReactions(list, as("gus"))).toEqual({ "c-1": [] })
-    await emit({ type: "thread.moved", data: { thread: { id: "t-1", orgId: "globex" }, commentIds: ["c-1", "c-2"] } })
+    await emit(moved("t-1", "globex", ["c-1", "c-2"]))
     expect(events("subject.moved").map((event) => event.data)).toEqual([
       { subjectType: "comments.comment", subjectId: "c-1", toOrgId: "globex" }
     ])
     expect(await api.listReactions(list, as("gus"))).toEqual({ "c-1": [{ emoji: "👍", count: 1, reacted: false }] })
+    // `move.finished` is written with the delivery's removal, so it reaches subscribers in the next run.
+    expect(events("move.finished")).toEqual([])
+    await deliver()
+    expect(events("move.finished").map((event) => event.data)).toEqual([
+      {
+        subjectType: "comments.thread",
+        subjectId: "t-1",
+        fromOrgId: "acme",
+        toOrgId: "globex",
+        moveEventId: expect.any(String)
+      }
+    ])
   })
 
   // A thread with more reactions on its comments than one delivery cleans up.
@@ -786,36 +812,144 @@ describe("with comments", () => {
     expect(setup.count()).toEqual({ count: 0 })
   })
 
-  it("never let an older move's later pages undo a newer move", async () => {
+  it("never let an older move's later pages undo a newer move, nor report it finished", async () => {
     const setup = withComments()
     const ids = await busyThread(setup, 20)
-    const inOrg = (orgId: string) =>
-      setup.database.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${reactionModel} WHERE orgId = ?`).get(orgId)
+    const { inOrg } = setup
     // The move to globex leaves its last page for later, and the thread moves on before that runs.
     setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
-    await setup.emit({ type: "thread.moved", data: { thread: { id: "t-big", orgId: "globex" }, commentIds: ids } })
+    await setup.emit(moved("t-big", "globex", ids))
     expect(inOrg("globex")).toEqual({ count: 30 })
     setup.threads.set("t-big", { orgId: "initech", comments: new Set(ids) })
     await setup.deliver()
     // The older job's last page doesn't move what's left to globex, where the thread no longer is.
     expect(inOrg("globex")).toEqual({ count: 30 })
     expect(inOrg("acme")).toEqual({ count: 10 })
+    await setup.deliver()
+    expect(setup.events("move.finished")).toEqual([])
+    // The newer move takes everything along, and is the only one reported finished.
+    await setup.emit(moved("t-big", "initech", ids))
+    await setup.deliver()
+    await setup.deliver()
+    await setup.deliver()
+    expect(inOrg("initech")).toEqual({ count: 40 })
+    expect(setup.events("move.finished").map((event) => event.data)).toMatchObject([{ toOrgId: "initech" }])
+  })
+
+  it("stop a move when its thread is deleted between pages, reporting no move.finished", async () => {
+    const setup = withComments()
+    const ids = await busyThread(setup, 20)
+    setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
+    await setup.emit(moved("t-big", "globex", ids))
+    expect(setup.inOrg("globex")).toEqual({ count: 30 })
+    setup.threads.delete("t-big")
+    await setup.deliver()
+    await setup.deliver()
+    // The thread's own deletion takes what's left.
+    expect(setup.inOrg("acme")).toEqual({ count: 10 })
+    expect(setup.events("move.finished")).toEqual([])
+  })
+
+  it("stop an older move that's still paging when its thread moves back, which takes every reaction back", async () => {
+    const setup = withComments()
+    const ids = await busyThread(setup, 20)
+    await setup.api.react({ subjectType: "comments.thread", subjectId: "t-big", emoji: "👀" }, setup.as("ada"))
+    setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
+    await setup.emit(moved("t-big", "globex", ids))
+    // The first page takes the thread's reaction and 29 of its comments'.
+    expect(setup.inOrg("globex")).toEqual({ count: 30 })
+    setup.threads.set("t-big", { orgId: "acme", comments: new Set(ids) })
+    await setup.emit(moved("t-big", "acme", ids, "globex"))
+    await setup.deliver()
+    await setup.deliver()
+    await setup.deliver()
+    expect(setup.inOrg("globex")).toEqual({ count: 0 })
+    expect(setup.inOrg("acme")).toEqual({ count: 41 })
+    expect(setup.events("move.finished").map((event) => event.data)).toMatchObject([
+      { fromOrgId: "globex", toOrgId: "acme" }
+    ])
+  })
+
+  it("keep moving a thread's comments when the job's first comment was deleted before its delivery", async () => {
+    const setup = withComments()
+    const ids = await busyThread(setup, 20)
+    // The thread moves, and its first comment is deleted before the move is delivered, so comments no longer find it.
+    setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids.slice(1)) })
+    await setup.emit(moved("t-big", "globex", ids))
+    await setup.deliver()
+    expect(setup.inOrg("acme")).toEqual({ count: 0 })
+    expect(setup.inOrg("globex")).toEqual({ count: 40 })
+    // The deleted comment's own cleanup takes its reactions, wherever they are.
+    await setup.emit({ type: "comment.deleted", data: { comment: { id: "big-0" } } })
+    expect(setup.inOrg("globex")).toEqual({ count: 38 })
+    await setup.deliver()
+    expect(setup.events("move.finished")).toHaveLength(1)
+  })
+
+  it("keep moving a thread's comments when the next page's first comment was deleted between pages", async () => {
+    const setup = withComments()
+    const ids = await busyThread(setup, 20)
+    setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
+    await setup.emit(moved("t-big", "globex", ids))
+    expect(setup.inOrg("globex")).toEqual({ count: 30 })
+    // The next page starts at the first comment again, which is deleted before that page runs.
+    setup.threads.get("t-big")?.comments.delete("big-0")
+    await setup.deliver()
+    expect(setup.inOrg("acme")).toEqual({ count: 0 })
+    expect(setup.inOrg("globex")).toEqual({ count: 40 })
+    await setup.deliver()
+    expect(setup.events("move.finished")).toHaveLength(1)
   })
 
   it("move a big thread's reactions a page per delivery, telling browsers with each page", async () => {
     const setup = withComments()
     const ids = await busyThread(setup, 20)
     setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
-    await setup.emit({ type: "thread.moved", data: { thread: { id: "t-big", orgId: "globex" }, commentIds: ids } })
-    const inGlobex = () =>
-      setup.database.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${reactionModel} WHERE orgId = 'globex'`).get()
+    await setup.emit(moved("t-big", "globex", ids))
     const told = () =>
       new Set(setup.events("subject.moved").map((event) => (event.data as { subjectId: string }).subjectId)).size
     // A page of 30 moves now with its records' subject.moved, and the rest in the next run.
-    expect(inGlobex()).toEqual({ count: 30 })
+    expect(setup.inOrg("globex")).toEqual({ count: 30 })
     expect(told()).toBeGreaterThanOrEqual(15)
     await setup.deliver()
-    expect(inGlobex()).toEqual({ count: 40 })
+    expect(setup.inOrg("globex")).toEqual({ count: 40 })
     expect(told()).toBe(20)
+    // The last page leaves `move.finished` for the next run, once.
+    expect(setup.events("move.finished")).toEqual([])
+    await setup.deliver()
+    await setup.deliver()
+    expect(setup.events("move.finished").map((event) => event.data)).toEqual([
+      {
+        subjectType: "comments.thread",
+        subjectId: "t-big",
+        fromOrgId: "acme",
+        toOrgId: "globex",
+        // The same on every page, from the event that reported the move.
+        moveEventId: (setup.events("cleanup.continued")[0]?.data as { move?: { moveEventId: string } } | undefined)
+          ?.move?.moveEventId
+      }
+    ])
+  })
+
+  it("report a move finished once when its last page's delivery is retried", async () => {
+    const setup = withComments()
+    const ids = await busyThread(setup, 20)
+    setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
+    await setup.emit(moved("t-big", "globex", ids))
+    // The last page moves, then its delivery fails before it's done, and is retried once its backoff passes.
+    setup.hooks.failOnce = "cleanup.continued"
+    expect(await setup.deliver()).toMatchObject({ failed: 1 })
+    expect(setup.inOrg("globex")).toEqual({ count: 40 })
+    vi.useFakeTimers({ toFake: ["Date"] })
+    try {
+      vi.setSystemTime(Date.now() + 60_000)
+      expect(await setup.deliver()).toMatchObject({ delivered: 1, failed: 0 })
+      await setup.deliver()
+      vi.setSystemTime(Date.now() + 60 * 60_000)
+      await setup.deliver()
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(setup.events("move.finished")).toHaveLength(1)
   })
 })
