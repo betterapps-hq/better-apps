@@ -2,14 +2,15 @@
 
 `@better-apps/short-links` gives an app short URLs, such as `https://app.example/s/k3Jd9xQa`, that redirect to one of
 the app's records or to any URL. A user or an organization owns each link. A link can also let anyone who has it see the
-record it points to. Opening a link counts a click.
+record it points to. Opening a link counts a click, keeps it as its own event for clicks over time, and can tell the
+page it opens which link that was.
 
 It needs two things from core `better-apps`, described in [Core support](#core-support): public routes that
 `app.handler` serves outside the action URLs, and access grants that a request carries.
 
 ## Tables
 
-One table, `shortLink`:
+Two tables. `shortLink` holds the links:
 
 | Field           | Type           | Holds                                                                                                  |
 | --------------- | -------------- | ------------------------------------------------------------------------------------------------------ |
@@ -38,6 +39,17 @@ Indexes:
 
 A link targets either a URL or a record, never both.
 
+`shortLinkClick` holds one row per click:
+
+| Field       | Type   | Holds                                                                                                        |
+| ----------- | ------ | ------------------------------------------------------------------------------------------------------------ |
+| `linkId`    | string | The link opened. It references `shortLink.id`, so removing the link removes its clicks.                      |
+| `clickedAt` | date   | When it was opened.                                                                                          |
+| `slot`      | date   | The start of the 15-minute slot, in UTC, that `clickedAt` falls in, so clicks per day are one grouped count. |
+
+It keeps nothing about who opened the link: no IP address, user agent or referrer. Its index, `(linkId, slot)`, serves a
+link's clicks over a range, and finding them when the link goes.
+
 ## Configuration
 
 ```ts
@@ -56,7 +68,8 @@ shortLinks({
   codeLength: 8,
   cookie: { name: "better-apps-links", maxAge: 30 * 24 * 60 * 60, domain: "example.com" },
   notFound: ({ request }) => Response.redirect(new URL("/link-not-found", request.url), 302),
-  events: { clickRate: 1, milestones: [1, 10, 100, 1000, 10_000], notFoundPerMinute: 10 }
+  events: { clickRate: 1, milestones: [1, 10, 100, 1000, 10_000], notFoundPerMinute: 10 },
+  source: { param: "via", urls: ({ url }) => url.hostname === "example.com", grants: false }
 })
 ```
 
@@ -91,6 +104,8 @@ shortLinks({
   that emit `link.clicked`, from 0 to 1, 1 by default; `milestones`, the click counts that emit `link.milestone`, 1, 10,
   100, 1,000 and 10,000 by default; and `notFoundPerMinute`, the most `link.notFound` events each host emits a minute in
   each running copy of the app, 10 by default.
+- `source` tells the page a link opens which link that was, as [The page a link opens](#the-page-a-link-opens)
+  describes. Off by default.
 
 ## Ownership
 
@@ -191,12 +206,80 @@ reader gets them, with names and no user ids, and who reacted shows only where i
 ## Clicks
 
 - Each `GET` of a link adds one to `clicks` and sets `lastClickedAt`, in one `incrementOne` statement, so clicks at the
-  same moment all count. `HEAD` requests don't count.
+  same moment all count. It writes a `shortLinkClick` row in the same batch, so the counter and the rows agree. `HEAD`
+  requests don't count.
 - The click is written after the response, through the route's `waitUntil`. Without the platform's `waitUntil`, the
   response waits for it. A failed write goes to the app's `onError` and doesn't change the redirect.
 - Every `GET` counts, including link previews that chat apps fetch.
+- A link that grants access, opened on a host whose cookie wouldn't reach the record, sends the visitor on to a host
+  where it does, as [Opening a link](#opening-a-link) describes. Only that second host counts the click, so the visit
+  counts once.
+- Clicks follow their link. Removing it, alone, with `removeSubject` or with `removeOwner`, removes its clicks through
+  the foreign key, in the same statement. That needs a database that enforces foreign keys, as D1, PostgreSQL and
+  MySQL's InnoDB do, and SQLite does with `PRAGMA foreign_keys = ON`. Elsewhere, a removed link's clicks stay behind,
+  though nothing reads them, since link ids aren't reused. A link stays in the organization it was made in when its
+  record moves, and its clicks stay with it. A link removed while its click is being written fails the click row's
+  foreign key, and that failed write goes to `onError` like any other.
 - The events an open emits, such as `link.clicked`, are written in the same batch as the click, so a click and its
   events commit together.
+
+### Clicks over time
+
+Since 2011, every IANA time zone's offset has been a whole number of 15 minutes, such as Kathmandu's 5:45, and has
+changed only at the edge of a 15-minute slot, without stepping the date back. So each click's `slot` falls on one day in
+every zone, and a day's clicks are the sum of its slots' counts. Before 2011 some zones broke this, such as St. John's,
+whose clocks went back from 00:01 to 23:01 the day before until November 2010, so ranges start in 2011 at the earliest.
+
+Both queries take a range of calendar days, `from` and `to` as `YYYY-MM-DD`, both included, up to 366 days, from
+`2011-01-01` to `9998-12-31`, in an IANA `timeZone`, `UTC` by default. Offsets such as `+05:30` aren't taken as zones. A
+range starts at the first moment of `from` in the zone and ends at the first moment after `to`. The days come from
+date-fns and `@date-fns/tz`. A day starts at the earlier of its midnight and the moment after the previous day ends, of
+those that fall on it: date-fns reads a midnight that happens twice, as in Havana each November, as the second, and a
+23:59 the clocks skip, as in Nuuk each March, as the moment after the jump. Days with a change of offset are shorter or
+longer than 24 hours, and a day a zone skipped, such as 30 December 2011 in Samoa, has no clicks.
+
+- `clicksByDay({ id, from, to, timeZone? })` counts one link's clicks on each day: one `countGroups` query by `slot`,
+  which returns at most one group per 15 minutes, however many clicks there were. It returns `{ days, total }`, with
+  every day of the range in `days` as `{ date, clicks }`, days without clicks included.
+- `clickTotals({ ids, from, to, timeZone? })` counts up to 50 links' clicks over the range, such as a page of `list` or
+  a dashboard's top links: one read for the links and one `countGroups` query by `linkId`, each 90 to a query. It
+  returns `{ links, total }`, with `links` as `{ id, clicks }` in the order asked. Ids of no link and links the caller
+  doesn't manage are left out alike, so the answer doesn't tell them apart.
+
+Both are actions with the permissions of `get`: a link's managers, and trusted server code. They take links by their
+`id`, as `recordClicks` does, since an id names one link however its code is shared. Lifetime counts are each link's
+`clicks`, and `list({ sort: "clicks" })` lists the most opened links first.
+
+### Recorded clicks
+
+`recordClicks({ id, at })`, server only, records up to 500 clicks at given times, such as a demo's history. It writes
+their rows, adds them to `clicks`, and sets `lastClickedAt` to the latest of them and the link's last click, in one
+batch, so a seeded link's counter, last click and chart agree. The rows take about 20 statements at most, well under
+D1's limit of queries per invocation. It refuses times later than now or before 2011, and links the caller doesn't
+manage, including one removed while the batch runs, and returns the link. Where foreign keys aren't enforced, such a
+batch writes the rows anyway, and they're deleted again before `NOT_FOUND`. It reads the link's last click before the
+batch, so a live click in between can leave `lastClickedAt` at the latest recorded time rather than that click's.
+
+## The page a link opens
+
+`source: { param, urls?, grants? }` adds the link's code to the address it redirects to, as the query parameter `param`,
+such as `/book/intro?via=intro-linkedin`. The page reads it from its own address, so an app can record where a visit
+came from, such as a booking's source. A query parameter reaches the page on whatever host it's on. A cookie set on the
+link's host wouldn't, such as when the page is on an organization's domain and the link on the app's host.
+
+- `param` is 1 to 64 letters, digits, `_`, `-` and `.`. It replaces a parameter of that name already in the address, and
+  keeps the rest of the query as it was written, without encoding it again, since servers differ in how they read `+`,
+  `;` and names without values. The fragment stays too.
+- Links to records carry it, since their pages are where the app's `url` says.
+- Links to web addresses carry it only where `urls({ url })` returns `true`, such as the app's own sites, or everywhere
+  with `urls: true`. By default they don't, so codes don't reach other sites. Only `http` and `https` addresses carry
+  it.
+- A link that grants access carries it only with `grants: true`. Its code is all it takes to see the record, so the code
+  would show in the page's address, the browser's history, the page's server logs and any analytics or error reporting
+  on the page. An app that turns it on can keep the code, such as in a cookie of its own, and redirect to the address
+  without it.
+- When a link sends the visitor on to another host, as a link that grants access can, that hop carries no code. The link
+  on the next host adds it.
 
 ## Opening a link
 
@@ -208,11 +291,11 @@ reader gets them, with names and no user ids, and who reacted shows only where i
 3. A link that doesn't exist, is turned off, has expired, or isn't one the host opens gets `notFound`.
 4. A record link's target is its subject type's `url`, for a subject type the feature still has. A URL link's is its
    URL.
-5. Answers `302 Found` with the target as `Location` and `Cache-Control: private, no-store`, so turning a link off or
-   changing it takes effect at once. A link that grants access also sets the cookie. With `hosts`, when that cookie
-   couldn't reach the record from this host, it answers `302 Found` to the same link where the cookie does reach it
-   instead, without the cookie or a click: on `baseUrl` when the cookie reaches the record from there, and on the
-   record's host otherwise.
+5. Answers `302 Found` with the target as `Location`, with the code added when `source` says so, and
+   `Cache-Control: private, no-store`, so turning a link off or changing it takes effect at once. A link that grants
+   access also sets the cookie. With `hosts`, when that cookie couldn't reach the record from this host, it answers
+   `302 Found` to the same link where the cookie does reach it instead, without the cookie or a click: on `baseUrl` when
+   the cookie reaches the record from there, and on the record's host otherwise.
 6. Records the click and writes the open's events after the response.
 
 ## Expiry and turning a link off
@@ -230,10 +313,13 @@ reader gets them, with names and no user ids, and who reacted shows only where i
 - `create({ target, code?, owner?, grantsView?, expiresAt? })`, where `target` is `{ url }` or
   `{ subjectType, subjectId }`, returns the new link.
 - `get({ code })` returns one link.
-- `list({ subjectType?, subjectId?, owner?, cursor?, limit? })` pages through links newest first, 20 by default, up to
-  50: a record's links, or every link, that the caller manages. Those are the links made in their current organization
-  that they manage, and their own made outside any, such as before they joined one. `owner` narrows it to the caller's
-  own, `user`, or their organization's, `org`.
+- `list({ subjectType?, subjectId?, owner?, sort?, cursor?, limit? })` pages through links newest first, 20 by default,
+  up to 50: a record's links, or every link, that the caller manages. Those are the links made in their current
+  organization that they manage, and their own made outside any, such as before they joined one. `owner` narrows it to
+  the caller's own, `user`, or their organization's, `org`. `sort: "clicks"` lists the most opened first, then the
+  newest, such as for top links. Clicks keep coming while someone pages, so a link can move between pages, and a cursor
+  works only with the order it came from. No index covers this order, so the database sorts the caller's links for each
+  page, which suits the hundreds of links an organization has, not millions.
 - `update({ code, url?, grantsView?, enabled?, expiresAt? })` changes a link and returns it. `grantsView` only takes
   `false`.
 - `remove({ code })` removes a link and returns `{ removed }`.
@@ -241,6 +327,10 @@ reader gets them, with names and no user ids, and who reacted shows only where i
   `{ removed }`.
 - `removeOwner({ owner: { type, id } })`, server only, removes a person's or an organization's links in one statement
   and returns `{ removed }`.
+- `clicksByDay({ id, from, to, timeZone? })` returns `{ days, total }`, and `clickTotals({ ids, from, to, timeZone? })`
+  returns `{ links, total }`, as [Clicks over time](#clicks-over-time) describes.
+- `recordClicks({ id, at })`, server only, records clicks at given times and returns the link, as
+  [Recorded clicks](#recorded-clicks) describes.
 
 Each link comes back as a `ShortLink`: its `code`, its `shortUrl`, its `owner` as `{ type, id }`, `orgId`, `createdBy`,
 its `target`, `grantsView`, `enabled`, `expiresAt`, `clicks`, `lastClickedAt`, `createdAt` and `updatedAt`. `shortUrl`
@@ -321,9 +411,9 @@ Events nobody subscribes to aren't written, as with every feature.
 Removing a record doesn't remove its links by itself. When a record is deleted, server code calls
 `app.api.shortLinks.removeSubject({ subjectType, subjectId })`, and when a person or an organization leaves the app,
 `removeOwner`. Each removes every matching link with one `deleteMany`, without a page per call, since links emit one
-event for the whole removal rather than one per link. The delete and its event are written in one batch, so neither
-happens without the other. A record link whose record is gone, before the cleanup runs, still redirects; the app's own
-page answers for the missing record.
+event for the whole removal rather than one per link. The links' clicks go with them, through the foreign key. The
+delete and its event are written in one batch, so neither happens without the other. A record link whose record is gone,
+before the cleanup runs, still redirects; the app's own page answers for the missing record.
 
 ## Organizations' domains
 

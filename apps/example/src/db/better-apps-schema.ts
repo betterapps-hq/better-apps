@@ -112,6 +112,7 @@ export const shortLink = sqliteTable(
     grantsView: integer("grants_view", { mode: "boolean" }).default(false).notNull(),
     enabled: integer("enabled", { mode: "boolean" }).default(true).notNull(),
     expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+    expiryToken: text("expiry_token"),
     clicks: integer("clicks").default(0).notNull(),
     lastClickedAt: integer("last_clicked_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
@@ -122,6 +123,19 @@ export const shortLink = sqliteTable(
     index("short_link_by_org").on(table.orgId, table.createdAt),
     index("short_link_by_subject").on(table.subjectType, table.subjectId, table.createdAt)
   ]
+)
+
+export const shortLinkClick = sqliteTable(
+  "short_link_click",
+  {
+    id: text("id").primaryKey(),
+    linkId: text("link_id")
+      .notNull()
+      .references(() => shortLink.id, { onDelete: "cascade" }),
+    clickedAt: integer("clicked_at", { mode: "timestamp_ms" }).notNull(),
+    slot: integer("slot", { mode: "timestamp_ms" }).notNull()
+  },
+  (table) => [index("short_link_click_by_link").on(table.linkId, table.slot)]
 )
 
 export const domain = sqliteTable(
@@ -249,6 +263,17 @@ export const commentRelations = relations(comment, ({ one }) => ({
   commentThread: one(commentThread, {
     fields: [comment.threadId],
     references: [commentThread.id]
+  })
+}))
+
+export const shortLinkRelations = relations(shortLink, ({ many }) => ({
+  shortLinkClicks: many(shortLinkClick)
+}))
+
+export const shortLinkClickRelations = relations(shortLinkClick, ({ one }) => ({
+  shortLink: one(shortLink, {
+    fields: [shortLinkClick.linkId],
+    references: [shortLink.id]
   })
 }))
 

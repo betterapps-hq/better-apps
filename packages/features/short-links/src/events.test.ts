@@ -129,6 +129,8 @@ describe("link.clicked", () => {
       expect.objectContaining({ host: "app.test", outcome: "granted", forwardedTo: null })
     ])
     expect((await t.api.get({ code: link.code }, t.as("ada"))).clicks).toBe(1)
+    // Only the counted open writes a click row, so the rows match the count.
+    expect(t.database.sqlite.prepare(`SELECT "linkId" FROM "shortLinkClick"`).all()).toHaveLength(1)
   })
 })
 
@@ -241,6 +243,10 @@ describe("link.milestone", () => {
       await openOn(t, "app.test", link.code)
     }
     expect(dataOf(t, "link.milestone").map((data) => (data as { clicks: number }).clicks)).toEqual([1, 10])
+    // Clicks server code records, such as a demo's history, are imports, so they reach no milestone.
+    const seeded = await t.api.create({ target: docs }, t.as("ada"))
+    await t.api.recordClicks({ id: seeded.id, at: [new Date(Date.now() - hour)] })
+    expect(t.events("link.milestone")).toHaveLength(2)
 
     const none = setup({ events: { milestones: [] } })
     const quiet = await none.api.create({ target: docs }, none.as("ada"))
