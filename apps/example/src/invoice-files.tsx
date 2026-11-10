@@ -2,12 +2,11 @@ import {
   useAttachments,
   useAttachmentsClient,
   useAttachmentSettings,
-  useDraftAttachments,
-  useUpload,
   type AttachedFile,
-  type AttachmentSettings,
-  type Upload
+  type AttachmentSettings
 } from "@better-apps/attachments/react"
+import { isUnderWay, type FileInfo } from "@better-apps/uploadcn"
+import { useAttachmentsUploader, useDraftUploader } from "@better-apps/uploadcn/react"
 import {
   Attachment,
   AttachmentAction,
@@ -25,6 +24,8 @@ import {
   Progress,
   Spinner
 } from "@buildkitgg/shadcn-baseui-kit"
+import type { Uploader, UploadItem, UploaderState, UploadStatus } from "@uploadcn/core"
+import { Upload, useUploadContext, useUploadItem, useUploadSelector, type UploadMessages } from "@uploadcn/react"
 import {
   ArrowDownIcon,
   ArrowUpIcon,
@@ -33,13 +34,23 @@ import {
   FileIcon,
   FileTextIcon,
   PaperclipIcon,
+  RotateCwIcon,
   Trash2Icon,
   TriangleAlertIcon,
   XIcon
 } from "lucide-react"
-import { useCallback, useEffect, useId, useRef, useState, type RefObject } from "react"
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ComponentProps,
+  type DragEvent,
+  type RefObject
+} from "react"
 import type { AttachmentTypes } from "./app-types"
-import { formatSize, plural } from "./format"
+import { formatSize } from "./format"
 import { modals } from "./ui"
 import { useViewer } from "./viewer"
 
@@ -103,62 +114,225 @@ function useAnnouncer() {
   return [message, announce] as const
 }
 
-/** Says how many of the picked files uploaded. Failures say so themselves, in an alert beside the file. */
-function uploadedMessage(picked: readonly File[], results: readonly PromiseSettledResult<unknown>[]) {
-  const uploaded = results.filter((result) => result.status === "fulfilled").length
-  if (uploaded === 0) {
-    return null
+/** Ends a message with a full stop, as UploadCN's own messages don't. */
+const sentence = (text: string) => (/[.!?]$/.test(text) ? text : `${text}.`)
+
+/** Says nothing, for what `useUploadAnnouncements` says instead. */
+const silent = () => ""
+
+/**
+ * UploadCN's labels in the app's voice. What happens to uploads is said by `useUploadAnnouncements`, so UploadCN's own
+ * announcements are silent.
+ */
+const uploadMessages: Partial<UploadMessages> = {
+  added: silent,
+  uploaded: silent,
+  failed: silent,
+  rejected: silent,
+  cancelled: silent,
+  remove: (name) => `Remove ${name}`,
+  cancel: (name) => `Stop uploading ${name}`,
+  retry: (name) => `Try uploading ${name} again`,
+  progress: (name) => `Uploading ${name}`
+}
+
+/**
+ * Says what happened to uploads through `announce`, gathering what happens at once into one message. UploadCN's own
+ * announcer says each event over the last, so of several files picked together only the last would be heard, and it
+ * doesn't say the same words twice, such as a second failure. Files refused as they're added aren't counted as
+ * uploading. Its own checks, such as a file that's too large, keep UploadCN's wording, and the server's refusals keep
+ * attachments'.
+ */
+function useUploadAnnouncements(uploader: Uploader<FileInfo>, announce: (text: string) => void) {
+  useEffect(() => {
+    let added = new Set<string>()
+    let said: string[] = []
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const flush = () => {
+      const { items } = uploader.getState()
+      const starting = items.filter((item) => added.has(item.id) && item.status !== "rejected").length
+      const counted = starting === 1 ? "Uploading 1 file." : `Uploading ${starting} files.`
+      const text = [...(starting > 0 ? [counted] : []), ...said].join(" ")
+      added = new Set()
+      said = []
+      if (text) {
+        announce(text)
+      }
+    }
+    // Refusals of files just added come a moment after them, once UploadCN has checked each.
+    const soon = () => {
+      clearTimeout(timer)
+      timer = setTimeout(flush, 150)
+    }
+    const say = (text: string) => {
+      said.push(text)
+      soon()
+    }
+    const failed = (item: UploadItem, reason: string) => say(`${item.name} couldn’t upload. ${sentence(reason)}`)
+    const listeners = [
+      uploader.on("add", ({ items }) => {
+        for (const item of items) {
+          added.add(item.id)
+        }
+        soon()
+      }),
+      uploader.on("success", ({ item }) => say(`${item.name} uploaded.`)),
+      uploader.on("error", ({ item, error }) => failed(item, error.message)),
+      uploader.on("reject", ({ item }) => failed(item, item.issues[0]?.message ?? "It isn’t allowed here")),
+      uploader.on("cancel", ({ item }) => say(`Stopped uploading ${item.name}.`))
+    ]
+    return () => {
+      clearTimeout(timer)
+      for (const off of listeners) {
+        off()
+      }
+    }
+  }, [uploader, announce])
+}
+
+/**
+ * What every upload root here takes. A root says it's busy while files upload, and screen readers may hold back what a
+ * live region inside a busy element says, so these never do. Each upload in a list says it's busy itself. A root with
+ * one place left would take a single file and replace what's queued, so these always take several, and UploadCN
+ * refuses those past the limit.
+ */
+const rootProps = { messages: uploadMessages, "aria-busy": false, multiple: true } as const
+
+/** Uploads that take one of a record's places: all but those refused or stopped. */
+const placesTaken = (state: UploaderState<FileInfo>) =>
+  state.items.filter((item) => item.status !== "rejected" && item.status !== "cancelled").length
+
+const cardStates = {
+  idle: "idle",
+  validating: "processing",
+  queued: "uploading",
+  uploading: "uploading",
+  paused: "idle",
+  processing: "processing",
+  scanning: "processing",
+  success: "done",
+  error: "error",
+  rejected: "error",
+  cancelled: "idle"
+} as const satisfies Record<UploadStatus, string>
+
+/** Whether all of an upload's bytes went, so the server is checking them. */
+const checking = (item: UploadItem) => item.status === "uploading" && item.progress.loaded >= item.size
+
+/** Where an upload stands, in words. */
+function progressOf(item: UploadItem) {
+  switch (item.status) {
+    case "error":
+    case "rejected":
+      return "Couldn’t upload"
+    case "success":
+      return `${kindOf(item.type)}, ${formatSize(item.size)}`
+    case "cancelled":
+      return "Stopped"
+    case "paused":
+      return "Waiting for a connection"
+    case "queued":
+      return item.retryAt === null ? "Waiting to upload" : "Trying again soon"
+    case "uploading":
+      return checking(item) ? "Checking the file" : `${formatSize(item.progress.loaded)} of ${formatSize(item.size)}`
+    default:
+      return "Checking the file"
   }
-  return picked.length === 1 ? `${picked[0]?.name} uploaded` : `${plural(uploaded, "file", "files")} uploaded`
 }
 
-const uploadingMessage = (picked: readonly File[]) =>
-  picked.length === 1 ? `Uploading ${picked[0]?.name}` : `Uploading ${picked.length} files`
-
-interface FilePickerProps {
-  label: string
-  settings: AttachmentSettings | null
-  buttonRef: RefObject<HTMLButtonElement | null>
-  /** Shows only the icon, with the label as its accessible name. */
-  iconOnly?: boolean
-  /** Keeps the button from opening the picker, such as on a full invoice. It stays focusable. */
-  disabled?: boolean
-  describedBy?: string
-  onPick(files: File[]): void
+/** An upload's icon: a warning when it failed, its kind once it stopped, and a spinner while it's under way. */
+function UploadIcon({ item }: { item: UploadItem }) {
+  if (item.status === "error" || item.status === "rejected") {
+    return <TriangleAlertIcon />
+  }
+  if (!isUnderWay(item)) {
+    return item.type.startsWith("image/") ? <FileIcon /> : <FileTextIcon />
+  }
+  return <Spinner />
 }
 
-/** A button that opens the browser's file picker, limited to the types the subject type takes. */
-function FilePicker({ label, settings, buttonRef, iconOnly, disabled, describedBy, onPick }: FilePickerProps) {
-  const input = useRef<HTMLInputElement>(null)
+const removeIdOf = (itemId: string) => `upload-${itemId}-remove`
+
+interface UploadRowProps {
+  /** What the remove button says it does, such as "Stop uploading notes.txt". */
+  removeLabel(item: UploadItem): string
+  onRemove(item: UploadItem): void
+  /** The most files the record holds, said beside UploadCN's count of places left when it refuses one. */
+  maxFiles: number | null
+  /** What holds the files, such as "This invoice". */
+  holder: string
+}
+
+/** Adds the record's own limit to UploadCN's "You can add up to 2 files", which counts only the places left. */
+function limitNote(item: UploadItem, { maxFiles, holder }: Pick<UploadRowProps, "maxFiles" | "holder">) {
+  const tooMany = item.issues.some((issue) => issue.code === "too-many-files")
+  return tooMany && maxFiles !== null ? ` ${holder} holds up to ${maxFiles} files.` : ""
+}
+
+/** An upload in a list: its progress or why it failed, and buttons to try it again or let it go. */
+function UploadRow({ removeLabel, onRemove, maxFiles, holder }: UploadRowProps) {
+  const item = useUploadItem<FileInfo>()
   return (
     <>
-      <input
-        ref={input}
-        type="file"
-        multiple
-        hidden
-        accept={settings?.contentTypes?.join(",")}
-        onChange={(event) => {
-          const picked = [...(event.currentTarget.files ?? [])]
-          // Picking the same file again still counts as a change.
-          event.currentTarget.value = ""
-          onPick(picked)
-        }}
+      <Attachment size="sm" className="file-card" state={cardStates[item.status]}>
+        <AttachmentMedia>
+          <UploadIcon item={item} />
+        </AttachmentMedia>
+        <AttachmentContent>
+          <AttachmentTitle>
+            <Upload.Name />
+          </AttachmentTitle>
+          <AttachmentDescription>{progressOf(item)}</AttachmentDescription>
+          {item.status === "uploading" && !checking(item) && (
+            <Upload.Progress
+              render={(props, { percent }) => (
+                <Progress value={percent} aria-label={props["aria-label"] as string} className="upload-progress" />
+              )}
+            />
+          )}
+        </AttachmentContent>
+        <AttachmentActions>
+          <Upload.Retry
+            render={<AttachmentAction />}
+            // The button goes once the upload starts again, so focus moves first to the one that stays.
+            onClick={() => document.getElementById(removeIdOf(item.id))?.focus()}
+          >
+            <RotateCwIcon />
+          </Upload.Retry>
+          <Upload.Remove
+            render={<AttachmentAction id={removeIdOf(item.id)} />}
+            aria-label={removeLabel(item)}
+            onClick={() => onRemove(item)}
+          >
+            <XIcon />
+          </Upload.Remove>
+        </AttachmentActions>
+      </Attachment>
+      <Upload.Error
+        render={(props) => (
+          <p {...(props as ComponentProps<"p">)} className="form-error">
+            {item.name} couldn’t upload. {sentence(String(props.children))}
+            {limitNote(item, { maxFiles, holder })}
+          </p>
+        )}
       />
-      <Button
-        ref={buttonRef}
-        type="button"
-        variant={iconOnly ? "ghost" : "outline"}
-        size={iconOnly ? "icon-sm" : "sm"}
-        aria-label={iconOnly ? label : undefined}
-        aria-describedby={describedBy}
-        aria-disabled={disabled}
-        onClick={() => !disabled && input.current?.click()}
-      >
-        <PaperclipIcon />
-        {!iconOnly && label}
-      </Button>
     </>
+  )
+}
+
+/** The uploads in the nearest `Upload.Root`, once there are any. */
+function UploadRows({ label, ...row }: UploadRowProps & { label: string }) {
+  const { uploader } = useUploadContext()
+  const any = useUploadSelector(uploader, (state) => state.items.length > 0)
+  if (!any) {
+    return null
+  }
+  return (
+    <Upload.List className="file-list" aria-label={label}>
+      <Upload.Item>
+        <UploadRow {...row} />
+      </Upload.Item>
+    </Upload.List>
   )
 }
 
@@ -181,78 +355,6 @@ function FileLink({ file }: { file: AttachedFile }) {
       {file.name}
       <span className="visually-hidden">, opens in a new tab</span>
     </a>
-  )
-}
-
-const cardStates = {
-  uploading: "uploading",
-  finishing: "processing",
-  done: "done",
-  error: "error",
-  cancelled: "idle"
-} as const
-
-/** Where an upload stands, in words. */
-function progressOf(upload: Upload) {
-  if (upload.state === "error") {
-    return "Couldn’t upload"
-  }
-  if (upload.state === "finishing") {
-    return "Checking the file"
-  }
-  if (upload.state === "done") {
-    return `${kindOf(upload.contentType)}, ${formatSize(upload.size)}`
-  }
-  return `${formatSize(upload.loaded)} of ${formatSize(upload.size)}`
-}
-
-/** An upload's icon: a warning when it failed, its kind once it's done, and a spinner until then. */
-function UploadIcon({ upload }: { upload: Upload }) {
-  if (upload.state === "error") {
-    return <TriangleAlertIcon />
-  }
-  if (upload.state === "done") {
-    return upload.contentType.startsWith("image/") ? <FileIcon /> : <FileTextIcon />
-  }
-  return <Spinner />
-}
-
-interface UploadRowProps {
-  upload: Upload
-  /** What the button says it does, such as "Remove" for a draft. */
-  stopLabel: string
-  onStop(upload: Upload): void
-}
-
-/** An upload under way or one that failed: its progress or why, and a button to stop it or let it go. */
-function UploadRow({ upload, stopLabel, onStop }: UploadRowProps) {
-  const failed = upload.state === "error"
-  const percent = upload.size === 0 ? 100 : Math.round((upload.loaded / upload.size) * 100)
-  return (
-    <>
-      <Attachment size="sm" className="file-card" state={cardStates[upload.state]}>
-        <AttachmentMedia>
-          <UploadIcon upload={upload} />
-        </AttachmentMedia>
-        <AttachmentContent>
-          <AttachmentTitle>{upload.name}</AttachmentTitle>
-          <AttachmentDescription>{progressOf(upload)}</AttachmentDescription>
-          {upload.state === "uploading" && (
-            <Progress value={percent} aria-label={`Uploading ${upload.name}`} className="upload-progress" />
-          )}
-        </AttachmentContent>
-        <AttachmentActions>
-          <AttachmentAction aria-label={`${stopLabel} ${upload.name}`} onClick={() => onStop(upload)}>
-            <XIcon />
-          </AttachmentAction>
-        </AttachmentActions>
-      </Attachment>
-      {failed && (
-        <p className="form-error" role="alert">
-          {upload.name} couldn’t upload. {upload.error?.message ?? "Try again in a moment."}
-        </p>
-      )}
-    </>
   )
 }
 
@@ -320,49 +422,61 @@ function FileCard({ file, index, count, canDelete, onMove, onDelete }: FileCardP
   )
 }
 
+/** Why a full invoice takes no more files, or `null` when it takes more. Failed and waiting uploads keep their places. */
+function fullHint(full: boolean, count: number, maxFiles: number | null) {
+  if (!full) {
+    return null
+  }
+  if (count >= (maxFiles ?? 0)) {
+    return `This invoice has ${maxFiles} files, the most it can hold.`
+  }
+  return "Uploads take this invoice’s last places. Remove one to add another file."
+}
+
+/** Refuses a drag of files, so a full invoice takes no more. */
+function refuseDrop(event: DragEvent) {
+  event.preventDefault()
+  event.dataTransfer.dropEffect = "none"
+}
+
 /**
  * The invoice's files, in the invoice's order, with their uploads' progress. Anyone who can see the invoice adds and
- * reorders files. Whoever added a file can delete it, and so can the workspace owner.
+ * reorders files, with the button or by dropping them on the panel. Whoever added a file can delete it, and so can the
+ * workspace owner.
  */
 export function FilesPanel({ invoiceId }: { invoiceId: string }) {
   const viewer = useViewer()
   const subject = { subjectType: "invoice", subjectId: invoiceId } as const
   const attachments = useAttachmentsClient()
   const { files, state, error, reorder, detach, writeError } = useAttachments<AttachmentTypes>(subject)
-  const { upload, uploads, cancel, dismiss } = useUpload<AttachmentTypes>(subject)
+  const uploader = useAttachmentsUploader<AttachmentTypes>(subject)
   const { settings } = useAttachmentSettings<AttachmentTypes>("invoice")
   const [message, announce] = useAnnouncer()
+  useUploadAnnouncements(uploader, announce)
   const addRef = useRef<HTMLButtonElement>(null)
   const hintId = useId()
-  const sending = uploads.filter((item) => item.state === "uploading" || item.state === "finishing").length
+  // A finished upload leaves the queue once it's in the list, so the two never count a file twice.
+  const uploading = useUploadSelector(uploader, placesTaken)
+  const empty = useUploadSelector(uploader, (queue) => queue.items.length === 0)
   const maxFiles = settings?.maxFiles ?? null
-  const full = maxFiles !== null && files.length + sending >= maxFiles
+  const full = maxFiles !== null && files.length + uploading >= maxFiles
 
-  // A finished upload shows in the list, so its progress goes.
-  useEffect(() => {
-    const finished = uploads.filter((item) => item.state === "done" || item.state === "cancelled")
-    if (finished.length > 0) {
-      dismiss(finished.map((item) => item.id))
-    }
-  }, [uploads, dismiss])
+  // A finished upload leaves for the invoice's files, so focus on its row moves to the button that stays.
+  useEffect(
+    () =>
+      uploader.on("success", ({ item }) => {
+        if (document.getElementById(removeIdOf(item.id))?.closest("li")?.contains(document.activeElement)) {
+          addRef.current?.focus()
+        }
+      }),
+    [uploader]
+  )
 
-  async function add(picked: File[]) {
-    if (picked.length === 0) {
-      return
-    }
-    announce(uploadingMessage(picked))
-    const done = uploadedMessage(picked, await upload(picked))
-    if (done) {
-      announce(done)
-    }
-  }
-
-  function stop(item: Upload) {
-    if (item.state === "uploading" || item.state === "finishing") {
-      cancel(item.id)
+  function letGo(item: UploadItem) {
+    if (isUnderWay(item)) {
       announce(`Stopped uploading ${item.name}`)
     }
-    dismiss([item.id])
+    // The upload's buttons go with it, so focus moves to what stays.
     addRef.current?.focus()
   }
 
@@ -395,107 +509,122 @@ export function FilesPanel({ invoiceId }: { invoiceId: string }) {
   }
 
   return (
-    <section className="files-panel" aria-labelledby="files-title">
-      <div className="panel-head">
-        <h2 id="files-title">Files</h2>
-        <FilePicker
-          label="Add files"
-          settings={settings}
-          buttonRef={addRef}
-          disabled={full}
-          describedBy={hintId}
-          onPick={(picked) => void add(picked)}
-        />
-      </div>
-      <p id={hintId} className="panel-hint">
-        {full ? `This invoice has ${maxFiles} files, the most it can hold.` : limitsOf(settings)}
-      </p>
-      <output className="visually-hidden">{message}</output>
-      {writeError && (
-        <p className="form-error" role="alert">
-          {writeError.message}
-        </p>
-      )}
-      {uploads.length > 0 && (
-        <ul className="file-list" aria-label="Uploads">
-          {uploads.map((item) => (
-            <li key={item.id}>
-              <UploadRow
-                upload={item}
-                stopLabel={item.state === "error" ? "Dismiss" : "Stop uploading"}
-                onStop={stop}
-              />
-            </li>
-          ))}
-        </ul>
-      )}
-      {state === "loading" && files.length === 0 && (
-        <p className="muted">
-          <Spinner /> Loading files
-        </p>
-      )}
-      {state === "error" && (
-        <div className="stack" role="alert">
-          <p className="form-error">Files couldn’t load. {error?.message}</p>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void attachments.load("invoice", [invoiceId]).catch(() => undefined)}
+    <Upload.Root
+      uploader={uploader}
+      {...rootProps}
+      render={<section className="files-panel" aria-labelledby="files-title" />}
+    >
+      <Upload.Dropzone
+        clickable={false}
+        className="files-drop"
+        onDragEnter={full ? refuseDrop : undefined}
+        onDragOver={full ? refuseDrop : undefined}
+        onDrop={full ? refuseDrop : undefined}
+      >
+        <div className="panel-head">
+          <h2 id="files-title">Files</h2>
+          <Upload.Trigger
+            render={<Button ref={addRef} variant="outline" size="sm" />}
+            aria-describedby={hintId}
+            // A full invoice keeps the button focusable, with the hint saying why it does nothing.
+            aria-disabled={full || undefined}
+            onClick={(event) => {
+              if (full) {
+                event.preventDefault()
+              }
+            }}
           >
-            Try again
-          </Button>
+            <PaperclipIcon />
+            Add files
+          </Upload.Trigger>
         </div>
-      )}
-      {state === "ready" && files.length === 0 && uploads.length === 0 && (
-        <p className="muted">No files yet. Add the signed contract, receipts or photos.</p>
-      )}
-      {files.length > 0 && (
-        <ul className="file-list" aria-label="Files on this invoice">
-          {files.map((file, index) => (
-            <li key={file.id}>
-              <FileCard
-                file={file}
-                index={index}
-                count={files.length}
-                canDelete={viewer !== null && (viewer.isOwner || file.attachedBy === viewer.id)}
-                onMove={(moved, by) => void move(moved, by)}
-                onDelete={(deleted) => void remove(deleted)}
-              />
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
+        <p id={hintId} className="panel-hint">
+          {fullHint(full, files.length, maxFiles) ?? limitsOf(settings)}
+        </p>
+        <output className="visually-hidden">{message}</output>
+        {writeError && (
+          <p className="form-error" role="alert">
+            {writeError.message}
+          </p>
+        )}
+        <UploadRows
+          label="Uploads"
+          maxFiles={maxFiles}
+          holder="This invoice"
+          removeLabel={(item) => (isUnderWay(item) ? `Stop uploading ${item.name}` : `Dismiss ${item.name}`)}
+          onRemove={letGo}
+        />
+        {state === "loading" && files.length === 0 && (
+          <p className="muted">
+            <Spinner /> Loading files
+          </p>
+        )}
+        {state === "error" && (
+          <div className="stack" role="alert">
+            <p className="form-error">Files couldn’t load. {error?.message}</p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void attachments.load("invoice", [invoiceId]).catch(() => undefined)}
+            >
+              Try again
+            </Button>
+          </div>
+        )}
+        {state === "ready" && files.length === 0 && empty && (
+          <p className="muted">No files yet. Add the signed contract, receipts or photos.</p>
+        )}
+        {files.length > 0 && (
+          <ul className="file-list" aria-label="Files on this invoice">
+            {files.map((file, index) => (
+              <li key={file.id}>
+                <FileCard
+                  file={file}
+                  index={index}
+                  count={files.length}
+                  canDelete={viewer !== null && (viewer.isOwner || file.attachedBy === viewer.id)}
+                  onMove={(moved, by) => void move(moved, by)}
+                  onDelete={(deleted) => void remove(deleted)}
+                />
+              </li>
+            ))}
+          </ul>
+        )}
+      </Upload.Dropzone>
+    </Upload.Root>
   )
 }
 
 /**
- * Files picked for a comment before it's posted. They upload at once, so posting doesn't wait, and attach once the
- * comment is saved.
+ * Files picked for a comment before it's posted. They upload at once as drafts, so posting doesn't wait, and attach once
+ * the comment is saved.
  */
 export function useCommentFiles() {
-  const drafts = useDraftAttachments<AttachmentTypes>(commentType)
+  const drafts = useDraftUploader<AttachmentTypes>(commentType)
   const { settings } = useAttachmentSettings<AttachmentTypes>(commentType)
   const [message, announce] = useAnnouncer()
-  const { add: start } = drafts
-  const add = useCallback(
-    async (picked: File[]) => {
-      if (picked.length === 0) {
-        return
-      }
-      announce(uploadingMessage(picked))
-      const done = uploadedMessage(picked, await start(picked))
-      if (done) {
-        announce(done)
-      }
-    },
-    [start, announce]
-  )
-  return { ...drafts, add, settings, message, announce }
+  useUploadAnnouncements(drafts.uploader, announce)
+  const count = useUploadSelector(drafts.uploader, (state) => state.items.length)
+  const taken = useUploadSelector(drafts.uploader, placesTaken)
+  const maxFiles = settings?.maxFiles ?? null
+  return { ...drafts, count, maxFiles, full: maxFiles !== null && taken >= maxFiles, message, announce }
 }
 
 /** What `useCommentFiles` returns. */
 export type CommentFiles = ReturnType<typeof useCommentFiles>
+
+interface CommentFormProps extends ComponentProps<"form"> {
+  files: CommentFiles
+}
+
+/** A comment box that takes files: a form that holds the file picker and announces its uploads. */
+export function CommentForm({ files, children, ...props }: CommentFormProps) {
+  return (
+    <Upload.Root uploader={files.uploader} {...rootProps} render={<form {...props} />}>
+      {children}
+    </Upload.Root>
+  )
+}
 
 interface AttachButtonProps {
   files: CommentFiles
@@ -504,17 +633,19 @@ interface AttachButtonProps {
 
 /** The paperclip button in a comment box. */
 export function AttachButton({ files, buttonRef }: AttachButtonProps) {
-  const maxFiles = files.settings?.maxFiles ?? null
-  const full = maxFiles !== null && files.uploads.length >= maxFiles
   return (
-    <FilePicker
-      label={full ? `Attach files, ${maxFiles} at most` : "Attach files"}
-      settings={files.settings}
-      buttonRef={buttonRef}
-      iconOnly
-      disabled={full}
-      onPick={(picked) => void files.add(picked)}
-    />
+    <Upload.Trigger
+      render={<Button ref={buttonRef} variant="ghost" size="icon-sm" />}
+      aria-label={files.full ? `Attach files, ${files.maxFiles} at most` : "Attach files"}
+      aria-disabled={files.full || undefined}
+      onClick={(event) => {
+        if (files.full) {
+          event.preventDefault()
+        }
+      }}
+    >
+      <PaperclipIcon />
+    </Upload.Trigger>
   )
 }
 
@@ -522,30 +653,30 @@ interface DraftFilesProps {
   files: CommentFiles
   /** Where focus goes once a file's remove button is gone. */
   returnFocus: RefObject<HTMLButtonElement | null>
+  /** The id of where focus goes when `returnFocus` goes too, such as a reply's paperclip once its last file is removed. */
+  fallbackFocusId?: string | undefined
 }
 
 /** A comment's files before it's posted, with each one's progress and a button to remove it. */
-export function DraftFiles({ files, returnFocus }: DraftFilesProps) {
+export function DraftFiles({ files, returnFocus, fallbackFocusId }: DraftFilesProps) {
   return (
     <>
       <output className="visually-hidden">{files.message}</output>
-      {files.uploads.length > 0 && (
-        <ul className="file-list" aria-label="Files to attach">
-          {files.uploads.map((item) => (
-            <li key={item.id}>
-              <UploadRow
-                upload={item}
-                stopLabel="Remove"
-                onStop={(stopped) => {
-                  files.remove(stopped.id)
-                  files.announce(`Removed ${stopped.name}`)
-                  returnFocus.current?.focus()
-                }}
-              />
-            </li>
-          ))}
-        </ul>
-      )}
+      <UploadRows
+        label="Files to attach"
+        maxFiles={files.maxFiles}
+        holder="A comment"
+        removeLabel={(item) => `Remove ${item.name}`}
+        onRemove={(item) => {
+          files.announce(`Removed ${item.name}`)
+          returnFocus.current?.focus()
+          requestAnimationFrame(() => {
+            if (!returnFocus.current?.isConnected && fallbackFocusId) {
+              document.getElementById(fallbackFocusId)?.focus()
+            }
+          })
+        }}
+      />
     </>
   )
 }

@@ -13,6 +13,7 @@ import {
   useUpdateAnchor,
   type Subject
 } from "@better-apps/comments/react"
+import type { DraftHandoff } from "@better-apps/uploadcn/react"
 import { AlertRegion } from "@buildkitgg/shadcn-alerts-manager"
 import {
   Avatar,
@@ -58,7 +59,7 @@ import { initials, SignInPrompt } from "./app-shell"
 import type { CommentTypes } from "./app-types"
 import { CommentReactions, RemoveReactionsMenu } from "./comment-reactions"
 import { formatTime, plural } from "./format"
-import { AttachButton, CommentFileList, DraftFiles, useCommentFiles, type CommentFiles } from "./invoice-files"
+import { AttachButton, CommentFileList, CommentForm, DraftFiles, useCommentFiles } from "./invoice-files"
 import { CommentText, emptyDraft, MentionTextarea, pickedName, toBody, toDraft, type Draft } from "./mention-textarea"
 import { alerts, modals } from "./ui"
 import { useViewer } from "./viewer"
@@ -108,9 +109,9 @@ function done(title: string) {
 }
 
 /** Attaches a posted comment's files. The comment stays when they can't be attached, and the alert says why. */
-async function attachTo(files: CommentFiles, commentId: string) {
+async function attachTo(picked: DraftHandoff, commentId: string) {
   try {
-    await files.attachTo(commentId)
+    await picked.attachTo(commentId)
   } catch (error) {
     reportError("The files couldn’t be attached", error)
   }
@@ -322,6 +323,8 @@ function Composer() {
       return
     }
     const anchor = target && root.current ? anchorOn(target.field, root.current) : null
+    // Files picked while the comment posts wait for the next one.
+    const picked = files.take()
     // The thread shows at once. If the server refuses it, it's removed again and the text comes back.
     const sent = draft
     setDraft(emptyDraft)
@@ -333,7 +336,7 @@ function Composer() {
       return
     }
     setTarget(null)
-    await attachTo(files, posted.comment.id)
+    await attachTo(picked, posted.comment.id)
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -342,7 +345,7 @@ function Composer() {
   }
 
   return (
-    <form className="composer" onSubmit={handleSubmit}>
+    <CommentForm files={files} className="composer" onSubmit={handleSubmit}>
       <label htmlFor={composerId} className="visually-hidden">
         {target ? `Comment on ${target.label}` : "Comment on the invoice"}
       </label>
@@ -398,7 +401,7 @@ function Composer() {
           </Button>
         </span>
       </div>
-    </form>
+    </CommentForm>
   )
 }
 
@@ -436,6 +439,7 @@ function ThreadCard({ thread, onGone }: ThreadCardProps) {
     if (!body || reply.status === "pending" || files.busy) {
       return
     }
+    const picked = files.take()
     const sent = draft
     setDraft(emptyDraft)
     let posted: Awaited<ReturnType<typeof reply.mutate>>
@@ -445,7 +449,7 @@ function ThreadCard({ thread, onGone }: ThreadCardProps) {
       setDraft(sent)
       return
     }
-    await attachTo(files, posted.comment.id)
+    await attachTo(picked, posted.comment.id)
   }
 
   async function changeStatus() {
@@ -660,7 +664,8 @@ function ThreadCard({ thread, onGone }: ThreadCardProps) {
         </p>
       )}
       {viewer && (
-        <form
+        <CommentForm
+          files={files}
           className="reply"
           onSubmit={(event) => {
             event.preventDefault()
@@ -681,8 +686,8 @@ function ThreadCard({ thread, onGone }: ThreadCardProps) {
             onDraftChange={setDraft}
             onSubmitShortcut={() => void submitReply()}
           />
-          <DraftFiles files={files} returnFocus={attachRef} />
-          {(draft.text.trim() !== "" || files.uploads.length > 0) && (
+          <DraftFiles files={files} returnFocus={attachRef} fallbackFocusId={replyId} />
+          {(draft.text.trim() !== "" || files.count > 0) && (
             <div className="reply-actions">
               <AttachButton files={files} buttonRef={attachRef} />
               {files.busy && <span className="composer-hint">Files are still uploading</span>}
@@ -702,7 +707,7 @@ function ThreadCard({ thread, onGone }: ThreadCardProps) {
               </Button>
             </div>
           )}
-        </form>
+        </CommentForm>
       )}
     </article>
   )

@@ -875,9 +875,16 @@ tr[data-field]:hover .comment-here {
   gap: 1.5rem;
 }
 
-.files-panel {
+/* The panel takes files dropped anywhere on it, outlined while they're dragged over. */
+.files-drop {
   display: grid;
   gap: 0.75rem;
+  border-radius: var(--radius);
+}
+
+.files-drop[data-dragging] {
+  outline: 2px dashed var(--ring);
+  outline-offset: 0.5rem;
 }
 
 .panel-head {

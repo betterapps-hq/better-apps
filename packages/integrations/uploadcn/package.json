@@ -1,0 +1,96 @@
+{
+  "name": "@better-apps/uploadcn",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Uploads files through Better Apps attachments with UploadCN's engine and React primitives, keeping attachments' rules.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=24"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "import": "./dist/react.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "pnpm build",
+    "test": "vp test run",
+    "test:coverage": "vp test run --coverage"
+  },
+  "peerDependencies": {
+    "@better-apps/attachments": "workspace:*",
+    "@better-apps/react": "workspace:*",
+    "@uploadcn/core": "^0.1.4",
+    "@uploadcn/react": "^0.1.4",
+    "better-apps": "workspace:*",
+    "react": "^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@better-apps/react": {
+      "optional": true
+    },
+    "@uploadcn/react": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@better-apps/attachments": "workspace:*",
+    "@better-apps/react": "workspace:*",
+    "@better-apps/testing": "workspace:*",
+    "@repo/typescript-config": "workspace:*",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "24.19.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@uploadcn/core": "0.1.4",
+    "@uploadcn/react": "0.1.4",
+    "@vitest/coverage-v8": "catalog:",
+    "better-apps": "workspace:*",
+    "drizzle-orm": "0.45.4",
+    "happy-dom": "^21.0.4",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/betterapps-hq/better-apps.git",
+    "directory": "packages/integrations/uploadcn"
+  },
+  "homepage": "https://github.com/betterapps-hq/better-apps/tree/main/packages/integrations/uploadcn#readme",
+  "bugs": {
+    "url": "https://github.com/betterapps-hq/better-apps/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "keywords": [
+    "better-apps",
+    "attachments",
+    "uploads",
+    "uploadcn",
+    "react"
+  ]
+}

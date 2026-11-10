@@ -149,7 +149,8 @@ const drafts = useDraftAttachments("comments.comment")
 - Uploads report `loaded` bytes as they go, through `XMLHttpRequest`, and `state`: `uploading`, `finishing`, `done`,
   `error` or `cancelled`. Announce them in the app, such as in a polite live region.
 - `prepareUpload(file, target)` and `finishUpload(prepared)` on the client are the steps around the bytes, for an engine
-  that sends them itself, such as [UploadCN](https://uploadcn.dev)'s.
+  that sends them itself. [`@better-apps/uploadcn`](../../integrations/uploadcn/README.md) uses them to upload with
+  [UploadCN](https://uploadcn.dev)'s engine and blocks.
 - `useAttachmentSettings(subjectType)` loads the limits, for a file input's `accept`. Once loaded, files they refuse
   fail at once, without a call.
 - `detach` and `reorder` show at once and roll back when the server refuses. `applyEvent` loads a record again for an

@@ -181,6 +181,107 @@ describe("the upload route", () => {
     expect(events("attachment.added")).toHaveLength(1)
     expect(events("file.uploaded")).toHaveLength(2)
   })
+
+  it("returns a file another finish put on its record before this one read the record's files", async () => {
+    let race: (() => Promise<unknown>) | null = null
+    const { api, as, send, count } = setup({
+      subjects: {
+        invoice: {
+          // Runs inside the finish, after it read the file and before it reads the record's files, so it finds the
+          // other finish's attachment and only returns the file.
+          canUpload: async () => {
+            const finish = race
+            race = null
+            await finish?.()
+            return true
+          },
+          contentTypes: ["text/plain"],
+          maxSize: 1000,
+          maxFiles: 3
+        }
+      }
+    })
+    const created = await api.createUpload({ ...inv1, name: "a.txt", contentType: "text/plain", size: 3 }, as("bob"))
+    await send(created.upload, "abc")
+    race = async () => api.completeUpload({ fileId: created.file.id }, as("bob"))
+    const result = await api.completeUpload({ fileId: created.file.id }, as("bob"))
+    expect(result).toMatchObject({ file: { id: created.file.id, status: "ready" }, attachment: null })
+    expect(count(attachmentModel)).toBe(1)
+  })
+
+  it("returns a file another finish put on its record just before this one wrote", async () => {
+    const { app, api, as, send, count, events } = setup()
+    const created = await api.createUpload({ ...inv1, name: "a.txt", contentType: "text/plain", size: 3 }, as("bob"))
+    await send(created.upload, "abc")
+    const batch = app.db.batch.bind(app.db)
+    let race: (() => Promise<unknown>) | undefined = async () =>
+      api.completeUpload({ fileId: created.file.id }, as("bob"))
+    // The other finish commits between this one's reads and its write, so this one's write conflicts.
+    app.db.batch = async (operations) => {
+      const run = race
+      race = undefined
+      await run?.()
+      return batch(operations)
+    }
+    const result = await api.completeUpload({ fileId: created.file.id }, as("bob"))
+    expect(result).toMatchObject({ file: { id: created.file.id, status: "ready" }, attachment: null })
+    expect(count(attachmentModel)).toBe(1)
+    expect(events("attachment.added")).toHaveLength(1)
+    expect(events("file.uploaded")).toHaveLength(1)
+  })
+
+  it("leaves a file a finish put on its record while it was being deleted, for taking off its record", async () => {
+    const { app, api, as, send, count, events } = setup()
+    const created = await api.createUpload({ ...inv1, name: "a.txt", contentType: "text/plain", size: 3 }, as("bob"))
+    await send(created.upload, "abc")
+    const update = app.db.update.bind(app.db)
+    let race: (() => Promise<unknown>) | undefined = async () =>
+      api.completeUpload({ fileId: created.file.id }, as("bob"))
+    // The finish commits after the delete read the file as pending, and before the delete wrote.
+    app.db.update = async (input) => {
+      const run = race
+      race = undefined
+      await run?.()
+      return update(input)
+    }
+    await expect(api.deleteFile({ fileId: created.file.id }, as("bob"))).rejects.toMatchObject({
+      code: "INVALID_INPUT"
+    })
+    app.db.update = update
+    expect(await api.getFile({ fileId: created.file.id }, as("bob"))).toMatchObject({ status: "ready" })
+    expect(count(attachmentModel)).toBe(1)
+    await api.detach({ ...inv1, fileId: created.file.id }, as("bob"))
+    expect(count(attachmentModel)).toBe(0)
+    expect(events("attachment.removed")).toHaveLength(1)
+  })
+
+  it("deletes a pending file before a finish under way can make it ready", async () => {
+    const { app, api, as, send, count, events } = setup()
+    const created = await api.createUpload({ ...inv1, name: "a.txt", contentType: "text/plain", size: 3 }, as("bob"))
+    await send(created.upload, "abc")
+    const batch = app.db.batch.bind(app.db)
+    let deleted: unknown
+    let race: (() => Promise<unknown>) | undefined = async () => {
+      deleted = await api.deleteFile({ fileId: created.file.id }, as("bob"))
+    }
+    // The delete takes the file between the finish's reads and its write.
+    app.db.batch = async (operations) => {
+      const run = race
+      race = undefined
+      await run?.()
+      return batch(operations)
+    }
+    await expect(api.completeUpload({ fileId: created.file.id }, as("bob"))).rejects.toMatchObject({
+      code: "NOT_FOUND"
+    })
+    expect(deleted).toEqual({ deleted: true })
+    // The finish's attachment went in with its batch and came back off, as for any finish that lost its file.
+    expect(count(attachmentModel)).toBe(0)
+    expect(events("attachment.removed").map((event) => (event.data as { reason: string }).reason)).toEqual([
+      "withdrawn"
+    ])
+    expect(events("file.uploaded")).toHaveLength(0)
+  })
 })
 
 describe("downloads", () => {
@@ -364,7 +465,7 @@ describe("drafts", () => {
     await expect(api.createUpload(draft, as("bob"))).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" })
     await api.createUpload(draft, as("cy"))
     // A deleted upload's address still takes bytes until it closes, so it counts until then.
-    await api.deleteFile({ fileId: pending.file.id }, as("bob"))
+    expect(await api.deleteFile({ fileId: pending.file.id }, as("bob"))).toEqual({ deleted: true })
     await expect(api.createUpload(draft, as("bob"))).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" })
     // Files a record keeps don't count once they're attached.
     await api.attach({ ...inv1, fileIds: [kept.file.id] }, as("bob"))

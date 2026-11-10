@@ -16,7 +16,7 @@ import { checkLimits, limits, settingsOf, type Config, type Settings } from "./c
 import { AttachmentsError } from "./errors.js"
 import type { AttachInput, DetachInput, ListFilesInput, ListOwnFilesInput, ReorderInput } from "./options.js"
 import { byPosition, eventFile, present, presentAttached, type AttachedFile, type FileInfo } from "./present.js"
-import { deleteFiles, filesById, removeLinks, retried } from "./removals.js"
+import { deleteFiles, filesById, purge, removeLinks, retried } from "./removals.js"
 import { attachmentModel, fileModel, type Attachment, type AttachmentFile } from "./schema.js"
 
 const fileNotFound = () => new AttachmentsError("NOT_FOUND", "That file doesn't exist, or you can't see it.")
@@ -403,6 +403,25 @@ export async function deleteFile(config: Config, context: Context): Promise<{ de
         throw new AttachmentsError("FORBIDDEN", "You can't delete your organization's files.")
       }
     }
+  }
+  if (file.status === "pending") {
+    // A finish under way could make the file ready and put it on its record between reading and deleting it, so it's
+    // taken while it's still pending, which the finish then can't change. When the finish got there first, the file is
+    // read again and deleted as it is now, which for a file on its record means taking it off first.
+    const taken = await context.db.update<AttachmentFile>({
+      model: fileModel,
+      where: [
+        { field: "id", value: fileId },
+        { field: "status", value: "pending" }
+      ],
+      update: { status: "deleted", expiresAt: null }
+    })
+    if (!taken) {
+      return deleteFile(config, context)
+    }
+    // An unfinished upload is on no record and was never reported, so only its bytes and row are left to go.
+    await purge(config, context.db, [file])
+    return { deleted: true }
   }
   return { deleted: await deleteFiles(config, context, [file], "deleted") }
 }

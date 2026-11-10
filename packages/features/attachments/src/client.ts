@@ -400,6 +400,7 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
   /**
    * The first step of an upload, for an engine that sends the bytes itself, such as UploadCN's: checks the file against
    * the loaded limits and asks the server where to send it. Send the bytes as `upload` says, then call `finishUpload`.
+   * `reset` cancels it, as it does every call under way, with or without a `signal`.
    */
   async function prepareUpload(
     file: Blob & { name?: string },
@@ -408,11 +409,12 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
   ): Promise<PreparedUpload> {
     const contentType = cleanContentType(file.type) ?? "application/octet-stream"
     checkLocally(target, contentType, file.size)
+    // So an upload the previous person started never goes on as the next one's.
     const created = await (call(
       "attachments",
       "createUpload",
       { ...target, name, contentType, size: file.size },
-      { signal }
+      { signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal }
     ) as Promise<Serialized<CreateUploadResult>>)
     const upload = { ...created.upload, expiresAt: new Date(created.upload.expiresAt) }
     return { file: reviveFile<FileInfo>(created.file), upload, target }
@@ -420,9 +422,13 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
 
   /**
    * The last step of an upload: has the server check the bytes and mark the file ready. An upload onto a record adds the
-   * file to the record's list.
+   * file to the record's list. It needs only the prepared file's id and target, so an engine that keeps them between
+   * attempts, such as in UploadCN's resume state, can finish without the rest.
    */
-  async function finishUpload(prepared: PreparedUpload, { signal }: { signal?: AbortSignal } = {}): Promise<FileInfo> {
+  async function finishUpload(
+    prepared: Pick<PreparedUpload, "target"> & { file: Pick<FileInfo, "id"> },
+    { signal }: { signal?: AbortSignal } = {}
+  ): Promise<FileInfo> {
     const current = scoped()
     const { subjectType, subjectId } = prepared.target
     const key = subjectType !== undefined && subjectId !== undefined ? subjectKey(subjectType, subjectId) : null
@@ -430,7 +436,11 @@ function createAttachmentsClientFor<Types extends AttachmentsTypes>(
     const completed = await (call("attachments", "completeUpload", { fileId: prepared.file.id }, { signal }) as Promise<
       Serialized<CompleteUploadResult>
     >)
-    if (current() && completed.attachment && key !== null && subjectId !== undefined) {
+    if (current() && !completed.attachment && key !== null && subjectId !== undefined) {
+      // Finished by an earlier call whose answer was lost, so the answer has no place on the record, and it loads again.
+      bump(key)
+      await load(subjectType as Types["subjectType"], [subjectId]).catch(() => undefined)
+    } else if (current() && completed.attachment && key !== null && subjectId !== undefined) {
       const changed = (versions.get(key) ?? 0) !== started
       bump(key)
       if (changed) {

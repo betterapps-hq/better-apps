@@ -26,7 +26,7 @@ and serves uploads and downloads from `app.handler`.
   Without it, the original image is served.
 - **The browser client has its own small upload queue and hooks**, and exposes the two steps around the bytes,
   `prepareUpload` and `finishUpload`, for an engine that sends the bytes itself, such as
-  [UploadCN](https://uploadcn.dev)'s.
+  [UploadCN](https://uploadcn.dev)'s through [`@better-apps/uploadcn`](../../../integrations/uploadcn/README.md).
 - **A signed upload address can't be revoked**, so attachments never trusts storage to hold what it confirmed. Downloads
   serve only bytes whose etag matches the one recorded when the upload finished, and a deleted file's row waits until
   its upload address has closed, so bytes that arrive late are deleted too.
@@ -209,7 +209,8 @@ An upload takes three steps, the same for both ways of sending the bytes:
    and the limits, and marks the file `ready` with that etag. A file uploaded onto a record is attached in the same
    batch, after checking again that the person can see the record and `canUpload` allows them; if not, the upload is
    deleted. A mismatch deletes the bytes and answers `INVALID_INPUT`. When two calls finish one file at once, one marks
-   it ready, and both return it. Finishing a ready file again returns it only to someone who can still see it.
+   it ready and attaches it, and both return it, the other without its attachment. Finishing a ready file again returns
+   it only to someone who can still see it, without its attachment, so the browser client loads the record again.
 
 Where the upload is aimed:
 
@@ -350,7 +351,9 @@ enough.
   `getFile({ fileId })`; `listOwnFiles({ owner, cursor?, limit? })` pages a person's or an organization's own files,
   newest first; `getSettings({ subjectType })` returns the limits, for a picker's `accept` and checks before sending.
 - Writes: `createUpload`, `completeUpload`, `attach`, `detach`, `reorder({ subjectType, subjectId, fileIds })` and
-  `deleteFile`, which also cancels an upload or a draft of the caller's. `reorder` writes every file's position in one
+  `deleteFile`, which also cancels an upload or a draft of the caller's. It takes an unfinished upload only while it's
+  still pending, so a finish can't put it on its record meanwhile; one that finished onto its record first answers
+  `INVALID_INPUT`, as any file on a record does, to be detached instead. `reorder` writes every file's position in one
   batch, so when two people reorder a record at once, it ends in the order of whichever saves last.
 - Server only: `sweep`, `removeSubject`, `moveSubject`, `removeUser`, `toClientEvent` and `toClientEvents`.
 
@@ -372,7 +375,9 @@ const file = await attachments.upload(input.files[0], { subjectType: "invoice", 
 - `load(subjectType, subjectIds)` batches loads of the same tick, 20 records a call.
 - `prepareUpload(file, target)` checks the file against the loaded limits and calls `createUpload`, and
   `finishUpload(prepared)` calls `completeUpload` and adds the file to its record's list. They're the two steps around
-  the bytes, for an engine that sends them itself, such as [UploadCN](https://uploadcn.dev)'s.
+  the bytes, for an engine that sends them itself, such as [UploadCN](https://uploadcn.dev)'s through
+  [`@better-apps/uploadcn`](../../../integrations/uploadcn/README.md). `finishUpload` needs only the prepared file's id
+  and target, which an engine can keep between attempts.
 - `upload(file, target)` runs the three steps. It sends the bytes with `XMLHttpRequest`, for progress, or with `fetch`
   where there's none, and takes a `transport` for tests. `uploads[id]` holds
   `{ name, size, loaded, state, error, file }` while it runs, `state` being `uploading`, `finishing`, `done`, `error` or

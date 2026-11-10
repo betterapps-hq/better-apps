@@ -264,7 +264,9 @@ export function useAttachmentsClient<App = BetterApp>(): {
         name?: string;
         signal?: AbortSignal;
     }) => Promise<PreparedUpload>;
-    finishUpload: (prepared: PreparedUpload, input?: {
+    finishUpload: (prepared: Pick<PreparedUpload, "target"> & {
+        file: Pick<FileInfo, "id">;
+    }, input?: {
         signal?: AbortSignal;
     }) => Promise<FileInfo>;
     cancel: (uploadId: string) => void;
