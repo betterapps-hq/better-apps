@@ -424,13 +424,37 @@ describe("codes on organizations' domains", () => {
     expect((await openOn(t, "links.acme.test", "pricing")).response.headers.get("location")).toBe(
       "https://acme.test/before"
     )
-    // A new link goes on the domain, where Acme's codes don't have it yet, and each host opens its own.
-    const after = await t.api.create(pricing("https://acme.test/after"), t.as("ada"))
-    expect(after.shortUrl).toBe("https://links.acme.test/s/pricing")
+    // A new link on the domain can't take the code and hide the older link there.
+    await expect(t.api.create(pricing("https://acme.test/after"), t.as("ada"))).rejects.toMatchObject({
+      code: "CONFLICT"
+    })
     expect((await openOn(t, "links.acme.test", "pricing")).response.headers.get("location")).toBe(
-      "https://acme.test/after"
+      "https://acme.test/before"
     )
-    expect((await openOn(t, "app.test", "pricing")).response.headers.get("location")).toBe("https://acme.test/before")
+    // A member's own link on the app's host doesn't hold its code on Acme's domain.
+    const own = await t.api.create({ target: { url: "https://ada.test" }, code: "mine", owner: "user" }, t.as("ada"))
+    expect(own.shortUrl).toBe("https://app.test/s/mine")
+    const acmes = await t.api.create({ target: { url: "https://acme.test/mine" }, code: "mine" }, t.as("ada"))
+    expect(acmes.shortUrl).toBe("https://links.acme.test/s/mine")
+  })
+
+  it("open nothing on an organization's domain for its turned-off link, even with an older link of the app's code", async () => {
+    const domains: Record<string, string> = { acme: "links.acme.test" }
+    const t = setup({ baseUrl: "https://app.test", hosts: changingHosts(domains) })
+    const onDomain = await t.api.create(pricing("https://acme.test/domain"), t.as("ada"))
+    // While the domain is gone, a link with the same code goes in the app's scope.
+    delete domains.acme
+    const onApp = await t.api.create(pricing("https://acme.test/app"), t.as("ada"))
+    expect(onApp.shortUrl).toBe("https://app.test/s/pricing")
+    domains.acme = "links.acme.test"
+    expect((await openOn(t, "links.acme.test", "pricing")).response.headers.get("location")).toBe(
+      "https://acme.test/domain"
+    )
+    await t.api.update({ id: onDomain.id, enabled: false }, t.as("ada"))
+    const off = await openOn(t, "links.acme.test", "pricing")
+    expect(off.response.status).toBe(404)
+    expect(off.clicks).toBe(0)
+    expect((await openOn(t, "app.test", "pricing")).response.headers.get("location")).toBe("https://acme.test/app")
   })
 
   it("keep a link that grants access working when its record moves to the organization's new domain", async () => {
@@ -493,6 +517,21 @@ describe("codes on organizations' domains", () => {
     const made = await server.api.create({ target: docs }, server.as("ada"))
     expect(made.shortUrl).toBe(`https://links.acme.test/s/${made.code}`)
     expect(resolved).toEqual([null])
+  })
+
+  it("keep an organization's links in the app's scope when origin names another organization's host or a pending one", async () => {
+    for (const host of ["links.globex.test", "pending.acme.test"]) {
+      const t = setup({
+        baseUrl: "https://app.test",
+        hosts: { ...hostsFor(), origin: ({ orgId }) => (orgId === "acme" ? `https://${host}` : null) }
+      })
+      const link = await t.api.create(pricing("https://acme.test/pricing"), t.as("ada"))
+      expect(link.shortUrl).toBe("https://app.test/s/pricing")
+      expect((await openOn(t, "app.test", "pricing")).response.headers.get("location")).toBe(
+        "https://acme.test/pricing"
+      )
+      expect((await openOn(t, host, "pricing")).response.status).toBe(404)
+    }
   })
 
   it("open an organization's links nowhere while it has no ready domain, and on whichever it has next", async () => {

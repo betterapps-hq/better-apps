@@ -367,6 +367,15 @@ const inScope = (code: string, scope: string): Where[] => [
   { field: "scope", value: scope }
 ]
 
+/**
+ * An organization's own link with a code of the app's, such as one made before its domain was ready. Its domains open it
+ * for a code their scope doesn't have.
+ */
+const orgsOwnInApp = (code: string, orgId: string): Where[] => [
+  ...inScope(code, ""),
+  { field: "owner", value: ownerKey("org", orgId) }
+]
+
 /** A link the caller manages, by its id, or the error that says why not. */
 async function requireLink(config: Config, context: Context, id: string): Promise<LinkRow> {
   const row = await context.db.findOne<LinkRow>({ model: linkModel, where: [{ field: "id", value: id }] })
@@ -602,21 +611,31 @@ async function create(config: Config, context: Context): Promise<ShortLink> {
   // writes by reading it back, in the link's scope only, so nothing is told about other scopes' codes.
   for (let attempt = 1; ; attempt += 1) {
     const row: LinkRow = { id: crypto.randomUUID(), code: codeFor(), ...fields }
-    const link = await present(prefixes, row)
-    context.emit("link.created", { link })
-    try {
-      await context.db.batch([{ type: "create", model: linkModel, data: row }])
-      return link
-    } catch (error) {
-      if (!(await context.db.findOne({ model: linkModel, where: inScope(row.code, row.scope), select: ["id"] }))) {
-        throw error
+    let cause: unknown
+    // On the organization's domains, its own older link with the app's code opens for a code their scope doesn't have,
+    // so a new link there can't take that code and hide it. This reads only the organization's own links.
+    const hides =
+      row.scope !== "" &&
+      (await context.db.findOne({ model: linkModel, where: orgsOwnInApp(row.code, row.scope), select: ["id"] })) !==
+        null
+    if (!hides) {
+      const link = await present(prefixes, row)
+      context.emit("link.created", { link })
+      try {
+        await context.db.batch([{ type: "create", model: linkModel, data: row }])
+        return link
+      } catch (error) {
+        if (!(await context.db.findOne({ model: linkModel, where: inScope(row.code, row.scope), select: ["id"] }))) {
+          throw error
+        }
+        cause = error
       }
-      if (!random) {
-        throw new ShortLinksError("CONFLICT", "That code is taken. Try another.", { cause: error })
-      }
-      if (attempt >= 3) {
-        throw new ShortLinksError("CONFLICT", "No free code was found. Try again.", { cause: error })
-      }
+    }
+    if (!random) {
+      throw new ShortLinksError("CONFLICT", "That code is taken. Try another.", { cause })
+    }
+    if (attempt >= 3) {
+      throw new ShortLinksError("CONFLICT", "No free code was found. Try again.", { cause })
     }
   }
 }
@@ -836,17 +855,14 @@ async function read(db: RouteContext["db"], code: string, scope: string): Promis
   if (row || scope === "") {
     return row
   }
-  return db.findOne<LinkRow>({
-    model: linkModel,
-    where: [...inScope(code, ""), { field: "owner", value: ownerKey("org", scope) }]
-  })
+  return db.findOne<LinkRow>({ model: linkModel, where: orgsOwnInApp(code, scope) })
 }
 
 /**
- * Opens a link: one read of its code in the host's scope, then a temporary redirect, so a link turned off or changed
- * takes effect at once. An organization's domain opens the links in its scope, and its own with the app's codes, and
- * the app's own host the ones in the app's scope. A link that grants access adds its code and scope to the visitor's cookie. The click is written after the
- * response.
+ * Opens a link: one read of its code in the host's scope, and on an organization's domain a second only when the first
+ * misses, then a temporary redirect, so a link turned off or changed takes effect at once. An organization's domain
+ * opens the links in its scope, and its own with the app's codes, and the app's own host the ones in the app's scope. A
+ * link that grants access adds its code and scope to the visitor's cookie. The click is written after the response.
  */
 async function open(config: Config, context: RouteContext): Promise<Response> {
   const { request, params, db, now } = context

@@ -11,7 +11,8 @@ export interface ShortLink {
   /**
    * The address to share: `baseUrl`, or the request's origin, with the path and code. For server code with neither,
    * the path alone. With `hosts`, it's on a host that opens the link, and `null` for a link in an organization's scope
-   * while `hosts.origin` returns `null` for the organization, such as when it has no ready domain.
+   * while `hosts.origin` returns `null` for the organization, such as when it has no ready domain, or while the cookie
+   * wouldn't reach the record the link grants access to from the host `origin` gives.
    */
   shortUrl: string | null
   owner: { type: OwnerType; id: string }

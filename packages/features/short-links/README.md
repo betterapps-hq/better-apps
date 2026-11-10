@@ -136,7 +136,8 @@ back on, or giving it a later expiry, checks again that the caller can see and s
   [Clicks over time](#clicks-over-time) shows.
 - Each link comes back with its `id`, `code`, `shortUrl`, `owner` as `{ type, id }`, `orgId`, `createdBy`, `target`,
   `grantsView`, `enabled`, `expiresAt`, `clicks`, `lastClickedAt`, `createdAt` and `updatedAt`. With `hosts`, `shortUrl`
-  is `null` for a link on an organization's domain while `origin` returns `null` for the organization.
+  is `null` for a link on an organization's domain while `origin` returns `null` for the organization, or while the
+  cookie wouldn't reach the record the link grants access to from the domain `origin` gives.
 - Errors are `ShortLinksError`s: `UNAUTHENTICATED`, `FORBIDDEN` when a rule refuses, `NOT_FOUND` for links and records
   the caller can't see or manage, `INVALID_INPUT`, and `CONFLICT` for a code that's taken in the link's scope.
 
@@ -246,14 +247,16 @@ so Acme and Globex can both have `links.acme.com/s/pricing` and `links.globex.co
 a domain, so a code is one link on each host. An organization's domains share its codes.
 
 - An organization's own links, made while `origin` returns its domain, get the organization's codes and are shared on
-  its domain. Every other link gets the app's codes and is shared on the app's host: a member's own links, links made
-  outside any organization, and an organization's links made before its domain was ready.
+  its domain, unless one grants access to a record the cookie wouldn't reach from there. Every other link gets the app's
+  codes and is shared on the app's host: a member's own links, links made outside any organization, an organization's
+  links made before its domain was ready, and links that grant access from the app's host.
 - A link keeps its codes for good. Links made before an organization's domain was ready keep their short URLs on the
   app's host, which still opens them, and its domains open them too, unless the organization has the same code on its
   domains. Links made on its domain open on whichever ready domain it has. While `origin` returns `null` for it, their
   `shortUrl` is `null`, since the app's host may have the same code for another link.
-- `create` says `CONFLICT` only for a code taken among the link's own codes, so it tells nobody about another
-  organization's codes. The [spec](docs/spec.md#codes-on-organizations-domains) has the details.
+- `create` says `CONFLICT` only for a code taken among the link's own codes, or, on an organization's domain, by one of
+  its older links that the domain opens, so it tells nobody about another organization's codes. The
+  [spec](docs/spec.md#codes-on-organizations-domains) has the details.
 
 ## Records and owners that go
 

@@ -33,7 +33,8 @@ Two tables. `shortLink` holds the links:
 Indexes:
 
 - The unique index on `(code, scope)` keeps codes unique within each scope. It serves opening a link, which is one read,
-  and reading the links a grant cookie holds by their codes.
+  and a second on an organization's domain only when the first misses, and reading the links a grant cookie holds by
+  their codes.
 - `(owner, createdAt)` serves lists of a person's or an organization's links, newest first.
 - `(orgId, createdAt)` serves a manager's list of every link made in their organization.
 - `(subjectType, subjectId, createdAt)` serves a record's links and removing them when the record goes.
@@ -146,8 +147,9 @@ shortLinks({
 - Codes are unique within their scope: the app's, which every link is in without `hosts`, or an organization's, for
   links it makes on its domains, as [Codes on organizations' domains](#codes-on-organizations-domains) describes. A
   custom code that's taken in the link's scope returns `CONFLICT`, which tells the caller nothing about other scopes'
-  codes. A code with a random part is tried up to three times, with a new one each time it's taken, before `CONFLICT`. A
-  collision is told apart from other failed writes by reading the code back in the same scope.
+  codes. In an organization's scope, a code its own link has in the app's scope is taken too, since its domains open
+  that link for the code. A code with a random part is tried up to three times, with a new one each time it's taken,
+  before `CONFLICT`. A collision is told apart from other failed writes by reading the code back in the same scope.
 - A link's code never changes. A different code is a different link.
 
 ## URL targets
@@ -340,7 +342,8 @@ Each link comes back as a `ShortLink`: its `id`, `code`, `shortUrl`, its `owner`
 `createdBy`, its `target`, `grantsView`, `enabled`, `expiresAt`, `clicks`, `lastClickedAt`, `createdAt` and `updatedAt`.
 `shortUrl` is `baseUrl`, or the request's origin, followed by the path and code. For server code with neither, it's the
 path alone. With `hosts`, it's on a host that opens the link, as [Short URLs](#short-urls) describes, and `null` for a
-link in an organization's scope while `hosts.origin` returns `null` for the organization.
+link in an organization's scope while `hosts.origin` returns `null` for the organization, or while the cookie wouldn't
+reach the record the link grants access to from the host `origin` gives.
 
 Errors are `ShortLinksError`s: `UNAUTHENTICATED`, `FORBIDDEN` when a rule refuses, `NOT_FOUND` for links and records the
 caller can't see or manage, `INVALID_INPUT` for a code, URL, target, owner or expiry that isn't allowed, and `CONFLICT`
@@ -402,7 +405,8 @@ So a domain appearing or going away never moves a link, and two links never come
 
 - When an organization's domain becomes ready, its links made before then keep their codes and their short URLs on the
   app's host, which still opens them. Its domains open them too, for a code its own codes don't have, so a link that
-  sends visitors on to a record now on the domain keeps working. New links go on the domain.
+  sends visitors on to a record now on the domain keeps working. New links go on the domain, with codes those older
+  links don't have.
 - When `origin` returns `null` for an organization, such as when it has no ready domain left, the links in its scope
   open only on whichever domains `resolve` still gives it, and their `shortUrl` is `null` until `origin` names a domain
   again. The app's host never opens them, since another organization's link, or one in the app's scope, may have the

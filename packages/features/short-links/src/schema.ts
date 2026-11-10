@@ -53,8 +53,9 @@ export type ClickRow = {
 }
 
 /**
- * The short links tables. Opening a link is one read through the unique index on its code and scope. Clicks reference
- * their link, so removing links, one at a time or in one statement for a record or an owner, removes their clicks too.
+ * The short links tables. Opening a link is one read through the unique index on its code and scope, and a second on an
+ * organization's domain only when the first misses. Clicks reference their link, so removing links, one at a time or in
+ * one statement for a record or an owner, removes their clicks too.
  */
 export const shortLinksSchema: FeatureSchema = {
   [linkModel]: {

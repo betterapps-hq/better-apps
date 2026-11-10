@@ -63,6 +63,21 @@ describe("generated codes that collide", () => {
     expect((await api.create({ target: docs }, as("gus"))).code).toBe("taken-01")
     expect(next).toEqual(["fresh-01"])
   })
+
+  it("are replaced when the organization's own link has the code with the app's, which its domain opens", async () => {
+    const { api, as, events } = setup({ baseUrl: "https://app.test", hosts })
+    delete domains.acme
+    try {
+      next.push("older-01")
+      expect((await api.create({ target: docs }, as("ada"))).shortUrl).toBe("https://app.test/s/older-01")
+    } finally {
+      domains.acme = "links.acme.test"
+    }
+    next.push("older-01", "fresh-01")
+    expect((await api.create({ target: docs }, as("ada"))).shortUrl).toBe("https://links.acme.test/s/fresh-01")
+    // No event went out for the code that was never written.
+    expect(events("link.created")).toHaveLength(2)
+  })
 })
 
 describe("grant cookies", () => {
