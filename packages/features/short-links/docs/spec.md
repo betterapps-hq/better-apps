@@ -224,10 +224,11 @@ whose clocks went back from 00:01 to 23:01 the day before until November 2010, s
 
 Both queries take a range of calendar days, `from` and `to` as `YYYY-MM-DD`, both included, up to 366 days, from
 `2011-01-01` to `9998-12-31`, in an IANA `timeZone`, `UTC` by default. Offsets such as `+05:30` aren't taken as zones. A
-range starts at the first moment of `from` in the zone and ends at the first moment after `to`. That's the first
-15-minute slot that falls on the day, found by stepping through the slots within 15 hours of its midnight in UTC, so a
-day whose midnight a change of offset skips or repeats starts at its first moment. Days with a change of offset are
-shorter or longer than 24 hours, and a day a zone skipped, such as 30 December 2011 in Samoa, has no clicks.
+range starts at the first moment of `from` in the zone and ends at the first moment after `to`. The days come from
+date-fns and `@date-fns/tz`. A day starts at the earlier of its midnight and the moment after the previous day ends, of
+those that fall on it: date-fns reads a midnight that happens twice, as in Havana each November, as the second, and a
+23:59 the clocks skip, as in Nuuk each March, as the moment after the jump. Days with a change of offset are shorter or
+longer than 24 hours, and a day a zone skipped, such as 30 December 2011 in Samoa, has no clicks.
 
 - `clicksByDay({ code, from, to, timeZone? })` counts one link's clicks on each day: one `countGroups` query by `slot`,
   which returns at most one group per 15 minutes, however many clicks there were. It returns `{ days, total }`, with

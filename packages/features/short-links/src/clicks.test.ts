@@ -235,6 +235,31 @@ describe("clicksByDay", () => {
       { date: "2011-12-30", clicks: 0 },
       { date: "2011-12-31", clicks: 1 }
     ])
+    const skipped = await t.api.clicksByDay(
+      { code: link.code, from: "2011-12-30", to: "2011-12-30", timeZone: "Pacific/Apia" },
+      t.as("ada")
+    )
+    expect(skipped).toEqual({ days: [{ date: "2011-12-30", clicks: 0 }], total: 0 })
+  })
+
+  it("starts a day where the clocks skip from 23:00 to midnight", async () => {
+    const t = setup()
+    const link = await t.api.create({ target: docs }, t.as("ada"))
+    // Nuuk went from 23:00 on 28 March 2026 straight to 00:00 on the 29th, at 01:00 UTC, so the 29th starts then.
+    await t.api.recordClicks({ code: link.code, at: at("2026-03-29T00:59:00Z", "2026-03-29T01:00:00Z") })
+    const nuuk = await t.api.clicksByDay(
+      { code: link.code, from: "2026-03-28", to: "2026-03-29", timeZone: "America/Nuuk" },
+      t.as("ada")
+    )
+    expect(nuuk.days).toEqual([
+      { date: "2026-03-28", clicks: 1 },
+      { date: "2026-03-29", clicks: 1 }
+    ])
+    const only = await t.api.clicksByDay(
+      { code: link.code, from: "2026-03-29", to: "2026-03-29", timeZone: "America/Nuuk" },
+      t.as("ada")
+    )
+    expect(only.total).toBe(1)
   })
 
   it("is for the link's managers", async () => {
@@ -336,7 +361,7 @@ describe("listing by clicks", () => {
       [-1, "2026-01-01T00:00:00.000Z", "id"],
       [1.5, "2026-01-01T00:00:00.000Z", "id"],
       [1, "+275760-01-01T00:00:00.000Z", "id"],
-      [1, "2026-01-01T00:00:00.000Z", "a b"]
+      [1, "2026-01-01T00:00:00.000Z", "a\u0000b"]
     ]) {
       await expectCode(t.api.list({ sort: "clicks", cursor: tampered(values) }, t.as("ada")), "INVALID_INPUT")
     }
