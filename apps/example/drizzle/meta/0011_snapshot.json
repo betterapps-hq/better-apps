@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "45ecfe0b-ccd4-4309-beda-758f4298ffac",
+  "id": "7188e9ae-38d0-48d8-b513-5060cdb1c30a",
   "prevId": "593a003e-00ee-4399-8465-7e08f768ac04",
   "tables": {
     "invoice": {
@@ -1489,59 +1489,6 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "reaction_move": {
-      "name": "reaction_move",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "to_org_id": {
-          "name": "to_org_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "''"
-        },
-        "deleted": {
-          "name": "deleted",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
-        },
-        "claim": {
-          "name": "claim",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "held_at": {
-          "name": "held_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "reaction_move_by_time": {
-          "name": "reaction_move_by_time",
-          "columns": ["held_at"],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
     "reaction_removal": {
       "name": "reaction_removal",
       "columns": {
@@ -1588,6 +1535,14 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        },
+        "scope": {
+          "name": "scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
         },
         "owner": {
           "name": "owner",
@@ -1686,9 +1641,9 @@
         }
       },
       "indexes": {
-        "short_link_code_unique": {
-          "name": "short_link_code_unique",
-          "columns": ["code"],
+        "short_link_code": {
+          "name": "short_link_code",
+          "columns": ["code", "scope"],
           "isUnique": true
         },
         "short_link_by_owner": {

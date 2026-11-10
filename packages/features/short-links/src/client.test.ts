@@ -48,12 +48,12 @@ describe("short links client", () => {
     expect(lists()[listKey()]?.links.map((shown) => shown.code)).toEqual([url.code, link.code])
     expect(lists()[listKey({ owner: "user" })]?.links.map((shown) => shown.code)).toEqual([url.code])
 
-    const off = await links.update({ code: link.code, enabled: false })
+    const off = await links.update({ id: link.id, enabled: false })
     expect(off.enabled).toBe(false)
     expect(lists()[listKey(inv1)]?.links[0]?.enabled).toBe(false)
     expect(lists()[listKey()]?.links[1]?.enabled).toBe(false)
 
-    expect(await links.remove(link.code)).toEqual({ removed: true })
+    expect(await links.remove(link.id)).toEqual({ removed: true })
     expect(lists()[listKey(inv1)]?.links).toEqual([])
     expect(lists()[listKey()]?.links.map((shown) => shown.code)).toEqual([url.code])
   })
@@ -77,8 +77,8 @@ describe("short links client", () => {
     await links.load(inv1)
     const release = hold("list", { answer: true })
     const reloading = links.load(inv1)
-    await links.remove(gone.code)
-    await links.update({ code: kept.code, enabled: false })
+    await links.remove(gone.id)
+    await links.update({ id: kept.id, enabled: false })
     release()
     await reloading
     const list = links.store.getSnapshot().lists[listKey(inv1)]

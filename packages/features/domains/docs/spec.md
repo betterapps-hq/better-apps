@@ -350,7 +350,8 @@ domains removed so far gone, so calling it again finishes the rest.
 
 ## Primary domain
 
-Each organization has at most one primary domain, the one other features use to build links, such as short links.
+Each organization has at most one primary domain, the one other features use to build links, such as short links. While
+it isn't `active`, `domainHosts`' `origin` builds them on another of the organization's `active` domains.
 
 - `setPrimary({ domainId })` makes an `active` domain primary, in one batch that clears the old one. A domain that isn't
   `active` returns `CONFLICT`, and so does one that stopped being `active` or was removed while the call ran, which
@@ -359,8 +360,9 @@ Each organization has at most one primary domain, the one other features use to 
 - The unique `primaryOf` field holds the organization's id on its primary domain and `null` on the others, so the
   database refuses a second primary even when two changes race; the losing call returns `CONFLICT`.
 - The first domain to become `active` in an organization without a primary domain becomes primary.
-- A primary domain that stops being `active` stays primary, so links keep their hostname; `getPrimary` and `lookup`
-  report its status. One that another organization takes over loses its primary place.
+- A primary domain that stops being `active` stays primary, and links return to its hostname once it's `active` again;
+  meanwhile `origin` shares them on another `active` domain. `getPrimary` and `lookup` report its status. One that
+  another organization takes over loses its primary place.
 - `primary.changed` carries the organization and the new primary domain, or `null`.
 
 ## Hostname lookup
@@ -387,7 +389,7 @@ const match = await app.api.domains.lookup({ hostname: new URL(request.url).host
 
 A feature that serves organizations' domains needs to know whose host a request is on and where an organization's links
 are shared. [Short links](../../short-links/docs/spec.md#organizations-domains) take both as `hosts`, without importing
-domains. `domainHosts` builds them from `lookup` and `getPrimary`:
+domains. `domainHosts` builds them from `lookup`, `getPrimary` and `list`:
 
 ```ts
 const appUrl = "https://app.yourapp.com"
@@ -416,7 +418,9 @@ linkHosts.connect(app.api.domains)
   `"app"` for one in an app without organizations, and `null` for a domain that isn't `active` or a hostname no domain
   holds.
 - `hosts.origin({ orgId })` returns the origin of the organization's primary domain once it's `active`, on `url`'s
-  scheme and port, such as `https://links.acme.com`, or `null` without one, which means the app's own.
+  scheme and port, such as `https://links.acme.com`. Without an `active` primary domain, such as after it's removed or
+  while it's failing, it's the first `active` domain the organization added, or the app added for `orgId` `null`, which
+  still opens its links, read with `list`. With no `active` domain, it's `null`, which means the app's own.
 - Features are created before the app, and `app.api.domains` exists only once it is, so the app calls
   `connect(app.api.domains)` then. Until it does, both throw an error that says so, rather than every domain answering
   as unknown. A later `connect` replaces the earlier one.
@@ -433,7 +437,8 @@ the machine, so with `localSuffix: "yourapp.localhost"` the app answers a custom
   `localhost` above the zone. A subdomain never answers at an alias.
 - Otherwise it strips the suffix from a hostname under it and looks the rest up, answering only for a custom domain. A
   custom domain answers only there, so `go.acme.com` itself answers `null`. An alias costs two lookups.
-- `origin` adds the suffix to a primary custom domain's hostname, so links are shared where the browser reaches them.
+- `origin` adds the suffix to the custom domain's hostname it returns, so links are shared where the browser reaches
+  them.
 - `domainHosts` throws for a suffix that isn't `localhost` or under it. It's for the local provider only, never
   production.
 

@@ -142,7 +142,8 @@ export const linkHosts = domainHosts({
  * Short links to invoices, at `/s/{code}` on the app and on the workspace's domains once they're ready. Whoever can see
  * an invoice can share it, and a link can let anyone who has it see the invoice without signing in. Invoices open on the
  * app's own address, where people are signed in, even from a link on a workspace domain. This app has no organizations,
- * so a ready domain opens every link, and links are shared on the workspace's primary domain once it's ready.
+ * so a ready domain opens every link. Links are shared on the workspace's primary domain once it's ready, or else on its
+ * first ready domain.
  */
 const invoiceLinks = shortLinks({
   subjects: { invoice: { url: ({ subjectId }) => `${appUrl.origin}/invoices/${subjectId}`, grantView: true } },

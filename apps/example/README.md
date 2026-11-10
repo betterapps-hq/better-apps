@@ -45,16 +45,17 @@ Then open <http://127.0.0.1:4190>. `build` and `preview` run the production buil
   invoice's **Share** button opens a dialog that creates a link at `/s/{code}`, optionally one that lets anyone with it
   view the invoice without signing in, and lists the invoice's links with how often each was opened. Each can be copied,
   turned off and on, or deleted. Links are shared on the workspace's primary domain once it's ready, such as
-  `acme.better-invoices.localhost:4190/s/{code}`, and on the app's own address before then. A ready domain opens the
-  workspace's links, and any other host, such as a pending domain, opens none. Invoices open on the app's own address,
-  where people are signed in, so a link that grants access stays there, since its cookie couldn't reach the invoice from
-  the domain. Short links never import domains: `src/features.ts` gives short links `hosts` from domains' `domainHosts`,
-  and `src/better-apps.server.ts` connects them once the app exists. Browsers can't reach a custom domain such as
-  `go.acme.com` on your machine, so it opens at `go.acme.com.better-invoices.localhost:4190`, where its links are shared
-  too. Invoices are for signed-in people, so the invoice page checks `app.subjects.canView(null, ref, { request })` for
-  signed-out visitors, which a link that grants access allows. Such a visitor also reads the invoice's comments, with
-  their reactions and files, without a way to add any. The dialog is `src/invoice-share.tsx`, the links are set up in
-  `src/features.ts`, and `src/routes/s/$.ts` serves them.
+  `acme.better-invoices.localhost:4190/s/{code}`, or else on its first ready domain, and on the app's own address while
+  none is ready. A ready domain opens the workspace's links, and any other host, such as a pending domain, opens none.
+  The example has no organizations, so a code is unique across the app on every host. Invoices open on the app's own
+  address, where people are signed in, so a link that grants access stays there, since its cookie couldn't reach the
+  invoice from the domain. Short links never import domains: `src/features.ts` gives short links `hosts` from domains'
+  `domainHosts`, and `src/better-apps.server.ts` connects them once the app exists. Browsers can't reach a custom domain
+  such as `go.acme.com` on your machine, so it opens at `go.acme.com.better-invoices.localhost:4190`, where its links
+  are shared too. Invoices are for signed-in people, so the invoice page checks
+  `app.subjects.canView(null, ref, { request })` for signed-out visitors, which a link that grants access allows. Such a
+  visitor also reads the invoice's comments, with their reactions and files, without a way to add any. The dialog is
+  `src/invoice-share.tsx`, the links are set up in `src/features.ts`, and `src/routes/s/$.ts` serves them.
 - **Files** from [`@better-apps/attachments`](../../packages/features/attachments/README.md) go on invoices and on
   comments. The invoice page has a Files panel: add files with the button or by dropping them on the panel, watch each
   upload's progress, try a failed one again, open or download a file, move it up or down, and delete it. Whoever added a

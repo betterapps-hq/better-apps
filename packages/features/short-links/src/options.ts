@@ -60,9 +60,9 @@ export interface GrantCookie {
 }
 
 /**
- * Whose links a host opens: `"app"` for the app's own host, which opens every link, `{ orgId }` for a domain an
- * organization verified, which opens only the links that organization owns, or `null` for any other host, which opens
- * none.
+ * Whose links a host opens: `"app"` for the app's own host, which opens the links in the app's scope, `{ orgId }` for a
+ * domain an organization verified, which opens the links in that organization's scope, or `null` for any other host,
+ * which opens none.
  */
 export type LinkHost = "app" | { orgId: string } | null
 
@@ -73,7 +73,11 @@ export interface ResolveHostArgs {
    * such as `X-Forwarded-Host` play no part.
    */
   hostname: string
-  request: Request
+  /**
+   * The request that opens a link there, or, when short links check that `origin`'s host is the organization's before
+   * making a link in its scope, the action's request: `null` for server code without one.
+   */
+  request: Request | null
 }
 
 /** What `hosts.origin` receives: the links whose short URLs are being written. */
@@ -84,15 +88,18 @@ export interface LinkOriginArgs {
 
 /**
  * Where links open, and the host their short URLs use, for an app whose organizations have their own domains, such as
- * the domains feature's. Short links never import such a feature: the app connects the two.
+ * the domains feature's. An organization's own links made while it has a ready domain get codes of the organization's,
+ * unique on its domains. Every other link's code is unique across the app's own hosts. Short links never import such a
+ * feature: the app connects the two.
  */
 export interface LinkHosts {
   /** Says whose links a host opens, for the host a link was opened on. It runs before the link is read. */
   resolve: (args: ResolveHostArgs) => LinkHost | Promise<LinkHost>
   /**
-   * The origin of an organization's short URLs, such as `https://links.acme.com`, or `null` for `baseUrl`. Return a
-   * host that opens its links: the organization's domain, or a host `resolve` says is the app's. A person's own links
-   * made in an organization always use `baseUrl`, the only host that opens them. `baseUrl`, by default.
+   * The origin of an organization's ready domain, such as `https://links.acme.com`, or `null` while it has none. Return
+   * a host `resolve` gives the organization: the organization's own links made while it returns one are in the
+   * organization's scope and shared there. For links made outside any organization, `orgId` is `null`, and it returns a
+   * host `resolve` says is the app's, or `null` for `baseUrl`. Without it, every link is in the app's scope.
    */
   origin?: ((args: LinkOriginArgs) => string | null | Promise<string | null>) | undefined
 }
@@ -144,8 +151,9 @@ export interface ShortLinksOptions {
    */
   baseUrl?: string | undefined
   /**
-   * Opens links on organizations' own domains, each only its organization's, and shares them there. It needs `baseUrl`,
-   * the app's own host, which opens every link. Without it, every host that serves the app opens every link.
+   * Opens links on organizations' own domains, each only its organization's, and shares them there. An organization's
+   * own links made on its domain have codes unique among its links. It needs `baseUrl`, the app's own host. Without
+   * it, every host that serves the app opens every link, and codes are unique across the app.
    */
   hosts?: LinkHosts | undefined
   /** The length of generated codes, from 6 to 32. 8 by default. */
@@ -195,9 +203,9 @@ export interface CreateLinkInput<SubjectType extends string = string> {
   expiresAt?: Date | string | undefined
 }
 
-/** The input of `update`: the link's code and what to change. */
+/** The input of `update`: the link's id and what to change. */
 export interface UpdateLinkInput {
-  code: string
+  id: string
   /** A new target, for a URL link. */
   url?: string | undefined
   /** `false` stops the link letting people see the record. To let people see one, make a new link. */

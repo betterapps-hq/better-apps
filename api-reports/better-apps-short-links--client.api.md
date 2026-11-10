@@ -142,7 +142,7 @@ export interface ShortLink {
         type: OwnerType;
         id: string;
     };
-    shortUrl: string;
+    shortUrl: string | null;
     // (undocumented)
     target: ShortLinkTarget;
     // (undocumented)
@@ -197,11 +197,11 @@ export type SubjectTypeOf<Options extends ShortLinksOptions> = Options["subjects
 // @public
 export interface UpdateLinkInput {
     // (undocumented)
-    code: string;
-    // (undocumented)
     enabled?: boolean | undefined;
     expiresAt?: Date | string | null | undefined;
     grantsView?: false | undefined;
+    // (undocumented)
+    id: string;
     url?: string | undefined;
 }
 

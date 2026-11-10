@@ -10,9 +10,11 @@ export interface ShortLink {
   code: string
   /**
    * The address to share: `baseUrl`, or the request's origin, with the path and code. For server code with neither,
-   * the path alone.
+   * the path alone. With `hosts`, it's on a host that opens the link, and `null` for a link in an organization's scope
+   * while `hosts.origin` returns `null` for the organization, such as when it has no ready domain, or while the cookie
+   * wouldn't reach the record the link grants access to from the host `origin` gives.
    */
-  shortUrl: string
+  shortUrl: string | null
   owner: { type: OwnerType; id: string }
   /** The organization the link was made in, or `null` outside any. */
   orgId: string | null
@@ -40,8 +42,10 @@ function ownerOf(key: string): ShortLink["owner"] {
   return { type: key.slice(0, split) as OwnerType, id: key.slice(split + 1) }
 }
 
-/** A row as actions return it, with its short URL under `prefix`, such as `https://app.example/s`. */
-export function toLink(row: LinkRow, prefix: string): ShortLink {
+/**
+ * A row as actions return it, with its short URL under `prefix`, such as `https://app.example/s`, or none for `null`.
+ */
+export function toLink(row: LinkRow, prefix: string | null): ShortLink {
   const target: ShortLinkTarget =
     row.url !== null
       ? { type: "url", url: row.url }
@@ -49,7 +53,7 @@ export function toLink(row: LinkRow, prefix: string): ShortLink {
   return {
     id: row.id,
     code: row.code,
-    shortUrl: `${prefix}/${row.code}`,
+    shortUrl: prefix === null ? null : `${prefix}/${row.code}`,
     owner: ownerOf(row.owner),
     orgId: row.orgId === "" ? null : row.orgId,
     createdBy: row.createdBy,
