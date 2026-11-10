@@ -59,6 +59,44 @@ export interface GrantCookie {
   domain?: string | undefined
 }
 
+/**
+ * Whose links a host opens: `"app"` for the app's own host, which opens every link, `{ orgId }` for a domain an
+ * organization verified, which opens only the links that organization owns, or `null` for any other host, which opens
+ * none.
+ */
+export type LinkHost = "app" | { orgId: string } | null
+
+/** What `hosts.resolve` receives. */
+export interface ResolveHostArgs {
+  /**
+   * The host of the request's URL, lowercase and without the port or a trailing dot, such as `links.acme.com`. Headers
+   * such as `X-Forwarded-Host` play no part.
+   */
+  hostname: string
+  request: Request
+}
+
+/** What `hosts.origin` receives: the links whose short URLs are being written. */
+export interface LinkOriginArgs {
+  /** The organization that owns the links, or `null` for links made outside any. */
+  orgId: string | null
+}
+
+/**
+ * Where links open, and the host their short URLs use, for an app whose organizations have their own domains, such as
+ * the domains feature's. Short links never import such a feature: the app connects the two.
+ */
+export interface LinkHosts {
+  /** Says whose links a host opens, for the host a link was opened on. It runs before the link is read. */
+  resolve: (args: ResolveHostArgs) => LinkHost | Promise<LinkHost>
+  /**
+   * The origin of an organization's short URLs, such as `https://links.acme.com`, or `null` for `baseUrl`. Return a
+   * host that opens its links: the organization's domain, or a host `resolve` says is the app's. A person's own links
+   * made in an organization always use `baseUrl`, the only host that opens them. `baseUrl`, by default.
+   */
+  origin?: ((args: LinkOriginArgs) => string | null | Promise<string | null>) | undefined
+}
+
 /** How short links are set up in an app. */
 export interface ShortLinksOptions {
   /** The subject types links can point to, keyed by name. The app or a feature declares each one. */
@@ -75,8 +113,16 @@ export interface ShortLinksOptions {
   canManage?: ((args: ManageArgs) => boolean | Promise<boolean>) | undefined
   /** Where links open, `/s` by default, so a link is `/s/{code}`. */
   path?: string | undefined
-  /** The origin of the short URLs actions return, such as `https://go.example.com`. The request's, by default. */
+  /**
+   * The origin of the short URLs actions return, such as `https://go.example.com`. The request's, by default. Required
+   * with `hosts`.
+   */
   baseUrl?: string | undefined
+  /**
+   * Opens links on organizations' own domains, each only its organization's, and shares them there. It needs `baseUrl`,
+   * the app's own host, which opens every link. Without it, every host that serves the app opens every link.
+   */
+  hosts?: LinkHosts | undefined
   /** The length of generated codes, from 6 to 32. 8 by default. */
   codeLength?: number | undefined
   /** The cookie that remembers links that grant access. */

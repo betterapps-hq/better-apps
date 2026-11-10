@@ -73,7 +73,10 @@ shortLinks({
 - `path` is where links open, `/s` by default. It can't be directly under the app's `basePath`, where a link's URL would
   look like an action's.
 - `baseUrl` is the origin of the short URLs the actions return, such as a shorter domain that serves the same app. The
-  request's origin, by default.
+  request's origin, by default. `hosts` needs it.
+- `hosts` opens links on organizations' own domains and shares them there, as
+  [Organizations' domains](#organizations-domains) describes. Without it, every host that serves the app opens every
+  link.
 - `codeLength` is the length of generated codes, from 6 to 32: 8 by default.
 - `cookie` names the cookie that holds access grants, `better-apps-links` by default, and how long it lasts, in seconds:
   30 days by default. Its `domain` lets links on one host grant access on another under it, such as links on
@@ -171,10 +174,12 @@ Whose access a link stands for depends on where it was made:
   `update({ code, grantsView: false })` on those links, or `removeSubject`.
 
 The cookie only reaches the link's host, or every host under `cookie.domain`. Making a link that grants access fails
-when the record's page is on a host the cookie wouldn't reach, rather than letting the grant fail without a word. Read
-checks only count the grant where they pass the request. The app's own pages do, and so do the reads in comments,
-reactions and mentions, each deciding what a visitor with only a link sees: comments come as a signed-out reader gets
-them, with names and no user ids, and who reacted shows only where it's public.
+with `INVALID_INPUT` when the record's page is on a host the cookie wouldn't reach from the host the link is shared on,
+rather than letting the grant fail without a word. With `hosts`, that's the organization's domain when the cookie
+reaches the record from there, and the app's own host otherwise, as [Links that grant access](#links-that-grant-access)
+describes. Read checks only count the grant where they pass the request. The app's own pages do, and so do the reads in
+comments, reactions and mentions, each deciding what a visitor with only a link sees: comments come as a signed-out
+reader gets them, with names and no user ids, and who reacted shows only where it's public.
 
 ## Clicks
 
@@ -189,13 +194,18 @@ them, with names and no user ids, and who reacted shows only where it's public.
 
 `GET {path}/{code}`:
 
-1. Reads the link by code: one read through the unique index.
-2. A link that doesn't exist, is turned off or has expired gets `notFound`.
-3. A record link's target is its subject type's `url`, for a subject type the feature still has. A URL link's is its
+1. With `hosts`, asks `resolve` whose links the request's host opens. A host that opens none gets `notFound` without
+   reading the link.
+2. Reads the link by code: one read through the unique index.
+3. A link that doesn't exist, is turned off, has expired, or isn't one the host opens gets `notFound`.
+4. A record link's target is its subject type's `url`, for a subject type the feature still has. A URL link's is its
    URL.
-4. Answers `302 Found` with the target as `Location` and `Cache-Control: private, no-store`, so turning a link off or
-   changing it takes effect at once. A link that grants access also sets the cookie.
-5. Records the click after the response.
+5. Answers `302 Found` with the target as `Location` and `Cache-Control: private, no-store`, so turning a link off or
+   changing it takes effect at once. A link that grants access also sets the cookie. With `hosts`, when that cookie
+   couldn't reach the record from this host, it answers `302 Found` to the same link where the cookie does reach it
+   instead, without the cookie or a click: on `baseUrl` when the cookie reaches the record from there, and on the
+   record's host otherwise.
+6. Records the click after the response.
 
 ## Expiry and turning a link off
 
@@ -247,21 +257,100 @@ event for the whole removal rather than one per link. The delete and its event a
 happens without the other. A record link whose record is gone, before the cleanup runs, still redirects; the app's own
 page answers for the missing record.
 
-## Custom domains
+## Organizations' domains
 
-Links open on whatever host serves the app today, and codes are unique across the app. Links on customers' own domains
-come once `@better-apps/domains` exists. The plan:
+An organization with a ready domain, a subdomain such as `acme.yourapp.com` or its own such as `links.acme.com`, can
+share its links there: `links.acme.com/s/abc123`. Short links never import the domains feature. The app connects them
+through `hosts`, usually with [`@better-apps/domains`](../../domains/docs/spec.md)' server-only `lookup` and
+`getPrimary`. The app's file imports the features, so `linkDomains()` returns the domains the app passes in once it
+exists, and throws before then, as the [README](../README.md#organizations-domains) shows:
 
-- Each request passes the route its `url`, so the route sees the host. The domains feature will resolve a host to its
+```ts
+baseUrl: "https://app.yourapp.com",
+hosts: {
+  resolve: async ({ hostname }) => {
+    if (hostname === "app.yourapp.com") {
+      return "app"
+    }
+    const match = await linkDomains().lookup({ hostname })
+    return match?.verified && match.orgId ? { orgId: match.orgId } : null
+  },
+  origin: async ({ orgId }) => {
+    if (orgId === null) {
+      return null
+    }
+    const primary = await linkDomains().getPrimary({ orgId })
+    return primary?.status === "active" ? `https://${primary.hostname}` : null
+  }
+}
+```
+
+`hosts` needs `baseUrl`, the app's own origin, which `resolve` calls `"app"`. An action can be called from an
+organization's domain, and the request's origin there doesn't open everyone's links.
+
+### Which host opens which links
+
+`resolve({ hostname, request })` runs for each link opened. `hostname` is the request URL's, lowercase and without its
+port or a trailing dot, so `Links.Acme.com.:443` is `links.acme.com`. Headers such as `X-Forwarded-Host` play no part.
+It returns:
+
+- `"app"`: the app's own host, which opens every link, such as ones shared before the organization had a domain.
+- `{ orgId }`: a domain the organization verified, which opens only the links that organization owns. A link a member
+  owns, even one made in the organization, stays on the app's host, and so does every link made outside any
   organization.
-- Opening a link on a customer's domain will only open that organization's links, and `shortUrl` will use the
-  organization's primary domain.
-- Codes reused across organizations, such as `pricing` on two customers' domains, will need uniqueness per domain. That
-  means adding the domain to the code's unique index, and a lookup by host and code, still one read.
-- The grant cookie is set on the host that opens the link. A link on a customer's domain grants access only where the
-  app serves that customer's records on the same domain, or a domain both are under. Otherwise making it fails, as
-  [Access through a link](#access-through-a-link) describes, so the domains feature will need to check where records
-  open on each domain.
+- `null`: any other host, such as a domain that's pending or failed, or one the app has never heard of. It opens none,
+  and the link isn't read.
+
+A link the host doesn't open answers as a missing one does, through `notFound`, which isn't told why. So
+`links.acme.com` never opens Globex's links and gives nothing away about which codes Globex has when they're opened.
+Codes stay unique across the app, so a code means the same link on every host that opens it, and opening one is still
+one read.
+
+An app without organizations, such as one whose workspace has its own domains, can return `"app"` for its workspace's
+ready domains, so they open every link.
+
+### Where links open
+
+Links open at the same `path` on every host: `links.acme.com/s/abc123`, not `links.acme.com/abc123`. A route at the root
+would match every one-segment path the framework passes to `app.handler`, on the app's own host too, while a literal
+`path` segment keeps links apart from the app's pages. On Workers with the `*/*` route, and with a framework catch-all
+route at `path`, every host already reaches the link route.
+
+### Short URLs
+
+`origin({ orgId })` gives the origin of an organization's short URLs, such as `https://links.acme.com`, or `null` for
+`baseUrl`. Links made outside any organization ask with `orgId` `null`. A person's own links made in an organization
+always use `baseUrl` without asking, since only the app's host opens them. It runs once per organization in a call, so
+`list` asks once for a page of one organization's links. It should name a host that opens the organization's links: its
+domain, or a host `resolve` calls `"app"`. An app's share dialog, and anything else that shows `shortUrl`, then shows
+the organization's primary domain once it's ready, and the app's host before then.
+
+### Links that grant access
+
+The grant cookie is set on the host that opens the link, and browsers only send it to that host, or to every host under
+`cookie.domain`. On a host outside `cookie.domain`, such as an organization's own domain, it's set for that host alone,
+since browsers drop a cookie for a domain that doesn't cover the host setting it.
+
+- A subdomain such as `acme.yourapp.com`, with records on `app.yourapp.com`, works with
+  `cookie: { domain: "yourapp.com" }`: the link is shared on the subdomain and grants access on the app's host.
+- A domain of the organization's own, such as `links.acme.com`, can't share a cookie with `app.yourapp.com`. A link that
+  grants access to a record there keeps its short URL on the app's host. Opened on the domain anyway, it sends the
+  visitor to the same link on `baseUrl`, which opens every link, when the cookie reaches the record from there, and on
+  the record's host otherwise. That host sets the cookie and counts the click. It's never the one the link was opened
+  on, so a link sends a visitor on once at most. The record's host only opens the link when `resolve` says it does.
+- A record the domain serves itself is reached from the domain, so such links are shared there. That's a record whose
+  `url` returns a path the app serves on every host, or an absolute URL on the domain, such as a white-label app's
+  `https://billing.acme.com/invoices/1` with `origin` returning `https://billing.acme.com`.
+- A record that neither the organization's domain nor `baseUrl` reaches can't have a link that grants access: `create`
+  refuses it with `INVALID_INPUT`.
+
+Writing the short URL of a link that grants access asks the record's `url`, to see which host reaches it. It's asked
+once per record in a call, so `list` asks once per record on the page, however many of its links there are.
+
+### Known limits
+
+- Codes are unique across the app, not per domain. Two organizations can't both have a custom code such as `pricing`,
+  and the second to ask gets `CONFLICT`, which tells it the code is taken.
 
 ## Core support
 
