@@ -63,6 +63,9 @@ interface Config {
   notFound: NonNullable<ShortLinksOptions["notFound"]>
 }
 
+/** An http or https URL, with any host, including `127.0.0.1`. */
+const httpUrl = z.url({ protocol: /^https?$/ })
+
 const refusedSchemes = new Set(["javascript:", "data:", "vbscript:", "file:"])
 
 const notFoundPage = () =>
@@ -84,11 +87,11 @@ function resolve(options: ShortLinksOptions): Config {
   }
   let baseUrl: string | undefined
   if (options.baseUrl !== undefined) {
-    const parsed = URL.canParse(options.baseUrl) ? new URL(options.baseUrl) : null
-    if (!parsed || (parsed.protocol !== "https:" && parsed.protocol !== "http:")) {
+    const parsed = httpUrl.safeParse(options.baseUrl)
+    if (!parsed.success) {
       throw new Error(`\`baseUrl\` must be an http or https URL, such as https://go.example.com.`)
     }
-    baseUrl = parsed.href.replace(/\/+$/, "")
+    baseUrl = new URL(parsed.data).href.replace(/\/+$/, "")
   }
   let hosts: Config["hosts"]
   if (options.hosts !== undefined) {
