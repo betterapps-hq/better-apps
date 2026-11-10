@@ -5,7 +5,7 @@ import { createBetterApps } from "better-apps"
 import { auth } from "./auth.server"
 import { db } from "./db/database.server"
 import { seedComments } from "./db/seed-comments.server"
-import { connectLinkDomains, features, publishDemoRecords, subjects } from "./features"
+import { features, linkHosts, publishDemoRecords, subjects } from "./features"
 
 /** Who requests act for: the person signed in with Better Auth. */
 export const identity = betterAuthIdentity(auth)
@@ -19,7 +19,7 @@ export const app = createBetterApps({
 })
 
 // Short links open on the workspace's domains, which the domains feature knows.
-connectLinkDomains(app.api.domains)
+linkHosts.connect(app.api.domains)
 
 // Node has no waitUntil, so responses wait for event delivery. A Worker would pass its waitUntil here.
 export const { api, handlers, client } = createStartBindings(app)

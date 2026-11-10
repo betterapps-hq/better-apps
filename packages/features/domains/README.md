@@ -68,6 +68,38 @@ again. Call `app.api.domains.removeAll({ orgId })` when an organization is delet
 - Errors are `DomainsError`s: `UNAUTHENTICATED`, `FORBIDDEN`, `NOT_FOUND`, `INVALID_INPUT`, `CONFLICT`,
   `LIMIT_EXCEEDED`, `RATE_LIMITED` and `PROVIDER_ERROR`, which answers 502.
 
+## Hosts for other features
+
+`domainHosts` gives a feature that serves organizations' domains, such as
+[short links](../short-links/README.md#organizations-domains), whose host a request is on and where an organization's
+links are shared, without that feature importing domains:
+
+```ts
+import { domainHosts } from "@better-apps/domains"
+
+export const linkHosts = domainHosts({ url: "https://app.yourapp.com" })
+const links = shortLinks({ baseUrl: "https://app.yourapp.com", hosts: linkHosts.hosts })
+
+// Features are created before the app, so connect its domains once it exists.
+const app = createBetterApps({
+  database,
+  identity,
+  features: [links, domains({ subdomains: { zone: "yourapp.com" } })]
+})
+linkHosts.connect(app.api.domains)
+```
+
+- `hosts.resolve({ hostname })` answers `"app"` for the app's own hostnames, `url`'s and any in `hostnames`. It answers
+  `{ orgId }` for an organization's `active` domain, or `"app"` in an app without organizations, and `null` for any
+  other host, such as a pending domain.
+- `hosts.origin({ orgId })` is the organization's primary domain once it's `active`, on `url`'s scheme and port, or
+  `null` for the app's own.
+- Both throw until `connect(app.api.domains)` runs.
+- `localSuffix`, such as `"yourapp.localhost"`, is for local development with `localHostnames()` only. Browsers can't
+  reach a custom domain such as `go.acme.com` on your machine, and domains refuses `.localhost` custom hostnames, so the
+  app answers a custom domain at `go.acme.com.yourapp.localhost` instead, since browsers send every name under
+  `localhost` to your machine. Its links are shared there too. Subdomains are reachable as they are.
+
 ## Checks
 
 A custom domain takes its hostname once a check finds its ownership record, `_verify.<hostname>` with the domain's own

@@ -261,28 +261,16 @@ page answers for the missing record.
 
 An organization with a ready domain, a subdomain such as `acme.yourapp.com` or its own such as `links.acme.com`, can
 share its links there: `links.acme.com/s/abc123`. Short links never import the domains feature. The app connects them
-through `hosts`, usually with [`@better-apps/domains`](../../domains/docs/spec.md)' server-only `lookup` and
-`getPrimary`. The app's file imports the features, so `linkDomains()` returns the domains the app passes in once it
-exists, and throws before then, as the [README](../README.md#organizations-domains) shows:
+through `hosts`, usually with [`@better-apps/domains`](../../domains/docs/spec.md#hosts-for-other-features)'
+`domainHosts`, which answers from domains' server-only `lookup` and `getPrimary`. The app's file imports the features,
+so the app connects its domains once it exists, as the [README](../README.md#organizations-domains) shows:
 
 ```ts
-baseUrl: "https://app.yourapp.com",
-hosts: {
-  resolve: async ({ hostname }) => {
-    if (hostname === "app.yourapp.com") {
-      return "app"
-    }
-    const match = await linkDomains().lookup({ hostname })
-    return match?.verified && match.orgId ? { orgId: match.orgId } : null
-  },
-  origin: async ({ orgId }) => {
-    if (orgId === null) {
-      return null
-    }
-    const primary = await linkDomains().getPrimary({ orgId })
-    return primary?.status === "active" ? `https://${primary.hostname}` : null
-  }
-}
+const linkHosts = domainHosts({ url: "https://app.yourapp.com" })
+
+shortLinks({ baseUrl: "https://app.yourapp.com", hosts: linkHosts.hosts })
+// Once the app is created:
+linkHosts.connect(app.api.domains)
 ```
 
 `hosts` needs `baseUrl`, the app's own origin, which `resolve` calls `"app"`. An action can be called from an
@@ -307,7 +295,7 @@ Codes stay unique across the app, so a code means the same link on every host th
 one read.
 
 An app without organizations, such as one whose workspace has its own domains, can return `"app"` for its workspace's
-ready domains, so they open every link.
+ready domains, so they open every link. `domainHosts` does.
 
 ### Where links open
 

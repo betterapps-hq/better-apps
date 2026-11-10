@@ -383,6 +383,49 @@ const match = await app.api.domains.lookup({ hostname: new URL(request.url).host
   hostnames exist.
 - `getPrimary({ orgId })` returns an organization's primary domain, or `null`.
 
+## Hosts for other features
+
+A feature that serves organizations' domains needs to know whose host a request is on and where an organization's links
+are shared. [Short links](../../short-links/docs/spec.md#organizations-domains) take both as `hosts`, without importing
+domains. `domainHosts` builds them from `lookup` and `getPrimary`:
+
+```ts
+const linkHosts = domainHosts({ url: "https://app.yourapp.com", hostnames: ["www.yourapp.com"] })
+shortLinks({ baseUrl: "https://app.yourapp.com", hosts: linkHosts.hosts })
+// Once the app is created:
+linkHosts.connect(app.api.domains)
+```
+
+| Option        | Default | What it does                                                                                           |
+| ------------- | ------- | ------------------------------------------------------------------------------------------------------ |
+| `url`         | none    | The app's own URL. Its hostname is the app's, and domains' origins use its scheme and port             |
+| `hostnames`   | none    | More hostnames that are the app's own, such as `localhost` beside `127.0.0.1`                          |
+| `localSuffix` | none    | For local development with `localHostnames()` only: answers custom domains under this `localhost` name |
+
+- `hosts.resolve({ hostname })` returns `"app"` for the app's own hostnames without a lookup. Otherwise it looks the
+  hostname up and returns `{ orgId }` for a `verified` domain, `"app"` for one in an app without organizations, and
+  `null` for a domain that isn't `active` or a hostname no domain holds.
+- `hosts.origin({ orgId })` returns the origin of the organization's primary domain once it's `active`, on `url`'s
+  scheme and port, such as `https://links.acme.com`, or `null` without one, which means the app's own.
+- Features are created before the app, and `app.api.domains` exists only once it is, so the app calls
+  `connect(app.api.domains)` then. Until it does, both throw an error that says so, rather than every domain answering
+  as unknown. A later `connect` replaces the earlier one.
+
+### Custom domains on your machine
+
+Browsers can't reach a customer's domain, such as `go.acme.com`, on a developer's machine, and domains refuses custom
+hostnames under `.localhost` (see [custom hostnames](#custom-hostnames)). Browsers send every name under `localhost` to
+the machine, so with `localSuffix: "yourapp.localhost"` the app answers a custom domain at
+`go.acme.com.yourapp.localhost`:
+
+- `resolve` strips the suffix from a hostname under it and looks the rest up. It answers only for a custom domain there,
+  and a custom domain only there, so `go.acme.com` itself answers `null`.
+- Subdomains are reachable as they are, such as `acme.yourapp.localhost` for the zone `yourapp.localhost`, and never at
+  an alias.
+- `origin` adds the suffix to a primary custom domain's hostname, so links are shared where the browser reaches them.
+- `domainHosts` throws for a suffix that isn't `localhost` or under it. It's for the local provider only, never
+  production.
+
 ## Events
 
 | Event                   | Data                  | When                                                                           |

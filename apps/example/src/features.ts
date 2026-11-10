@@ -2,14 +2,13 @@ import { elementAnchor } from "@better-apps/anchors"
 import { attachments } from "@better-apps/attachments"
 import { comments, commentSubjectTypes } from "@better-apps/comments"
 import {
+  domainHosts,
   domainModel,
   domains,
   localHostnames,
   type DnsRecord,
-  type Domain,
   type DomainRow,
-  type DomainsEventData,
-  type HostnameMatch
+  type DomainsEventData
 } from "@better-apps/domains"
 import { reactions } from "@better-apps/reactions"
 import { shortLinks } from "@better-apps/short-links"
@@ -124,60 +123,28 @@ const appUrl = new URL(
   process.env.BETTER_AUTH_URL ??
     (process.env.NODE_ENV === "production" ? "http://127.0.0.1:4191" : "http://127.0.0.1:4190")
 )
-const appHosts = new Set([appUrl.hostname, "127.0.0.1", "localhost"])
 
-/** The domains calls short links make. Short links never import domains, so the app connects them once it exists. */
-interface LinkDomains {
-  lookup(input: { hostname: string }): Promise<HostnameMatch | null>
-  getPrimary(input: { orgId: string | null }): Promise<Domain | null>
-}
-let connectedDomains: LinkDomains | undefined
-
-/** Lets short links ask the workspace's domains where links open, once the app is created. */
-export function connectLinkDomains(api: LinkDomains) {
-  connectedDomains = api
-}
-
-/** The workspace's domains, or an error that says they were never connected rather than every domain answering 404. */
-function linkDomains(): LinkDomains {
-  if (!connectedDomains) {
-    throw new Error("Short links can't ask about domains until connectLinkDomains(app.api.domains) runs.")
-  }
-  return connectedDomains
-}
+/**
+ * Where the workspace's links open: on the app's own address, and on the workspace's domains once they're ready. The
+ * custom domains it owns, such as `go.acme.com`, open in the dev server at `go.acme.com.better-invoices.localhost`.
+ * Short links never import domains, so `better-apps.server.ts` connects them once the app exists.
+ */
+export const linkHosts = domainHosts({
+  url: appUrl,
+  hostnames: ["127.0.0.1", "localhost"],
+  localSuffix: "better-invoices.localhost"
+})
 
 /**
  * Short links to invoices, at `/s/{code}` on the app and on the workspace's domains once they're ready. Whoever can see
  * an invoice can share it, and a link can let anyone who has it see the invoice without signing in. Invoices open on the
- * app's own address, where people are signed in, even from a link on a workspace domain.
+ * app's own address, where people are signed in, even from a link on a workspace domain. This app has no organizations,
+ * so a ready domain opens every link, and links are shared on the workspace's primary domain once it's ready.
  */
 const invoiceLinks = shortLinks({
   subjects: { invoice: { url: ({ subjectId }) => `${appUrl.origin}/invoices/${subjectId}`, grantView: true } },
   baseUrl: appUrl.origin,
-  hosts: {
-    // The app's own address opens every link, and a ready domain its organization's links. This app has no
-    // organizations, so the workspace's domains are the app's own. Any other host, such as a pending domain, opens none.
-    resolve: async ({ hostname }) => {
-      if (appHosts.has(hostname)) {
-        return "app"
-      }
-      const match = await linkDomains().lookup({ hostname })
-      if (!match?.verified) {
-        return null
-      }
-      return match.orgId === null ? "app" : { orgId: match.orgId }
-    },
-    // Links are shared on their organization's primary domain once it's ready, or the workspace's outside any
-    // organization. Short links keep a member's own links in an organization on the app's address, which opens them.
-    origin: async ({ orgId }) => {
-      const primary = await linkDomains().getPrimary({ orgId })
-      if (primary?.status !== "active") {
-        return null
-      }
-      // On the app's scheme and port, so the demo's domains open in the dev server.
-      return `${appUrl.protocol}//${primary.hostname}${appUrl.port ? `:${appUrl.port}` : ""}`
-    }
-  }
+  hosts: linkHosts.hosts
 })
 
 /** Files up to 10 MB. */
