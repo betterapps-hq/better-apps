@@ -146,7 +146,8 @@ attachments({
 ```
 
 - `subjects` lists the subject types files can be attached to. The app or a feature must declare each one. For each:
-  - `canUpload(args)` says who can add files to a record. Everyone who can see it, by default.
+  - `canUpload(args)` says who can add files to a record, reorder them, and take off the ones they attached. Everyone
+    who can see it, by default.
   - `canModerate(args)` says who can take anyone's files off a record. Nobody, by default. Anyone who can see the record
     can take off the files they attached.
   - `contentTypes` lists the media types allowed, exactly or as `type/*`. Any, by default.
@@ -202,8 +203,10 @@ All of them go through subject types, so a file follows its record's access.
   from a browser, or anyone's draft id would do. Without an `author`, it attaches anyone's drafts, and files kept on
   their own only in their organization, credited to no one (`attachedBy: ""`), so only `canModerate` takes them off.
   Attach when the person submits, not from a later job such as a payment webhook: a draft expires after `draftTtl`.
-- **Taking a file off a record** needs the person who attached it, or someone `canModerate` allows. **Reordering** needs
-  `canUpload`.
+- **Taking a file off a record** needs the person who attached it, while `canUpload` allows them, or someone
+  `canModerate` allows. So one rule says when a record's files can change: a locked record, such as a confirmed booking,
+  keeps the files on it, even from the person who attached them, until a moderator takes them off. **Reordering** needs
+  `canUpload` too.
 - **Deleting a file kept on its own** needs its owner, or a member `canManage` allows. It comes off every record too.
 - **Server code** that passes neither an actor nor a request is trusted: it reads and removes anything, and attaches as
   above. It can't upload, since a file is always someone's.

@@ -219,7 +219,10 @@ export async function attach(config: Config, context: Context): Promise<{ files:
   }
 }
 
-/** Takes a file off a record: the person who put it there, a moderator, or trusted server code. */
+/**
+ * Takes a file off a record: the person who put it there while `canUpload` allows them, so a locked record keeps its
+ * files, a moderator, or trusted server code.
+ */
 export async function detach(config: Config, context: Context): Promise<{ removed: boolean }> {
   const input = context.input as DetachInput
   const settings = settingsOf(config, input.subjectType)
@@ -255,6 +258,9 @@ export async function detach(config: Config, context: Context): Promise<{ remove
       (await settings.rules.canModerate({ actor, ...ref })))
   if (!own && !moderator) {
     throw new AttachmentsError("FORBIDDEN", "You can't remove other people's files here.")
+  }
+  if (!moderator && actor && settings.rules.canUpload && !(await settings.rules.canUpload({ actor, ...ref }))) {
+    throw new AttachmentsError("FORBIDDEN", "You can't remove files here.")
   }
   try {
     await removeLinks(config, context, [link], own ? "detached" : "moderated")

@@ -74,9 +74,10 @@ export default {
 ```
 
 - `storage` keeps the bytes. `memoryStorage()` from this package keeps them in memory, for tests and demos.
-- `subjects` lists the subject types files can go on. `canUpload` says who adds files, everyone who can see the record
-  by default; `canModerate` says who takes anyone's off, nobody by default. `contentTypes` takes exact types or
-  `image/*`, `maxSize` is in bytes, 25 MiB by default, and `maxFiles` is from 1 to 30, 10 by default.
+- `subjects` lists the subject types files can go on. `canUpload` says who adds files, reorders them and takes off their
+  own, everyone who can see the record by default; `canModerate` says who takes anyone's off, nobody by default.
+  `contentTypes` takes exact types or `image/*`, `maxSize` is in bytes, 25 MiB by default, and `maxFiles` is from 1 to
+  30, 10 by default.
 - `standalone` allows files on their own, owned by a person or an organization. `canManage` says who deletes an
   organization's files.
 - `secret`, at least 32 characters, signs download URLs so they work without the request's sign-in for an hour, such as

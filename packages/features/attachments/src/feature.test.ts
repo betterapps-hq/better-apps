@@ -605,6 +605,19 @@ describe("drafts", () => {
     }
   })
 
+  it("stay on a locked record, even from the person who attached them, until a moderator takes them off", async () => {
+    const { api, as, upload } = setup()
+    const locked = { subjectType: "invoice", subjectId: "inv-locked" } as const
+    const draft = await upload("bob", { subjectType: "invoice" })
+    // Server code puts it there for Bob, as a booking's required documents are, after which the record locks.
+    await api.attach({ ...locked, fileIds: [draft.file.id] }, { author: { type: "user", userId: "bob" } })
+    await expect(api.detach({ ...locked, fileId: draft.file.id }, as("bob"))).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: "You can't remove files here."
+    })
+    expect(await api.detach({ ...locked, fileId: draft.file.id }, as("ada"))).toEqual({ removed: true })
+  })
+
   it("go on records from trusted server code acting for no one, credited to no one", async () => {
     const { api, as, upload } = setup()
     const draft = await upload("solo", { subjectType: "booking" })
