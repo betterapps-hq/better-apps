@@ -858,6 +858,12 @@ importers:
 
   packages/features/short-links:
     dependencies:
+      '@date-fns/tz':
+        specifier: ^1.5.0
+        version: 1.5.0
+      date-fns:
+        specifier: ^4.4.0
+        version: 4.4.0
       zod:
         specifier: ^4.6.7
         version: 4.6.7

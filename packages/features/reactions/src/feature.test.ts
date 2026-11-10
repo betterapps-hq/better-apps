@@ -700,13 +700,11 @@ describe("with comments", () => {
     const count = () => database.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${reactionModel}`).get()
     const inOrg = (orgId: string) =>
       database.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${reactionModel} WHERE orgId = ?`).get(orgId)
-    // The event id of the thread's latest move or deletion, as reactions hold it.
+    // Where reactions expect the thread to be, from the move they follow, or deleted.
     const turn = (threadId: string) =>
-      (
-        database.sqlite
-          .prepare(`SELECT eventId FROM ${moveModel} WHERE id = ?`)
-          .get(JSON.stringify(["comments.thread", threadId])) as { eventId: string } | undefined
-      )?.eventId
+      database.sqlite
+        .prepare(`SELECT toOrgId, deleted FROM ${moveModel} WHERE id = ?`)
+        .get(JSON.stringify(["comments.thread", threadId]))
     return {
       api: app.api.reactions,
       emit: app.api.comments.emit,
@@ -722,6 +720,7 @@ describe("with comments", () => {
       events
     }
   }
+  const backdated = { createdAt: new Date(Date.now() - 60 * 24 * 60 * 60_000) }
   const moved = (threadId: string, toOrgId: string, commentIds: string[], fromOrgId = "acme") => ({
     type: "thread.moved",
     data: { thread: { id: threadId, orgId: toOrgId }, fromOrgId, commentIds }
@@ -823,77 +822,118 @@ describe("with comments", () => {
     expect(setup.count()).toEqual({ count: 0 })
   })
 
+  // A move of a thread whose 15 comments have 30 reactions takes two pages: 20 now, and the last 10 in the next run.
   it("never let an older move's later pages undo a newer move, nor report it finished", async () => {
     const setup = withComments()
-    const ids = await busyThread(setup, 20)
+    const ids = await busyThread(setup, 15)
     const { inOrg } = setup
     // The move to globex leaves its last page for later, and the thread moves on before that runs.
     setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
     await setup.emit(moved("t-big", "globex", ids))
-    expect(inOrg("globex")).toEqual({ count: 30 })
+    expect(inOrg("globex")).toEqual({ count: 20 })
     setup.threads.set("t-big", { orgId: "initech", comments: new Set(ids) })
     await setup.deliver()
     // The older job's last page doesn't move what's left to globex, where the thread no longer is.
-    expect(inOrg("globex")).toEqual({ count: 30 })
+    expect(inOrg("globex")).toEqual({ count: 20 })
     expect(inOrg("acme")).toEqual({ count: 10 })
     await setup.deliver()
     expect(setup.events("move.finished")).toEqual([])
     // The newer move takes everything along, and is the only one reported finished.
-    await setup.emit(moved("t-big", "initech", ids))
+    await setup.emit(moved("t-big", "initech", ids, "globex"))
     await setup.deliver()
     await setup.deliver()
-    await setup.deliver()
-    expect(inOrg("initech")).toEqual({ count: 40 })
+    expect(inOrg("initech")).toEqual({ count: 30 })
     expect(setup.events("move.finished").map((event) => event.data)).toMatchObject([{ toOrgId: "initech" }])
   })
 
-  it("stop an older move's page when a newer move lands while it runs, keeping the newer move's work", async () => {
+  it("fail an older move's page when a newer move lands after its check, keeping the newer move's work", async () => {
     const setup = withComments()
-    const ids = await busyThread(setup, 20)
+    const ids = await busyThread(setup, 15)
     setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
     await setup.emit(moved("t-big", "globex", ids))
-    expect(setup.inOrg("globex")).toEqual({ count: 30 })
-    // Right after the next page's check, the thread moves to initech, and the newer move takes the turn and moves
-    // every reaction there before the older page writes.
-    setup.hooks.afterOrg = () => {
-      setup.threads.set("t-big", { orgId: "initech", comments: new Set(ids) })
-      setup.database.sqlite.prepare(`UPDATE ${moveModel} SET eventId = 'newer'`).run()
-      setup.database.sqlite.prepare(`UPDATE ${reactionModel} SET orgId = 'initech'`).run()
-    }
+    expect(setup.inOrg("globex")).toEqual({ count: 20 })
+    // Once the next page has passed its check and goes to read its reactions, the thread moves to initech, and the
+    // newer move takes the turn and moves every reaction there, so only the page's batch can tell.
+    const { sqlite } = setup.database
+    const prepare = sqlite.prepare.bind(sqlite)
+    let landed = false
+    Object.assign(sqlite, {
+      prepare: (sql: string) => {
+        if (!landed && sql.includes('from "reaction"') && sql.includes("<>")) {
+          landed = true
+          setup.threads.set("t-big", { orgId: "initech", comments: new Set(ids) })
+          prepare(`UPDATE ${moveModel} SET toOrgId = 'initech'`).run()
+          prepare(`UPDATE ${reactionModel} SET orgId = 'initech'`).run()
+        }
+        return prepare(sql)
+      }
+    })
     await setup.deliver()
     await setup.deliver()
-    expect(setup.inOrg("initech")).toEqual({ count: 40 })
+    expect(landed).toBe(true)
+    expect(setup.inOrg("initech")).toEqual({ count: 30 })
     expect(setup.events("move.finished")).toEqual([])
   })
 
-  it("report only the latest of a thread's moves finished when it moves away and back", async () => {
+  it("let the move that committed last run, even when its event says it's older", async () => {
     const setup = withComments()
-    const ids = await busyThread(setup, 20)
+    const ids = await busyThread(setup, 15)
+    setup.threads.set("t-big", { orgId: "initech", comments: new Set(ids) })
+    await setup.emit(moved("t-big", "initech", ids))
+    expect(setup.inOrg("initech")).toEqual({ count: 20 })
+    // A move dated two months back, such as an import's, commits after it and leaves the thread in globex.
+    setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
+    await setup.emit(moved("t-big", "globex", ids, "initech"), backdated)
+    await setup.deliver()
+    await setup.deliver()
+    expect(setup.inOrg("globex")).toEqual({ count: 30 })
+    expect(setup.events("move.finished").map((event) => event.data)).toMatchObject([{ toOrgId: "globex" }])
+  })
+
+  it("keep a move's turn while it runs, whenever its event was dated", async () => {
+    const setup = withComments()
+    const ids = await busyThread(setup, 15)
+    setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
+    await setup.emit(moved("t-big", "globex", ids), backdated)
+    // Another thread's move clears turns no move has written for 30 days, which this one's isn't.
+    setup.threads.set("t-1", { orgId: "globex", comments: new Set(["c-1", "c-2"]) })
+    await setup.emit(moved("t-1", "globex", ["c-1", "c-2"]))
+    expect(setup.turn("t-big")).toEqual({ toOrgId: "globex", deleted: 0 })
+    await setup.deliver()
+    await setup.deliver()
+    expect(setup.inOrg("globex")).toEqual({ count: 30 })
+  })
+
+  it("run both moves to an organization a thread moves away from and back to, each reporting finished", async () => {
+    const setup = withComments()
+    const ids = await busyThread(setup, 15)
     setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
     await setup.emit(moved("t-big", "globex", ids))
     setup.threads.set("t-big", { orgId: "acme", comments: new Set(ids) })
     await setup.emit(moved("t-big", "acme", ids, "globex"))
     setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
     await setup.emit(moved("t-big", "globex", ids))
-    const latest = setup.turn("t-big")
     await setup.deliver()
     await setup.deliver()
     await setup.deliver()
-    expect(setup.inOrg("globex")).toEqual({ count: 40 })
-    expect(setup.events("move.finished").map((event) => event.data)).toMatchObject([{ moveEventId: latest }])
+    expect(setup.inOrg("globex")).toEqual({ count: 30 })
+    const finished = setup
+      .events("move.finished")
+      .map((event) => event.data as { toOrgId: string; moveEventId: string })
+    expect(finished.map((data) => data.toOrgId)).toEqual(["globex", "globex"])
+    expect(new Set(finished.map((data) => data.moveEventId)).size).toBe(2)
   })
 
   it("never let an older move take over when its delivery is retried after a newer one", async () => {
     const setup = withComments()
-    const ids = await busyThread(setup, 20)
+    const ids = await busyThread(setup, 15)
     // The move to globex moves its first page, then its delivery fails, and is retried once its backoff passes.
     setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
     setup.hooks.failOnce = "thread.moved"
     await setup.emit(moved("t-big", "globex", ids))
-    expect(setup.inOrg("globex")).toEqual({ count: 30 })
+    expect(setup.inOrg("globex")).toEqual({ count: 20 })
     setup.threads.set("t-big", { orgId: "initech", comments: new Set(ids) })
     await setup.emit(moved("t-big", "initech", ids, "globex"))
-    const newer = setup.turn("t-big")
     vi.useFakeTimers({ toFake: ["Date"] })
     try {
       vi.setSystemTime(Date.now() + 60_000)
@@ -903,31 +943,32 @@ describe("with comments", () => {
     } finally {
       vi.useRealTimers()
     }
-    expect(setup.turn("t-big")).toBe(newer)
-    expect(setup.inOrg("initech")).toEqual({ count: 40 })
-    expect(setup.events("move.finished").map((event) => event.data)).toMatchObject([{ moveEventId: newer }])
+    expect(setup.turn("t-big")).toEqual({ toOrgId: "initech", deleted: 0 })
+    expect(setup.inOrg("initech")).toEqual({ count: 30 })
+    expect(setup.events("move.finished").map((event) => event.data)).toMatchObject([{ toOrgId: "initech" }])
   })
 
   it("stop a move to no organization when its thread is deleted, reporting no move.finished", async () => {
     const setup = withComments()
-    const ids = await busyThread(setup, 20)
+    const ids = await busyThread(setup, 15)
     setup.threads.set("t-big", { orgId: "", comments: new Set(ids) })
     await setup.emit(moved("t-big", "", ids))
-    expect(setup.inOrg("")).toEqual({ count: 30 })
+    expect(setup.inOrg("")).toEqual({ count: 20 })
     setup.threads.delete("t-big")
     await setup.emit({ type: "thread.deleted", data: { thread: { id: "t-big", orgId: "" }, commentIds: ids } })
     await setup.deliver()
     await setup.deliver()
     expect(setup.count()).toEqual({ count: 0 })
+    expect(setup.turn("t-big")).toEqual({ toOrgId: "", deleted: 1 })
     expect(setup.events("move.finished")).toEqual([])
   })
 
   it("stop a move when its thread is deleted between pages, reporting no move.finished", async () => {
     const setup = withComments()
-    const ids = await busyThread(setup, 20)
+    const ids = await busyThread(setup, 15)
     setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
     await setup.emit(moved("t-big", "globex", ids))
-    expect(setup.inOrg("globex")).toEqual({ count: 30 })
+    expect(setup.inOrg("globex")).toEqual({ count: 20 })
     setup.threads.delete("t-big")
     await setup.deliver()
     await setup.deliver()
@@ -938,19 +979,19 @@ describe("with comments", () => {
 
   it("stop an older move that's still paging when its thread moves back, which takes every reaction back", async () => {
     const setup = withComments()
-    const ids = await busyThread(setup, 20)
+    const ids = await busyThread(setup, 15)
     await setup.api.react({ subjectType: "comments.thread", subjectId: "t-big", emoji: "👀" }, setup.as("ada"))
     setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
     await setup.emit(moved("t-big", "globex", ids))
-    // The first page takes the thread's reaction and 29 of its comments'.
-    expect(setup.inOrg("globex")).toEqual({ count: 30 })
+    // The first page takes the thread's reaction and 19 of its comments'.
+    expect(setup.inOrg("globex")).toEqual({ count: 20 })
     setup.threads.set("t-big", { orgId: "acme", comments: new Set(ids) })
     await setup.emit(moved("t-big", "acme", ids, "globex"))
     await setup.deliver()
     await setup.deliver()
     await setup.deliver()
     expect(setup.inOrg("globex")).toEqual({ count: 0 })
-    expect(setup.inOrg("acme")).toEqual({ count: 41 })
+    expect(setup.inOrg("acme")).toEqual({ count: 31 })
     expect(setup.events("move.finished").map((event) => event.data)).toMatchObject([
       { fromOrgId: "globex", toOrgId: "acme" }
     ])
@@ -958,48 +999,48 @@ describe("with comments", () => {
 
   it("keep moving a thread's comments when the job's first comment was deleted before its delivery", async () => {
     const setup = withComments()
-    const ids = await busyThread(setup, 20)
+    const ids = await busyThread(setup, 15)
     // The thread moves, and its first comment is deleted before the move is delivered, so comments no longer find it.
     setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids.slice(1)) })
     await setup.emit(moved("t-big", "globex", ids))
     await setup.deliver()
     expect(setup.inOrg("acme")).toEqual({ count: 0 })
-    expect(setup.inOrg("globex")).toEqual({ count: 40 })
+    expect(setup.inOrg("globex")).toEqual({ count: 30 })
     // The deleted comment's own cleanup takes its reactions, wherever they are.
     await setup.emit({ type: "comment.deleted", data: { comment: { id: "big-0" } } })
-    expect(setup.inOrg("globex")).toEqual({ count: 38 })
+    expect(setup.inOrg("globex")).toEqual({ count: 28 })
     await setup.deliver()
     expect(setup.events("move.finished")).toHaveLength(1)
   })
 
   it("keep moving a thread's comments when the next page's first comment was deleted between pages", async () => {
     const setup = withComments()
-    const ids = await busyThread(setup, 20)
+    const ids = await busyThread(setup, 15)
     setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
     await setup.emit(moved("t-big", "globex", ids))
-    expect(setup.inOrg("globex")).toEqual({ count: 30 })
+    expect(setup.inOrg("globex")).toEqual({ count: 20 })
     // The next page starts at the first comment again, which is deleted before that page runs.
     setup.threads.get("t-big")?.comments.delete("big-0")
     await setup.deliver()
     expect(setup.inOrg("acme")).toEqual({ count: 0 })
-    expect(setup.inOrg("globex")).toEqual({ count: 40 })
+    expect(setup.inOrg("globex")).toEqual({ count: 30 })
     await setup.deliver()
     expect(setup.events("move.finished")).toHaveLength(1)
   })
 
   it("move a big thread's reactions a page per delivery, telling browsers with each page", async () => {
     const setup = withComments()
-    const ids = await busyThread(setup, 20)
+    const ids = await busyThread(setup, 15)
     setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
     await setup.emit(moved("t-big", "globex", ids))
     const told = () =>
       new Set(setup.events("subject.moved").map((event) => (event.data as { subjectId: string }).subjectId)).size
-    // A page of 30 moves now with its records' subject.moved, and the rest in the next run.
-    expect(setup.inOrg("globex")).toEqual({ count: 30 })
-    expect(told()).toBeGreaterThanOrEqual(15)
+    // A page of 20 moves now with its records' subject.moved, and the rest in the next run.
+    expect(setup.inOrg("globex")).toEqual({ count: 20 })
+    expect(told()).toBeGreaterThanOrEqual(10)
     await setup.deliver()
-    expect(setup.inOrg("globex")).toEqual({ count: 40 })
-    expect(told()).toBe(20)
+    expect(setup.inOrg("globex")).toEqual({ count: 30 })
+    expect(told()).toBe(15)
     // The last page leaves `move.finished` for the next run, once.
     expect(setup.events("move.finished")).toEqual([])
     await setup.deliver()
@@ -1019,13 +1060,13 @@ describe("with comments", () => {
 
   it("report a move finished once when its last page's delivery is retried", async () => {
     const setup = withComments()
-    const ids = await busyThread(setup, 20)
+    const ids = await busyThread(setup, 15)
     setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
     await setup.emit(moved("t-big", "globex", ids))
     // The last page moves, then its delivery fails before it's done, and is retried once its backoff passes.
     setup.hooks.failOnce = "cleanup.continued"
     expect(await setup.deliver()).toMatchObject({ failed: 1 })
-    expect(setup.inOrg("globex")).toEqual({ count: 40 })
+    expect(setup.inOrg("globex")).toEqual({ count: 30 })
     vi.useFakeTimers({ toFake: ["Date"] })
     try {
       vi.setSystemTime(Date.now() + 60_000)

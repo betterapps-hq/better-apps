@@ -171,7 +171,6 @@ export const reactionEvents: {
     subjectType: string;
     subjectId: string;
     };
-    movedAt: string;
     }) | undefined;
     }>;
 };
@@ -190,8 +189,9 @@ export const reactionModel = "reaction";
 // @public
 export type ReactionMove = {
     id: string;
-    eventId: string;
-    eventAt: Date;
+    toOrgId: string;
+    deleted: boolean;
+    heldAt: Date;
 };
 
 // @public
@@ -247,7 +247,6 @@ export function reactions<const Options extends ReactionsOptions>(options: Optio
         subjectType: string;
         subjectId: string;
         };
-        movedAt: string;
         }) | undefined;
         }>;
     };

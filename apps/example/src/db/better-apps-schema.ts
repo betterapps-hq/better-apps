@@ -102,10 +102,11 @@ export const reactionMove = sqliteTable(
   "reaction_move",
   {
     id: text("id").primaryKey(),
-    eventId: text("event_id").notNull(),
-    eventAt: integer("event_at", { mode: "timestamp_ms" }).notNull()
+    toOrgId: text("to_org_id").default("").notNull(),
+    deleted: integer("deleted", { mode: "boolean" }).default(false).notNull(),
+    heldAt: integer("held_at", { mode: "timestamp_ms" }).notNull()
   },
-  (table) => [index("reaction_move_by_time").on(table.eventAt)]
+  (table) => [index("reaction_move_by_time").on(table.heldAt)]
 )
 
 export const shortLink = sqliteTable(
@@ -132,6 +133,19 @@ export const shortLink = sqliteTable(
     index("short_link_by_org").on(table.orgId, table.createdAt),
     index("short_link_by_subject").on(table.subjectType, table.subjectId, table.createdAt)
   ]
+)
+
+export const shortLinkClick = sqliteTable(
+  "short_link_click",
+  {
+    id: text("id").primaryKey(),
+    linkId: text("link_id")
+      .notNull()
+      .references(() => shortLink.id, { onDelete: "cascade" }),
+    clickedAt: integer("clicked_at", { mode: "timestamp_ms" }).notNull(),
+    slot: integer("slot", { mode: "timestamp_ms" }).notNull()
+  },
+  (table) => [index("short_link_click_by_link").on(table.linkId, table.slot)]
 )
 
 export const domain = sqliteTable(
@@ -259,6 +273,17 @@ export const commentRelations = relations(comment, ({ one }) => ({
   commentThread: one(commentThread, {
     fields: [comment.threadId],
     references: [commentThread.id]
+  })
+}))
+
+export const shortLinkRelations = relations(shortLink, ({ many }) => ({
+  shortLinkClicks: many(shortLinkClick)
+}))
+
+export const shortLinkClickRelations = relations(shortLinkClick, ({ one }) => ({
+  shortLink: one(shortLink, {
+    fields: [shortLinkClick.linkId],
+    references: [shortLink.id]
   })
 }))
 
