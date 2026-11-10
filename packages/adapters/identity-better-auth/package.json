@@ -39,7 +39,7 @@
     "@repo/typescript-config": "workspace:*",
     "@types/node": "24.19.2",
     "@vitest/coverage-v8": "catalog:",
-    "better-auth": "1.7.14",
+    "better-auth": "1.7.18",
     "typescript": "catalog:",
     "vitest": "catalog:",
     "vite-plus": "catalog:"

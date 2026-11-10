@@ -37,7 +37,7 @@
     "knip": "^6.44.1",
     "vite-plus": "catalog:",
     "@betterapps/playbook": "github:betterapps-hq/playbook",
-    "rulesync": "43.5.0",
+    "rulesync": "43.7.0",
     "skills": "1.7.6"
   }
 }
