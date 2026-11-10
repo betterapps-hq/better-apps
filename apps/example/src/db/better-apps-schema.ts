@@ -126,6 +126,19 @@ export const shortLink = sqliteTable(
   ]
 )
 
+export const shortLinkClick = sqliteTable(
+  "short_link_click",
+  {
+    id: text("id").primaryKey(),
+    linkId: text("link_id")
+      .notNull()
+      .references(() => shortLink.id, { onDelete: "cascade" }),
+    clickedAt: integer("clicked_at", { mode: "timestamp_ms" }).notNull(),
+    slot: integer("slot", { mode: "timestamp_ms" }).notNull()
+  },
+  (table) => [index("short_link_click_by_link").on(table.linkId, table.slot)]
+)
+
 export const domain = sqliteTable(
   "domain",
   {
@@ -251,6 +264,17 @@ export const commentRelations = relations(comment, ({ one }) => ({
   commentThread: one(commentThread, {
     fields: [comment.threadId],
     references: [commentThread.id]
+  })
+}))
+
+export const shortLinkRelations = relations(shortLink, ({ many }) => ({
+  shortLinkClicks: many(shortLinkClick)
+}))
+
+export const shortLinkClickRelations = relations(shortLinkClick, ({ one }) => ({
+  shortLink: one(shortLink, {
+    fields: [shortLinkClick.linkId],
+    references: [shortLink.id]
   })
 }))
 

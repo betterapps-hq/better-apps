@@ -6,10 +6,14 @@ import type { LinkPage } from "./feature.js"
 import type { ShortLink } from "./link.js"
 import type { CreateLinkInput, OwnerType, ShortLinksOptions, SubjectTypeOf, UpdateLinkInput } from "./options.js"
 
-export type { LinkPage } from "./feature.js"
+export type { ClicksByDay, ClickTotals, LinkPage } from "./feature.js"
 export type { ShortLink, ShortLinkTarget } from "./link.js"
 export type {
+  ClicksByDayInput,
+  ClickTotalsInput,
   CreateLinkInput,
+  DayRangeInput,
+  LinkSort,
   LinkSubject,
   LinkTarget,
   OwnerType,

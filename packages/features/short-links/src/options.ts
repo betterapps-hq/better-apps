@@ -104,6 +104,31 @@ export interface LinkHosts {
   origin?: ((args: LinkOriginArgs) => string | null | Promise<string | null>) | undefined
 }
 
+/** What `source.urls` receives: the web address a link is about to redirect to. */
+export interface SourceUrlArgs {
+  url: URL
+}
+
+/**
+ * Tells the page a link opens which link opened it, as a query parameter on the redirect, so the app can record where a
+ * visit came from, such as a booking's source. It reaches the page whatever host it's on, which a cookie on the link's
+ * host wouldn't.
+ */
+export interface LinkSource {
+  /** The query parameter that carries the link's code, such as `via` in `/book/intro?via=intro-linkedin`. */
+  param: string
+  /**
+   * Whether links to web addresses carry it too: `true`, a check per address, such as the app's own sites, or `false`,
+   * the default, so codes don't reach other sites. Links to records carry it.
+   */
+  urls?: boolean | ((args: SourceUrlArgs) => boolean | Promise<boolean>) | undefined
+  /**
+   * Whether links that let people see a record carry it too. Their code is all it takes to see the record, so it would
+   * show in the page's address, its history, its logs and any analytics on the page. `false` by default.
+   */
+  grants?: boolean | undefined
+}
+
 /** How short links are set up in an app. */
 export interface ShortLinksOptions {
   /** The subject types links can point to, keyed by name. The app or a feature declares each one. */
@@ -140,6 +165,8 @@ export interface ShortLinksOptions {
    * so it can't tell visitors which codes were links once.
    */
   notFound?: ((args: NotFoundArgs) => Response | Promise<Response>) | undefined
+  /** Adds the link's code to the address it redirects to, so the page knows which link opened it. Off by default. */
+  source?: LinkSource | undefined
 }
 
 /** Who owns a link: a user, or an organization. */
@@ -198,9 +225,45 @@ export interface ListLinksInput<SubjectType extends string = string> {
    * ones made in their current organization, and their own made outside any.
    */
   owner?: OwnerType | undefined
+  /**
+   * `newest`, the default, lists links newest first. `clicks` lists the most opened first, then the newest, such as for
+   * top links. Clicks keep coming while someone pages, so a link can move between pages.
+   */
+  sort?: LinkSort | undefined
   cursor?: string | undefined
   /** 20 by default, at most 50. */
   limit?: number | undefined
+}
+
+/** The order of `list`: newest first, or most opened first. */
+export type LinkSort = "newest" | "clicks"
+
+/** A range of calendar days in a time zone, both days included, such as the last 30 days where the viewer is. */
+export interface DayRangeInput {
+  /** The first day, as `YYYY-MM-DD`. */
+  from: string
+  /** The last day, as `YYYY-MM-DD`. Up to 366 days after `from`, counting both. */
+  to: string
+  /** The IANA time zone the days are in, such as `Europe/Paris`. `UTC` by default. */
+  timeZone?: string | undefined
+}
+
+/** The input of `clicksByDay`: a link, by its `id`, and the days to count its clicks on. */
+export interface ClicksByDayInput extends DayRangeInput {
+  id: string
+}
+
+/** The input of `clickTotals`: links, by their `id`s, and the days to count their clicks over. */
+export interface ClickTotalsInput extends DayRangeInput {
+  /** Up to 50 link ids, such as a page of `list`. */
+  ids: readonly string[]
+}
+
+/** The input of `recordClicks`: a link, by its `id`, and when it was opened. */
+export interface RecordClicksInput {
+  id: string
+  /** Up to 500 times, from 2011 to now. */
+  at: readonly (Date | string)[]
 }
 
 /** The subject types a set of options lets links point to. */

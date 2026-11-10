@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "210ab1fc-cef2-470b-92f3-74a78ec53a57",
+  "id": "593a003e-00ee-4399-8465-7e08f768ac04",
   "prevId": "4c020869-f2eb-4ee5-99ed-bcab4294b243",
   "tables": {
     "invoice": {
@@ -1536,14 +1536,6 @@
           "notNull": true,
           "autoincrement": false
         },
-        "scope": {
-          "name": "scope",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "''"
-        },
         "owner": {
           "name": "owner",
           "type": "text",
@@ -1641,9 +1633,9 @@
         }
       },
       "indexes": {
-        "short_link_code": {
-          "name": "short_link_code",
-          "columns": ["code", "scope"],
+        "short_link_code_unique": {
+          "name": "short_link_code_unique",
+          "columns": ["code"],
           "isUnique": true
         },
         "short_link_by_owner": {
@@ -1663,6 +1655,60 @@
         }
       },
       "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "short_link_click": {
+      "name": "short_link_click",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "link_id": {
+          "name": "link_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "clicked_at": {
+          "name": "clicked_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "slot": {
+          "name": "slot",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "short_link_click_by_link": {
+          "name": "short_link_click_by_link",
+          "columns": ["link_id", "slot"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "short_link_click_link_id_short_link_id_fk": {
+          "name": "short_link_click_link_id_short_link_id_fk",
+          "tableFrom": "short_link_click",
+          "tableTo": "short_link",
+          "columnsFrom": ["link_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}

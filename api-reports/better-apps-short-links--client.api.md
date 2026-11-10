@@ -19,6 +19,35 @@ export type AppLinkSubjectType<App> = ShortLinksFeatureOf<App> extends {
 } ? SubjectTypeOf<Options> : string;
 
 // @public
+export interface ClicksByDay {
+    days: {
+        date: string;
+        clicks: number;
+    }[];
+    total: number;
+}
+
+// @public
+export interface ClicksByDayInput extends DayRangeInput {
+    // (undocumented)
+    id: string;
+}
+
+// @public
+export interface ClickTotals {
+    links: {
+        id: string;
+        clicks: number;
+    }[];
+    total: number;
+}
+
+// @public
+export interface ClickTotalsInput extends DayRangeInput {
+    ids: readonly string[];
+}
+
+// @public
 export interface CreateLinkInput<SubjectType extends string = string> {
     code?: string | undefined;
     expiresAt?: Date | string | undefined;
@@ -30,6 +59,13 @@ export interface CreateLinkInput<SubjectType extends string = string> {
 
 // @public
 export function createShortLinksClient<App = BetterApp>(client: BetterAppsClient<App>): ShortLinksClient<AppLinkSubjectType<App>>;
+
+// @public
+export interface DayRangeInput {
+    from: string;
+    timeZone?: string | undefined;
+    to: string;
+}
 
 // @public
 export interface LinkFilter<SubjectType extends string = string> {
@@ -58,6 +94,9 @@ export interface LinkPage {
     // (undocumented)
     links: ShortLink[];
 }
+
+// @public
+export type LinkSort = "newest" | "clicks";
 
 // @public
 export interface LinkSubject<SubjectType extends string = string> {
@@ -128,6 +167,8 @@ export interface ShortLinksOptions {
     // Warning: (ae-forgotten-export) The symbol "NotFoundArgs" needs to be exported by the entry point client.d.ts
     notFound?: ((args: NotFoundArgs) => Response | Promise<Response>) | undefined;
     path?: string | undefined;
+    // Warning: (ae-forgotten-export) The symbol "LinkSource" needs to be exported by the entry point client.d.ts
+    source?: LinkSource | undefined;
     // Warning: (ae-forgotten-export) The symbol "LinkRules" needs to be exported by the entry point client.d.ts
     subjects?: Readonly<Record<string, LinkRules>> | undefined;
     // Warning: (ae-forgotten-export) The symbol "ValidateUrlArgs" needs to be exported by the entry point client.d.ts
