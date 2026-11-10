@@ -109,7 +109,7 @@ export interface ShortLink {
         type: OwnerType;
         id: string;
     };
-    shortUrl: string;
+    shortUrl: string | null;
     // (undocumented)
     target: ShortLinkTarget;
     // (undocumented)
@@ -162,11 +162,11 @@ export type SubjectTypeOf<Options extends ShortLinksOptions> = Options["subjects
 // @public
 export interface UpdateLinkInput {
     // (undocumented)
-    code: string;
-    // (undocumented)
     enabled?: boolean | undefined;
     expiresAt?: Date | string | null | undefined;
     grantsView?: false | undefined;
+    // (undocumented)
+    id: string;
     url?: string | undefined;
 }
 
@@ -180,7 +180,7 @@ export function useShortLinks<App = BetterApp>(): {
     loadMore: (filter?: LinkFilter<AppLinkSubjectType<App>>) => Promise<void>;
     create(input: CreateLinkInput<AppLinkSubjectType<App>>): Promise<ShortLink>;
     update(input: UpdateLinkInput): Promise<ShortLink>;
-    remove(code: string): Promise<{
+    remove(id: string): Promise<{
         removed: boolean;
     }>;
     reset(): void;

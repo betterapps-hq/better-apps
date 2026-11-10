@@ -239,11 +239,11 @@ function createShortLinksClientFor<SubjectType extends string>(
       return link
     },
     /** Removes a link and takes it out of every loaded list. */
-    async remove(code: string): Promise<{ removed: boolean }> {
+    async remove(id: string): Promise<{ removed: boolean }> {
       const started = generation
-      const result = (await run("remove", { code })) as { removed: boolean }
+      const result = (await run("remove", { id })) as { removed: boolean }
       if (started === generation) {
-        change((links) => links.filter((had) => had.code !== code))
+        change((links) => links.filter((had) => had.id !== id))
       }
       return result
     },

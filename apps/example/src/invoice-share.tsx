@@ -47,7 +47,10 @@ export function ShareInvoice({ invoiceId, number }: { invoiceId: string; number:
     setBusy(true)
     try {
       const link = await client.create({ target: subject, grantsView: anyone })
-      await copy(link)
+      // A new link always has an address, since it's made where a host opens it.
+      if (link.shortUrl !== null) {
+        await copy(link.shortUrl)
+      }
     } catch (caught) {
       toast.add({ title: "The link couldn’t be created", description: messageOf(caught) })
     } finally {
@@ -106,20 +109,30 @@ export function ShareInvoice({ invoiceId, number }: { invoiceId: string; number:
   )
 }
 
+/**
+ * What a link is called: its address, or its code while it has none, which is while the workspace domain it was made on
+ * isn't ready.
+ */
+function nameOf(link: ShortLink) {
+  return link.shortUrl ?? `Link ${link.code}`
+}
+
 /** Copies a link's address and says so. */
-async function copy(link: ShortLink) {
+async function copy(address: string) {
   try {
-    await navigator.clipboard.writeText(link.shortUrl)
-    toast.add({ title: "Link copied", description: link.shortUrl, timeout: 3000 })
+    await navigator.clipboard.writeText(address)
+    toast.add({ title: "Link copied", description: address, timeout: 3000 })
   } catch {
-    toast.add({ title: "The link couldn’t be copied", description: link.shortUrl })
+    toast.add({ title: "The link couldn’t be copied", description: address })
   }
 }
 
-/** Who a link lets in, or that it's off, and how often it was opened. */
+/** Who a link lets in, or that it's off or has no domain to open on, and how often it was opened. */
 function describe(link: ShortLink) {
   let access = "People sign in to view"
-  if (!link.enabled) {
+  if (link.shortUrl === null) {
+    access = "Doesn’t open until the workspace domain is ready"
+  } else if (!link.enabled) {
     access = "Off, so it doesn’t open"
   } else if (link.grantsView) {
     access = "Anyone with the link can view"
@@ -134,10 +147,11 @@ function describe(link: ShortLink) {
 /** One link: its address, who it lets in, how often it was opened, and what can be done to it. */
 function LinkRow({ link }: { link: ShortLink }) {
   const client = useShortLinks()
+  const address = link.shortUrl
 
   async function setEnabled(enabled: boolean) {
     try {
-      await client.update({ code: link.code, enabled })
+      await client.update({ id: link.id, enabled })
     } catch (caught) {
       toast.add({ title: "The link couldn’t be changed", description: messageOf(caught) })
     }
@@ -146,14 +160,14 @@ function LinkRow({ link }: { link: ShortLink }) {
   async function remove() {
     const confirmed = await modals.confirm({
       title: "Delete this link?",
-      description: `${link.shortUrl} will stop working for everyone who has it.`,
+      description: `${nameOf(link)} will stop working for everyone who has it.`,
       confirmLabel: "Delete link"
     })
     if (!confirmed) {
       return
     }
     try {
-      await client.remove(link.code)
+      await client.remove(link.id)
     } catch (caught) {
       toast.add({ title: "The link couldn’t be deleted", description: messageOf(caught) })
     }
@@ -162,24 +176,26 @@ function LinkRow({ link }: { link: ShortLink }) {
   return (
     <Item variant="outline" size="sm" className={link.enabled ? undefined : "link-off"}>
       <ItemContent>
-        <ItemTitle className="link-address">{link.shortUrl}</ItemTitle>
+        <ItemTitle className="link-address">{nameOf(link)}</ItemTitle>
         <ItemDescription>{describe(link)}</ItemDescription>
       </ItemContent>
       <ItemActions>
-        <Tooltip>
-          <TooltipTrigger
-            render={<Button variant="ghost" size="icon" aria-label={`Copy ${link.shortUrl}`} />}
-            onClick={() => void copy(link)}
-          >
-            <CopyIcon />
-          </TooltipTrigger>
-          <TooltipContent>Copy link</TooltipContent>
-        </Tooltip>
+        {address !== null && (
+          <Tooltip>
+            <TooltipTrigger
+              render={<Button variant="ghost" size="icon" aria-label={`Copy ${address}`} />}
+              onClick={() => void copy(address)}
+            >
+              <CopyIcon />
+            </TooltipTrigger>
+            <TooltipContent>Copy link</TooltipContent>
+          </Tooltip>
+        )}
         <Field orientation="horizontal" className="link-toggle">
           <Switch
             checked={link.enabled}
             onCheckedChange={(enabled) => void setEnabled(enabled)}
-            aria-label={`Link ${link.shortUrl}`}
+            aria-label={link.shortUrl === null ? nameOf(link) : `Link ${link.shortUrl}`}
           />
           {/* The switch announces its own state, so the words that show it are for sighted people only. */}
           <FieldLabel aria-hidden="true" onClick={() => void setEnabled(!link.enabled)}>
@@ -188,7 +204,7 @@ function LinkRow({ link }: { link: ShortLink }) {
         </Field>
         <Tooltip>
           <TooltipTrigger
-            render={<Button variant="ghost" size="icon" aria-label={`Delete ${link.shortUrl}`} />}
+            render={<Button variant="ghost" size="icon" aria-label={`Delete ${nameOf(link)}`} />}
             onClick={() => void remove()}
           >
             <Trash2Icon />

@@ -46,10 +46,11 @@ Then open <http://127.0.0.1:4190>. `build` and `preview` run the production buil
   view the invoice without signing in, and lists the invoice's links with how often each was opened. Each can be copied,
   turned off and on, or deleted. Links are shared on the workspace's primary domain once it's ready, such as
   `acme.better-invoices.localhost:4190/s/{code}`, and on the app's own address before then. A ready domain opens the
-  workspace's links, and any other host, such as a pending domain, opens none. Invoices open on the app's own address,
-  where people are signed in, so a link that grants access stays there, since its cookie couldn't reach the invoice from
-  the domain. Short links never import domains: `src/features.ts` gives short links `hosts` from domains' `domainHosts`,
-  and `src/better-apps.server.ts` connects them once the app exists. Browsers can't reach a custom domain such as
+  workspace's links, and any other host, such as a pending domain, opens none. The example has no organizations, so a
+  code is unique across the app on every host. Invoices open on the app's own address, where people are signed in, so a
+  link that grants access stays there, since its cookie couldn't reach the invoice from the domain. Short links never
+  import domains: `src/features.ts` gives short links `hosts` from domains' `domainHosts`, and
+  `src/better-apps.server.ts` connects them once the app exists. Browsers can't reach a custom domain such as
   `go.acme.com` on your machine, so it opens at `go.acme.com.better-invoices.localhost:4190`, where its links are shared
   too. Invoices are for signed-in people, so the invoice page checks `app.subjects.canView(null, ref, { request })` for
   signed-out visitors, which a link that grants access allows. Such a visitor also reads the invoice's comments, with

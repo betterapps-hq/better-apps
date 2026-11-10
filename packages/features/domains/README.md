@@ -98,8 +98,8 @@ linkHosts.connect(app.api.domains)
 - `hosts.origin({ orgId })` is the organization's primary domain once it's `active`, on `url`'s scheme and port, or
   `null` for the app's own.
 - Both throw until `connect(app.api.domains)` runs.
-- Short links' `baseUrl` must be on `url`'s host or one in `hostnames`, since only those open every link. Pass both from
-  one constant, as above.
+- Short links' `baseUrl` must be on `url`'s host or one in `hostnames`, since only those open the links with the app's
+  codes. Pass both from one constant, as above.
 - `localSuffix`, such as `"yourapp.localhost"`, is for local development with `localHostnames()` only. Browsers can't
   reach a custom domain such as `go.acme.com` on your machine, and domains refuses `.localhost` custom hostnames, so the
   app answers a custom domain at `go.acme.com.yourapp.localhost` instead, since browsers send every name under

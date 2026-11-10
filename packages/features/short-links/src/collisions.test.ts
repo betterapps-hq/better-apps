@@ -1,5 +1,7 @@
-import { describe, expect, it, vi } from "vite-plus/test"
-import { expectCode, setup } from "../test/app.js"
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test"
+import { cookieOf, expectCode, setup } from "../test/app.js"
+import { grantCookie } from "./cookie.js"
+import type { LinkHosts } from "./index.js"
 
 // Codes the next links get, in order, before random ones.
 const next = vi.hoisted(() => [] as string[])
@@ -10,6 +12,23 @@ vi.mock("./codes.js", async (importOriginal) => {
 })
 
 const docs = { url: "https://docs.test/start" }
+
+beforeEach(() => {
+  next.length = 0
+})
+
+/** Each organization's links open on its own domain and get codes of its own there. */
+const domains: Record<string, string> = { acme: "links.acme.test", globex: "links.globex.test" }
+const hosts: LinkHosts = {
+  resolve: ({ hostname }) => {
+    if (hostname === "app.test") {
+      return "app"
+    }
+    const orgId = Object.keys(domains).find((org) => domains[org] === hostname)
+    return orgId === undefined ? null : { orgId }
+  },
+  origin: ({ orgId }) => (orgId === null || domains[orgId] === undefined ? null : `https://${domains[orgId]}`)
+}
 
 describe("generated codes that collide", () => {
   it("are replaced with another, up to three times, then the call fails with CONFLICT", async () => {
@@ -25,5 +44,71 @@ describe("generated codes that collide", () => {
     next.push("taken-01", "taken-01", "taken-01", "fresh-02")
     await expectCode(api.create({ target: docs }, as("ada")), "CONFLICT")
     expect(next).toEqual(["fresh-02"])
+  })
+
+  it("collide only within their scope", async () => {
+    const { api, as } = setup({ baseUrl: "https://app.test", hosts })
+    await api.create({ target: docs, code: "taken-01" }, as("ada"))
+    next.push("taken-01", "fresh-01")
+    // Acme has the code on its domain, so Globex's link takes it on its own at once.
+    expect((await api.create({ target: docs }, as("gus"))).code).toBe("taken-01")
+    expect(next).toEqual(["fresh-01"])
+  })
+})
+
+describe("grant cookies", () => {
+  it("never grant a link in one scope with the same code as a link in another", async () => {
+    const { app, api, as } = setup({ baseUrl: "https://app.test", hosts })
+    next.push("samecode1234", "samecode1234")
+    const acmes = await api.create(
+      { target: { subjectType: "invoice", subjectId: "inv-1" }, grantsView: true },
+      as("ada")
+    )
+    const globexs = await api.create(
+      { target: { subjectType: "invoice", subjectId: "inv-globex" }, grantsView: true },
+      as("gus")
+    )
+    expect([acmes.code, globexs.code]).toEqual(["samecode1234", "samecode1234"])
+    // A visitor opens Acme's link, and the cookie remembers its code with Acme's scope.
+    const opened = await app.handler(new Request("https://links.acme.test/s/samecode1234"))
+    const cookie = cookieOf(opened)
+    expect(cookie).toBe(`better-apps-links=samecode1234~${btoa("acme").replace(/=+$/, "")}`)
+    const holding = (value: string) => new Request("https://app.test/invoices", { headers: { cookie: value } })
+    const acmeInvoice = { subjectType: "invoice", subjectId: "inv-1" }
+    const globexInvoice = { subjectType: "invoice", subjectId: "inv-globex" }
+    expect(await app.subjects.canView(null, acmeInvoice, { request: holding(cookie) })).toBe(true)
+    expect(await app.subjects.canView(null, globexInvoice, { request: holding(cookie) })).toBe(false)
+    // The code alone is in the app's scope, where neither link is.
+    for (const ref of [acmeInvoice, globexInvoice]) {
+      expect(await app.subjects.canView(null, ref, { request: holding("better-apps-links=samecode1234") })).toBe(false)
+    }
+    // Globex's own link grants its invoice, read by record or by code alike.
+    const both = `better-apps-links=samecode1234~${btoa("globex").replace(/=+$/, "")}.${cookie.split("=")[1] ?? ""}`
+    expect(
+      await app.subjects.canViewMany([
+        { actor: null, ...globexInvoice, request: holding(both) },
+        { actor: null, ...acmeInvoice, request: holding(both) }
+      ])
+    ).toEqual([true, true])
+  })
+
+  it("drop entries that aren't codes and scopes, and the oldest when long scopes would make the cookie too long", () => {
+    const longOrg = "o".repeat(200)
+    const scope = btoa(longOrg).replace(/=+$/, "")
+    // 19 links held already, each with a long scope, beside entries that can't be read.
+    const held = Array.from({ length: 19 }, (_, index) => `held${String(index).padStart(8, "0")}~${scope}`)
+    const request = new Request("https://links.long.test/s/newest123456", {
+      headers: { cookie: `better-apps-links=${["bad~%%%", "bad~_w", "", ...held].join(".")}` }
+    })
+    const header = grantCookie(
+      request,
+      { name: "better-apps-links", maxAge: 60, domain: undefined },
+      { code: "newest123456", scope: longOrg }
+    )
+    const entries = header.split(";")[0]?.split("=")[1]?.split(".") ?? []
+    expect(entries.at(-1)).toBe(`newest123456~${scope}`)
+    expect(entries.join(".").length).toBeLessThanOrEqual(3800)
+    expect(entries.length).toBeLessThan(20)
+    expect(entries.every((entry) => entry.startsWith("held") || entry.startsWith("newest"))).toBe(true)
   })
 })
