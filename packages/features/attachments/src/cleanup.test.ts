@@ -446,6 +446,27 @@ describe("with comments", () => {
     expect(setup.turn("t-big")).toEqual({ toOrgId: "", deleted: 1 })
   })
 
+  it("refuses a move whose thread, moved before, is deleted between reading its turn and taking it", async () => {
+    const setup = withComments()
+    const ids = await busyThread(setup)
+    setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
+    await setup.emit(moved("t-big", "globex", ids))
+    await setup.deliver()
+    await setup.deliver()
+    expect(setup.inOrg("globex")).toEqual([30, 30])
+    // The thread moves to initech, and is deleted after that move reads its turn, whose row the deletion rewrites.
+    setup.threads.set("t-big", { orgId: "initech", comments: new Set(ids) })
+    const landed = beforeTurnWrite(setup, (run) => {
+      setup.threads.delete("t-big")
+      run(`UPDATE ${moveModel} SET toOrgId = '', deleted = 1, claim = 'deleted'`)
+    })
+    await setup.emit(moved("t-big", "initech", ids, "globex"))
+    expect(landed()).toBe(true)
+    await deliverLater(setup)
+    expect(setup.inOrg("initech")).toEqual([0, 0])
+    expect(setup.turn("t-big")).toEqual({ toOrgId: "", deleted: 1 })
+  })
+
   it("refuses a move that read its thread's turn before a newer move claimed it", async () => {
     const setup = withComments()
     const ids = await busyThread(setup)
