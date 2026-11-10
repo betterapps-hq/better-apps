@@ -1,6 +1,6 @@
 // Bulk jobs: the sweep of expired and deleted files, removing and moving a record's files, removing a person's files, and
 // following comments' threads and comments. Each call or delivery does one page, so no request outgrows D1's limits.
-import type { EventHandler, WriteOperation } from "better-apps"
+import type { EventHandler, SubjectRef, WriteOperation } from "better-apps"
 import { chunks, orgsOf, userOwner, type Context } from "./access.js"
 import { settingsOf, type Config } from "./config.js"
 import { eventFile } from "./present.js"
@@ -8,6 +8,7 @@ import {
   deleteFiles,
   filesById,
   lateUploadMs,
+  linkRemoval,
   markDeleted,
   purge,
   remember,
@@ -18,7 +19,14 @@ import {
   type BulkStep,
   type Writer
 } from "./removals.js"
-import { attachmentModel, fileModel, type Attachment, type AttachmentFile } from "./schema.js"
+import {
+  attachmentModel,
+  fileModel,
+  moveModel,
+  type Attachment,
+  type AttachmentFile,
+  type AttachmentMove
+} from "./schema.js"
 
 /**
  * How many attachments one page of a move takes. Each takes its own update statement, so a page stays under D1's 50
@@ -31,6 +39,8 @@ const userPageSize = 20
 const cleanupReads = 10
 /** How many batches of removals or moves one delivery of a cleanup writes. */
 const cleanupBatches = 3
+/** How long a record's latest move is remembered, which only needs to outlast the jobs of older moves. */
+const moveMemoryMs = 30 * 24 * 60 * 60_000
 
 /** What the sweep removed, and whether there's more. */
 export interface SweepResult extends BulkStep {
@@ -167,15 +177,17 @@ export function freeSlots(taken: ReadonlySet<number>, maxFiles: number, wanted: 
 /**
  * Moves a page of a record's attachments to another organization. One that's already there, or has no free place there,
  * is removed as `withdrawn`. The files the record keeps move with it. Each record the page touched gets `subject.moved`,
- * written with the page.
+ * written with the page. A job that follows another record's move, such as a thread's, gets that move's turn, and stops,
+ * reporting `superseded`, once a newer move or deletion of that record has taken it.
  */
 async function movePage(
   config: Config,
   writer: Writer,
   subjectType: string,
   find: (limit: number) => Promise<Attachment[]>,
-  toOrgId: string
-): Promise<{ moved: number } & BulkStep> {
+  toOrgId: string,
+  turn?: Turn
+): Promise<{ moved: number; superseded?: boolean } & BulkStep> {
   const { db } = writer
   const settings = settingsOf(config, subjectType)
   return retried(async () => {
@@ -217,22 +229,26 @@ async function movePage(
         }
       }
     }
-    if (dropped.length > 0) {
-      await removeLinks(config, writer, dropped, "withdrawn", { bulk: true })
-    }
-    if (moves.length === 0) {
-      return { moved: 0, done: rows.length < movePageSize }
-    }
-    const files = await db.findMany<AttachmentFile>({
-      model: fileModel,
-      where: [{ field: "id", operator: "in", value: [...new Set(moves.map((move) => move.row.fileId))] }],
-      select: ["id", "owner"]
-    })
+    const removal = await linkRemoval(writer, dropped, "withdrawn", { bulk: true })
+    const files =
+      moves.length === 0
+        ? []
+        : await db.findMany<AttachmentFile>({
+            model: fileModel,
+            where: [{ field: "id", operator: "in", value: [...new Set(moves.map((move) => move.row.fileId))] }],
+            select: ["id", "owner"]
+          })
     const kept = files.filter((file) => file.owner === null).map((file) => file.id)
     for (const subjectId of new Set(moves.map((move) => move.row.subjectId))) {
       writer.emit("subject.moved", { subjectType, subjectId, toOrgId })
     }
-    await db.batch([
+    // A job's batch holds its record's turn, so it fails with its events, and the job stops, once a newer move or
+    // deletion has taken it. The withdrawn attachments and the files' new organization go in the same batch, so a
+    // stopped page writes none of them.
+    const held = turn ? holdTurn(turn) : []
+    const writes = [
+      ...held,
+      ...removal.writes,
       ...moves.map(({ row, slot, position }): WriteOperation => ({
         type: "update",
         model: attachmentModel,
@@ -248,8 +264,92 @@ async function movePage(
         where: [{ field: "id", operator: "in", value: ids }],
         update: { orgId: toOrgId }
       }))
-    ])
+    ]
+    try {
+      await db.batch(writes)
+    } catch (error) {
+      if (turn && !(await hasTurn(db, turn))) {
+        return { moved: 0, done: true, superseded: true }
+      }
+      throw error
+    }
+    await purge(config, db, removal.doomed)
     return { moved: moves.length, done: rows.length < movePageSize }
+  })
+}
+
+/** A move or deletion of a record that attachments follow, from the event that reported it. */
+interface Turn {
+  subject: SubjectRef
+  eventId: string
+  eventAt: Date
+}
+
+const turnId = (ref: SubjectRef) => JSON.stringify([ref.subjectType, ref.subjectId])
+
+/** Whether a move or deletion is still its record's latest one. */
+async function hasTurn(db: Context["db"], turn: Turn): Promise<boolean> {
+  const row = await db.findOne<AttachmentMove>({
+    model: moveModel,
+    where: [{ field: "id", value: turnId(turn.subject) }]
+  })
+  return row?.eventId === turn.eventId
+}
+
+/** Writes the row that holds a record's turn. */
+const turnRow = (turn: Turn): WriteOperation => ({
+  type: "create",
+  model: moveModel,
+  data: { id: turnId(turn.subject), eventId: turn.eventId, eventAt: turn.eventAt }
+})
+
+/** Deletes a record's turn while the given event holds it. */
+const releaseTurn = (subject: SubjectRef, eventId: string): WriteOperation => ({
+  type: "deleteMany",
+  model: moveModel,
+  where: [
+    { field: "id", value: turnId(subject) },
+    { field: "eventId", value: eventId }
+  ]
+})
+
+/**
+ * Writes that fail their batch unless a move still holds its record's turn: its row is deleted and written again, and
+ * once another move or deletion has replaced it, the delete matches nothing and the write runs into the newer row.
+ */
+function holdTurn(turn: Turn): WriteOperation[] {
+  return [releaseTurn(turn.subject, turn.eventId), turnRow(turn)]
+}
+
+/**
+ * Makes a move or deletion its record's latest, unless a newer one already is, and returns whether it is. Events are
+ * ordered by when they were emitted, so a move whose event is delivered late, such as after failing, never takes over
+ * from a newer one; of two emitted in the same millisecond, the one delivered later wins. Old rows go at the same time.
+ */
+async function takeTurn(db: Context["db"], turn: Turn): Promise<boolean> {
+  const id = turnId(turn.subject)
+  return retried(async () => {
+    const row = await db.findOne<AttachmentMove>({ model: moveModel, where: [{ field: "id", value: id }] })
+    if (row?.eventId === turn.eventId) {
+      return true
+    }
+    if (row && row.eventAt.getTime() > turn.eventAt.getTime()) {
+      return false
+    }
+    // Another move taking the turn meanwhile makes this batch fail, and the turn is read again.
+    await db.batch([
+      ...(row ? [releaseTurn(turn.subject, row.eventId)] : []),
+      turnRow(turn),
+      {
+        type: "deleteMany",
+        model: moveModel,
+        where: [
+          { field: "eventAt", operator: "lt", value: new Date(Date.now() - moveMemoryMs) },
+          { field: "id", operator: "ne", value: id }
+        ]
+      }
+    ])
+    return true
   })
 }
 
@@ -358,12 +458,19 @@ export async function moveUser(_config: Config, context: Context): Promise<{ fil
 }
 
 /**
- * Records to clean up after, by subject type. For a move, the organization they moved to, and the record whose move
- * they follow, such as a thread for its comments.
+ * Records to clean up after, by subject type. For a move, the organization they moved to, the record whose move they
+ * follow, such as a thread for its comments, and the move's event id and when it was emitted, as an ISO date.
  */
 export interface Cleanup {
   records: { subjectType: string; subjectIds: string[] }[]
-  move?: { toOrgId: string; subject: { subjectType: string; subjectId: string } } | undefined
+  move?:
+    | {
+        toOrgId: string
+        subject: { subjectType: string; subjectId: string }
+        moveEventId: string
+        movedAt: string
+      }
+    | undefined
 }
 
 /**
@@ -376,12 +483,22 @@ export async function cleanUp(config: Config, writer: Writer, job: Cleanup): Pro
   const records = job.records.filter(
     (record) => record.subjectIds.length > 0 && Object.hasOwn(config.subjects, record.subjectType)
   )
-  if (job.move && records.length > 0) {
-    // A move runs over several deliveries, so the record it follows may have moved again since, or gone; either stops
-    // it, so an older job never undoes a newer move. Records of its that went away meanwhile, such as a deleted comment,
+  const turn = job.move && {
+    subject: job.move.subject,
+    eventId: job.move.moveEventId,
+    eventAt: new Date(job.move.movedAt)
+  }
+  if (job.move && turn && records.length > 0) {
+    // A move runs over several deliveries, so the record it follows may have moved again since, or been deleted. Either
+    // takes its turn, which stops it, and so does the record being in another organization, for a newer move whose
+    // event hasn't arrived yet, so an older job never undoes a newer move. Each page's batch holds the turn too, for a
+    // newer move that arrives while the page runs. Records of its that went away meanwhile, such as a deleted comment,
     // don't stop it: their files go with their own removal.
-    const [orgId] = await orgsOf(writer.subjects, [job.move.subject], null)
-    if (orgId !== job.move.toOrgId) {
+    const [current, [orgId]] = await Promise.all([
+      hasTurn(writer.db, turn),
+      orgsOf(writer.subjects, [job.move.subject], null)
+    ])
+    if (!current || orgId !== job.move.toOrgId) {
       return
     }
   }
@@ -401,9 +518,12 @@ export async function cleanUp(config: Config, writer: Writer, job: Cleanup): Pro
       reads -= page.reads
       return page.rows
     }
-    await (toOrgId === undefined
+    const step = await (toOrgId === undefined
       ? removePage(config, writer, find)
-      : movePage(config, writer, record.subjectType, find, toOrgId))
+      : movePage(config, writer, record.subjectType, find, toOrgId, turn))
+    if ("superseded" in step && step.superseded === true) {
+      return
+    }
     room -= found
     batches += found > 0 ? 1 : 0
     records[0] = { ...record, subjectIds: rest }
@@ -441,13 +561,24 @@ export function commentHandlers(config: Config): Record<string, EventHandler> | 
     },
     "thread.deleted": async (event, context) => {
       const data = event.data as ThreadData
+      // Stops a move of the thread that's still running, even one to no organization, which can't tell a deleted thread
+      // from one without an organization.
+      await takeTurn(context.db, {
+        subject: { subjectType: commentTypes.thread, subjectId: data.thread.id },
+        eventId: event.id,
+        eventAt: event.createdAt
+      })
       await cleanUp(config, context, { records: threadRecords([data.thread.id], data.commentIds ?? []) })
     },
     "thread.moved": async (event, context) => {
       const data = event.data as ThreadData
+      const subject = { subjectType: commentTypes.thread, subjectId: data.thread.id }
+      if (!(await takeTurn(context.db, { subject, eventId: event.id, eventAt: event.createdAt }))) {
+        return
+      }
       await cleanUp(config, context, {
         records: threadRecords([data.thread.id], data.commentIds ?? []),
-        move: { toOrgId: data.thread.orgId, subject: { subjectType: commentTypes.thread, subjectId: data.thread.id } }
+        move: { toOrgId: data.thread.orgId, subject, moveEventId: event.id, movedAt: event.createdAt.toISOString() }
       })
     }
   }

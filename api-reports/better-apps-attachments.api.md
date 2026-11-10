@@ -98,6 +98,8 @@ export const attachmentEvents: {
     subjectType: string;
     subjectId: string;
     };
+    moveEventId: string;
+    movedAt: string;
     } | undefined;
     }>;
 };
@@ -125,6 +127,13 @@ export type AttachmentFile = {
 
 // @public
 export const attachmentModel = "attachment";
+
+// @public
+export type AttachmentMove = {
+    id: string;
+    eventId: string;
+    eventAt: Date;
+};
 
 // @public
 export interface AttachmentRemovedData extends AttachmentEventData {
@@ -181,6 +190,8 @@ export function attachments<const Options extends AttachmentsOptions>(options: O
         subjectType: string;
         subjectId: string;
         };
+        moveEventId: string;
+        movedAt: string;
         } | undefined;
         }>;
     };
@@ -515,6 +526,9 @@ export function memoryStorage(options?: MemoryStorageOptions): MemoryStorage;
 export interface MemoryStorageOptions {
     signedUploads?: boolean | undefined;
 }
+
+// @public
+export const moveModel = "attachmentMove";
 
 // @public
 export interface PreviewArgs {

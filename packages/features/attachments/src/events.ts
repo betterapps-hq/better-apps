@@ -55,7 +55,18 @@ export const attachmentEvents = {
    */
   "cleanup.continued": defineEvent<{
     records: { subjectType: string; subjectIds: string[] }[]
-    move?: { toOrgId: string; subject: { subjectType: string; subjectId: string } } | undefined
+    /**
+     * For a move, the organization the records moved to, the record whose move they follow, such as a thread for its
+     * comments, and the move's event id and when it was emitted, as an ISO date, which orders it among the record's moves.
+     */
+    move?:
+      | {
+          toOrgId: string
+          subject: { subjectType: string; subjectId: string }
+          moveEventId: string
+          movedAt: string
+        }
+      | undefined
   }>()
 }
 

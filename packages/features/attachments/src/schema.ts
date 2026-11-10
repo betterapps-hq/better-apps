@@ -9,6 +9,9 @@ export const attachmentModel = "attachment"
 /** The model of the table that remembers attachments just removed, so each removal is reported once. */
 export const removalModel = "attachmentRemoval"
 
+/** The model of the table that holds the latest move or deletion of each record whose moves attachments follow. */
+export const moveModel = "attachmentMove"
+
 /** Where a file stands: uploading, stored, or on its way out while its bytes are deleted. */
 export type FileStatus = "pending" | "ready" | "deleted"
 
@@ -44,6 +47,19 @@ export type AttachmentFile = {
   etag: string | null
   createdAt: Date
   uploadedAt: Date | null
+}
+
+/**
+ * The latest move or deletion of a record, such as a comments' thread, that attachments follow, keyed by the record. A
+ * move job's pages go on only while it holds its record's row, so an older move never writes after a newer one.
+ */
+export type AttachmentMove = {
+  /** The record, as `JSON.stringify([subjectType, subjectId])`. */
+  id: string
+  /** The id of the event that reported the move or deletion, such as comments' `thread.moved`. */
+  eventId: string
+  /** When that event was emitted, which orders moves whose events arrive out of order. */
+  eventAt: Date
 }
 
 /** One file on one record. */
@@ -112,5 +128,11 @@ export const attachmentsSchema: FeatureSchema = {
   [removalModel]: {
     fields: { createdAt: { type: "date" } },
     indexes: [{ fields: ["createdAt"], name: "attachment_removal_by_time" }]
+  },
+  // One row per record whose move or deletion attachments followed, replaced by each newer one. Rows older than 30 days
+  // are cleared as moves start.
+  [moveModel]: {
+    fields: { eventId: { type: "string" }, eventAt: { type: "date" } },
+    indexes: [{ fields: ["eventAt"], name: "attachment_move_by_time" }]
   }
 }

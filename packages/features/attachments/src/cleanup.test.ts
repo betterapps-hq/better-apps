@@ -7,17 +7,26 @@ import {
   type EventHandler,
   type SubjectDefinition
 } from "better-apps"
-import { describe, expect, it } from "vite-plus/test"
+import { describe, expect, it, vi } from "vite-plus/test"
 import { subjects, users } from "../test/app.js"
-import { attachmentEvents, attachmentModel, attachments, fileModel, memoryStorage } from "./index.js"
+import { attachmentEvents, attachmentModel, attachments, fileModel, memoryStorage, moveModel } from "./index.js"
 
 // Comments' subject types and events, as @better-apps/comments declares them, without its tables.
 function withComments() {
   const threads = new Map([["t-1", { orgId: "acme", comments: new Set(["c-1", "c-2"]) }]])
+  // `afterOrg` runs once, right after the next organization lookup, such as to move a thread while a page of a move
+  // runs. `failOnce` fails the next delivery of that event to the feed once, as a crash would.
+  const hooks: { afterOrg?: (() => void) | undefined; failOnce?: string | undefined } = {}
   const threadOf = (commentId: string) => [...threads].find(([, thread]) => thread.comments.has(commentId))
   const subject = (find: (id: string) => { orgId: string } | undefined): SubjectDefinition => ({
     canView: ({ actor, subjectId }) => actor.orgId === find(subjectId)?.orgId,
-    getOrgId: ({ subjectId }) => find(subjectId)?.orgId ?? null
+    getOrgId: ({ subjectId }) => {
+      const orgId = find(subjectId)?.orgId ?? null
+      const after = hooks.afterOrg
+      hooks.afterOrg = undefined
+      after?.()
+      return orgId
+    }
   })
   const fake = defineFeature({
     id: "comments",
@@ -38,10 +47,19 @@ function withComments() {
   const storage = memoryStorage()
   const feature = attachments({ storage, subjects: { "comments.comment": {}, "comments.thread": {} } })
   const delivered: BetterAppsEvent[] = []
-  const record: EventHandler = (event) => void delivered.push(event)
+  const record: EventHandler = (event) => {
+    if (hooks.failOnce === event.type) {
+      hooks.failOnce = undefined
+      throw new Error("Crashed")
+    }
+    delivered.push(event)
+  }
   const feed = defineFeature({
     id: "feed",
-    on: { attachments: Object.fromEntries(Object.keys(attachmentEvents).map((type) => [type, record])) }
+    on: {
+      attachments: Object.fromEntries(Object.keys(attachmentEvents).map((type) => [type, record])),
+      comments: { "thread.moved": record }
+    }
   })
   const { app, database, identity } = createTestApp({ subjects, features: [feature, fake, feed], users })
   const as = (userId: "bob") => ({ actor: identity.actor(userId) })
@@ -52,6 +70,23 @@ function withComments() {
         .prepare(`SELECT COUNT(*) AS count FROM ${table}${table === fileModel ? " WHERE status <> 'deleted'" : ""}`)
         .get() as { count: number }
     ).count
+  /** How many attachments, and how many files, are in an organization. */
+  const inOrg = (orgId: string) =>
+    [attachmentModel, fileModel].map(
+      (table) =>
+        (
+          database.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE orgId = ?`).get(orgId) as {
+            count: number
+          }
+        ).count
+    )
+  // The event id of the thread's latest move or deletion, as attachments hold it.
+  const turn = (threadId: string) =>
+    (
+      database.sqlite
+        .prepare(`SELECT eventId FROM ${moveModel} WHERE id = ?`)
+        .get(JSON.stringify(["comments.thread", threadId])) as { eventId: string } | undefined
+    )?.eventId
   /** Puts a file on a comment or thread, as a person posting it. */
   const attach = async (subjectType: "comments.comment" | "comments.thread", subjectId: string) => {
     const created = await app.api.attachments.createUpload(
@@ -67,10 +102,30 @@ function withComments() {
     deliver: () => app.deliverEvents(),
     attach,
     threads,
+    hooks,
     storage,
+    database,
     count,
+    inOrg,
+    turn,
     events: (type: string) => delivered.filter((event) => event.type === type)
   }
+}
+
+const moved = (threadId: string, toOrgId: string, commentIds: string[], fromOrgId = "acme") => ({
+  type: "thread.moved",
+  data: { thread: { id: threadId, orgId: toOrgId }, fromOrgId, commentIds }
+})
+
+/** A thread in acme with 20 comments of two files each, 40 in all, so a move takes two pages of 30. */
+async function busyThread(setup: ReturnType<typeof withComments>) {
+  const ids = Array.from({ length: 20 }, (_, index) => `big-${index}`)
+  setup.threads.set("t-big", { orgId: "acme", comments: new Set(ids) })
+  for (const id of ids) {
+    await setup.attach("comments.comment", id)
+    await setup.attach("comments.comment", id)
+  }
+  return ids
 }
 
 describe("with comments", () => {
@@ -149,6 +204,88 @@ describe("with comments", () => {
     expect(events("cleanup.continued")).toHaveLength(2)
     const listed = await api.listFiles({ subjectType: "comments.comment", subjectIds: ["c-1", "c-2"] })
     expect([listed["c-1"]?.[0]?.orgId, listed["c-2"]?.[0]?.orgId]).toEqual(["globex", "globex"])
+  })
+
+  it("stops an older move's page when a newer move lands while it runs, keeping the newer move's work", async () => {
+    const setup = withComments()
+    const ids = await busyThread(setup)
+    setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
+    await setup.emit(moved("t-big", "globex", ids))
+    expect(setup.inOrg("globex")).toEqual([30, 30])
+    // Right after the next page's check, the thread moves to initech, and the newer move takes the turn and moves
+    // every file there before the older page writes.
+    setup.hooks.afterOrg = () => {
+      setup.threads.set("t-big", { orgId: "initech", comments: new Set(ids) })
+      setup.database.sqlite.prepare(`UPDATE ${moveModel} SET eventId = 'newer'`).run()
+      setup.database.sqlite.prepare(`UPDATE ${attachmentModel} SET orgId = 'initech'`).run()
+      setup.database.sqlite.prepare(`UPDATE ${fileModel} SET orgId = 'initech'`).run()
+    }
+    await setup.deliver()
+    await setup.deliver()
+    expect(setup.inOrg("initech")).toEqual([40, 40])
+  })
+
+  it("lets only the latest of a thread's moves run on when it moves away and back", async () => {
+    const setup = withComments()
+    const ids = await busyThread(setup)
+    setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
+    await setup.emit(moved("t-big", "globex", ids))
+    setup.threads.set("t-big", { orgId: "acme", comments: new Set(ids) })
+    await setup.emit(moved("t-big", "acme", ids, "globex"))
+    setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
+    await setup.emit(moved("t-big", "globex", ids))
+    const latest = setup.events("thread.moved").at(-1)?.id
+    await setup.deliver()
+    await setup.deliver()
+    await setup.deliver()
+    expect(setup.turn("t-big")).toBe(latest)
+    expect(setup.inOrg("globex")).toEqual([40, 40])
+  })
+
+  it("never lets an older move take over when its delivery is retried after a newer one", async () => {
+    const setup = withComments()
+    const ids = await busyThread(setup)
+    // The move to globex moves its first page, then its delivery fails, and is retried once its backoff passes.
+    setup.threads.set("t-big", { orgId: "globex", comments: new Set(ids) })
+    setup.hooks.failOnce = "thread.moved"
+    await setup.emit(moved("t-big", "globex", ids))
+    expect(setup.inOrg("globex")).toEqual([30, 30])
+    setup.threads.set("t-big", { orgId: "initech", comments: new Set(ids) })
+    await setup.emit(moved("t-big", "initech", ids, "globex"))
+    const newer = setup.events("thread.moved").at(-1)?.id
+    expect(newer).toBeDefined()
+    vi.useFakeTimers({ toFake: ["Date"] })
+    try {
+      vi.setSystemTime(Date.now() + 60_000)
+      await setup.deliver()
+      await setup.deliver()
+      await setup.deliver()
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(setup.turn("t-big")).toBe(newer)
+    expect(setup.inOrg("initech")).toEqual([40, 40])
+  })
+
+  it("stops a move to no organization when its thread is deleted", async () => {
+    const setup = withComments()
+    const ids = await busyThread(setup)
+    setup.threads.set("t-big", { orgId: "", comments: new Set(ids) })
+    await setup.emit(moved("t-big", "", ids))
+    expect(setup.inOrg("")).toEqual([30, 30])
+    expect(setup.events("subject.moved")).toHaveLength(15)
+    // The deletion's first delivery reads only the first of its thousand comments, so the move's next delivery comes
+    // before its files go.
+    const fillers = Array.from({ length: 1000 }, (_, index) => `gone-${index}`)
+    setup.threads.delete("t-big")
+    await setup.emit({
+      type: "thread.deleted",
+      data: { thread: { id: "t-big", orgId: "" }, commentIds: [...fillers, ...ids] }
+    })
+    await setup.deliver()
+    await setup.deliver()
+    expect([setup.count(attachmentModel), setup.count(fileModel)]).toEqual([0, 0])
+    expect(setup.events("subject.moved")).toHaveLength(15)
   })
 
   it("continues a long cleanup in the next delivery run", async () => {
