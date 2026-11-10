@@ -296,6 +296,22 @@ describe("with comments", () => {
     expect(setup.inOrg("globex")).toEqual([30, 30])
   })
 
+  it("clears turn rows nothing has written for 30 days as a move starts", async () => {
+    const setup = withComments()
+    const days = (count: number) => Date.now() - count * 24 * 60 * 60_000
+    const remember = (threadId: string, heldAt: number) =>
+      setup.database.sqlite
+        .prepare(`INSERT INTO ${moveModel} (id, toOrgId, deleted, claim, heldAt) VALUES (?, 'acme', 0, ?, ?)`)
+        .run(JSON.stringify(["comments.thread", threadId]), threadId, heldAt)
+    remember("t-old", days(31))
+    remember("t-recent", days(29))
+    setup.threads.set("t-1", { orgId: "globex", comments: new Set(["c-1", "c-2"]) })
+    await setup.emit(moved("t-1", "globex", ["c-1", "c-2"]))
+    expect(setup.turn("t-old")).toBeUndefined()
+    expect(setup.turn("t-recent")).toEqual({ toOrgId: "acme", deleted: 0 })
+    expect(setup.turn("t-1")).toEqual({ toOrgId: "globex", deleted: 0 })
+  })
+
   it("runs both moves to an organization a thread moves away from and back to", async () => {
     const setup = withComments()
     const ids = await busyThread(setup)

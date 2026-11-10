@@ -85,6 +85,13 @@
       "when": 1794315806146,
       "tag": "0011_short_link_scopes",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1794335189428,
+      "tag": "0012_attachment_moves",
+      "breakpoints": true
     }
   ]
 }
