@@ -37,6 +37,7 @@ import { StatusLabel } from "../../components"
 import type { Invoice, InvoiceLine, InvoiceStatus } from "../../db/schema"
 import { formatDate, formatMoney } from "../../format"
 import { AnchorPins, CommentHere, CommentsPanel, InvoiceCommentsProvider, type Detail } from "../../invoice-comments"
+import { FilesPanel } from "../../invoice-files"
 import { ShareInvoice } from "../../invoice-share"
 import { getInvoice, setInvoiceStatus } from "../../invoices.functions"
 import { alerts, modals } from "../../ui"
@@ -107,7 +108,8 @@ function InvoicePage({ invoice }: { invoice: LoadedInvoice }) {
       <InvoiceHeader invoice={invoice} />
       <div className="invoice-layout">
         <InvoiceSheet invoice={invoice} sheetRef={sheet} commenting={viewer !== null} />
-        <aside aria-label="Collaboration">
+        <aside aria-label="Collaboration" className="collaboration">
+          {viewer && <FilesPanel invoiceId={invoice.id} />}
           <CommentsPanel />
         </aside>
       </div>

@@ -58,6 +58,7 @@ import { initials, SignInPrompt } from "./app-shell"
 import type { CommentTypes } from "./app-types"
 import { CommentReactions, RemoveReactionsMenu } from "./comment-reactions"
 import { formatTime, plural } from "./format"
+import { AttachButton, CommentFileList, DraftFiles, useCommentFiles, type CommentFiles } from "./invoice-files"
 import { CommentText, emptyDraft, MentionTextarea, pickedName, toBody, toDraft, type Draft } from "./mention-textarea"
 import { alerts, modals } from "./ui"
 import { useViewer } from "./viewer"
@@ -104,6 +105,15 @@ function reportError(title: string, error: unknown) {
 function done(title: string) {
   alerts.dismiss("comment-write", alertRegion)
   toast.add({ title, timeout: 4000 })
+}
+
+/** Attaches a posted comment's files. The comment stays when they can't be attached, and the alert says why. */
+async function attachTo(files: CommentFiles, commentId: string) {
+  try {
+    await files.attachTo(commentId)
+  } catch (error) {
+    reportError("The files couldn’t be attached", error)
+  }
 }
 
 type Filter = "open" | "resolved"
@@ -303,22 +313,27 @@ function Composer() {
   const { subject, root, target, setTarget } = useInvoiceComments()
   const create = useCreateThread()
   const [draft, setDraft] = useState<Draft>(emptyDraft)
+  const files = useCommentFiles()
+  const attachRef = useRef<HTMLButtonElement>(null)
 
   async function submit() {
     const body = toBody(draft)
-    if (!body || create.status === "pending") {
+    if (!body || create.status === "pending" || files.busy) {
       return
     }
     const anchor = target && root.current ? anchorOn(target.field, root.current) : null
     // The thread shows at once. If the server refuses it, it's removed again and the text comes back.
     const sent = draft
     setDraft(emptyDraft)
+    let posted: Awaited<ReturnType<typeof create.mutate>>
     try {
-      await create.mutate({ ...subject, body, anchor })
-      setTarget(null)
+      posted = await create.mutate({ ...subject, body, anchor })
     } catch {
       setDraft(sent)
+      return
     }
+    setTarget(null)
+    await attachTo(files, posted.comment.id)
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -361,6 +376,7 @@ function Composer() {
         aria-invalid={create.error ? true : undefined}
         aria-describedby={create.error ? "new-comment-error" : "new-comment-hint"}
       />
+      <DraftFiles files={files} returnFocus={attachRef} />
       {create.error && (
         <p id="new-comment-error" className="form-error" role="alert">
           {create.error.message}
@@ -368,11 +384,19 @@ function Composer() {
       )}
       <div className="composer-actions">
         <span id="new-comment-hint" className="composer-hint">
-          Ctrl+Enter to send
+          {files.busy ? "Files are still uploading" : "Ctrl+Enter to send"}
         </span>
-        <Button type="submit" size="sm" aria-disabled={create.status === "pending"}>
-          Comment
-        </Button>
+        <span className="composer-buttons">
+          <AttachButton files={files} buttonRef={attachRef} />
+          <Button
+            type="submit"
+            size="sm"
+            aria-disabled={create.status === "pending" || files.busy}
+            aria-describedby="new-comment-hint"
+          >
+            Comment
+          </Button>
+        </span>
       </div>
     </form>
   )
@@ -397,6 +421,8 @@ function ThreadCard({ thread, onGone }: ThreadCardProps) {
   const move = useUpdateAnchor()
   const position = useAnchorPosition(thread, root)
   const [draft, setDraft] = useState<Draft>(emptyDraft)
+  const files = useCommentFiles()
+  const attachRef = useRef<HTMLButtonElement>(null)
   const field = pinnedField(thread)
   const place = labelOf(field)
   const titleId = `thread-${thread.id}-title`
@@ -407,16 +433,19 @@ function ThreadCard({ thread, onGone }: ThreadCardProps) {
 
   async function submitReply() {
     const body = toBody(draft)
-    if (!body || reply.status === "pending") {
+    if (!body || reply.status === "pending" || files.busy) {
       return
     }
     const sent = draft
     setDraft(emptyDraft)
+    let posted: Awaited<ReturnType<typeof reply.mutate>>
     try {
-      await reply.mutate({ threadId: thread.id, body })
+      posted = await reply.mutate({ threadId: thread.id, body })
     } catch {
       setDraft(sent)
+      return
     }
+    await attachTo(files, posted.comment.id)
   }
 
   async function changeStatus() {
@@ -652,12 +681,23 @@ function ThreadCard({ thread, onGone }: ThreadCardProps) {
             onDraftChange={setDraft}
             onSubmitShortcut={() => void submitReply()}
           />
-          {draft.text.trim() !== "" && (
+          <DraftFiles files={files} returnFocus={attachRef} />
+          {(draft.text.trim() !== "" || files.uploads.length > 0) && (
             <div className="reply-actions">
-              <Button type="button" variant="ghost" size="sm" onClick={() => setDraft(emptyDraft)}>
+              <AttachButton files={files} buttonRef={attachRef} />
+              {files.busy && <span className="composer-hint">Files are still uploading</span>}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setDraft(emptyDraft)
+                  files.clear()
+                }}
+              >
                 Cancel
               </Button>
-              <Button type="submit" size="sm" aria-disabled={reply.status === "pending"}>
+              <Button type="submit" size="sm" aria-disabled={reply.status === "pending" || files.busy}>
                 Reply
               </Button>
             </div>
@@ -805,6 +845,7 @@ function CommentItem({ comment, author, pending, own, threadId, nameOf, onDelete
           {comment.body === null ? comment.bodyText : <CommentText body={comment.body as string} nameOf={nameOf} />}
         </p>
       )}
+      {!deleted && !pending && <CommentFileList commentId={comment.id} />}
       {!deleted && !pending && !editing && <CommentReactions commentId={comment.id} readOnly={viewer === null} />}
     </div>
   )

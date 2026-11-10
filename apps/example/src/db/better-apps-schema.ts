@@ -159,6 +159,70 @@ export const domain = sqliteTable(
   ]
 )
 
+export const attachmentFile = sqliteTable(
+  "attachment_file",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id").default("").notNull(),
+    owner: text("owner"),
+    createdBy: text("created_by").notNull(),
+    name: text("name").notNull(),
+    contentType: text("content_type").notNull(),
+    size: integer("size").notNull(),
+    storageKey: text("storage_key").notNull(),
+    status: text("status", { enum: ["pending", "ready", "deleted"] })
+      .default("pending")
+      .notNull(),
+    subjectType: text("subject_type"),
+    target: text("target"),
+    uploadTokenHash: text("upload_token_hash"),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+    uploadClosesAt: integer("upload_closes_at", {
+      mode: "timestamp_ms"
+    }).notNull(),
+    etag: text("etag"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    uploadedAt: integer("uploaded_at", { mode: "timestamp_ms" })
+  },
+  (table) => [
+    index("attachment_file_by_owner").on(table.owner, table.createdAt),
+    index("attachment_file_by_creator").on(table.createdBy, table.status),
+    index("attachment_file_by_expiry").on(table.status, table.expiresAt),
+    index("attachment_file_by_closing").on(table.status, table.uploadClosesAt)
+  ]
+)
+
+export const attachment = sqliteTable(
+  "attachment",
+  {
+    id: text("id").primaryKey(),
+    fileId: text("file_id")
+      .notNull()
+      .references(() => attachmentFile.id, { onDelete: "cascade" }),
+    orgId: text("org_id").default("").notNull(),
+    subjectType: text("subject_type").notNull(),
+    subjectId: text("subject_id").notNull(),
+    position: integer("position").default(0).notNull(),
+    slot: integer("slot").default(0).notNull(),
+    createdBy: text("created_by").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull()
+  },
+  (table) => [
+    uniqueIndex("attachment_by_file_on_record").on(table.subjectType, table.subjectId, table.orgId, table.fileId),
+    uniqueIndex("attachment_slot").on(table.subjectType, table.subjectId, table.orgId, table.slot),
+    index("attachment_by_file").on(table.fileId)
+  ]
+)
+
+export const attachmentRemoval = sqliteTable(
+  "attachment_removal",
+  {
+    id: text("id").primaryKey(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull()
+  },
+  (table) => [index("attachment_removal_by_time").on(table.createdAt)]
+)
+
 export const betterAppsEvent = sqliteTable(
   "better_apps_event",
   {
@@ -185,5 +249,16 @@ export const commentRelations = relations(comment, ({ one }) => ({
   commentThread: one(commentThread, {
     fields: [comment.threadId],
     references: [commentThread.id]
+  })
+}))
+
+export const attachmentFileRelations = relations(attachmentFile, ({ many }) => ({
+  attachments: many(attachment)
+}))
+
+export const attachmentRelations = relations(attachment, ({ one }) => ({
+  attachmentFile: one(attachmentFile, {
+    fields: [attachment.fileId],
+    references: [attachmentFile.id]
   })
 }))
