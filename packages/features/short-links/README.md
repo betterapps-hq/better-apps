@@ -132,7 +132,7 @@ back on, or giving it a later expiry, checks again that the caller can see and s
   `grantsView: false` ends the access a link gives, `enabled: false` turns a link off, and `expiresAt: null` clears its
   expiry. Each change is checked like `create`.
 - `remove({ id })` removes a link and returns `{ removed }`. Its code is free again.
-- `clicksByDay`, `clickTotals` and the server-only `recordClicks` read and record clicks, as
+- `clicksByDay`, `clickTotals`, `clicksBy` and the server-only `recordClicks` read and record clicks, as
   [Clicks over time](#clicks-over-time) shows.
 - Each link comes back with its `id`, `code`, `shortUrl`, `owner` as `{ type, id }`, `orgId`, `createdBy`, `target`,
   `grantsView`, `enabled`, `expiresAt`, `clicks`, `lastClickedAt`, `createdAt` and `updatedAt`. With `hosts`, `shortUrl`
@@ -147,14 +147,16 @@ back on, or giving it a later expiry, checks again that the caller can see and s
 with `Cache-Control: private, no-store`, so a change to the link takes effect at once. Each `GET` adds a click and sets
 `lastClickedAt` in one statement, and keeps the click as a row of its own in the same batch, after the response, through
 the request's `waitUntil`; without one, the response waits. `HEAD` requests don't count. Every `GET` does, including
-link previews chat apps fetch. A click row holds the link and the time, and nothing about who opened it. The open's
-events, such as `link.clicked`, are written in the same batch.
+link previews chat apps fetch. A click row holds the link, the time, the host it was opened on, the visitor's country
+from Cloudflare's `request.cf` (`null` elsewhere), the referring site without its path, and whether the link `opened` or
+`granted` access. It keeps no IP address, user agent or city. The open's events, such as `link.clicked`, are written in
+the same batch.
 
 ## Clicks over time
 
-Two actions count clicks over a range of calendar days, `from` and `to` as `YYYY-MM-DD`, both included, up to 366 days,
-from 2011 on, in an IANA `timeZone`, `UTC` by default. Each is for the links' managers and trusted server code, like
-`get`:
+Three actions count clicks over a range of calendar days, `from` and `to` as `YYYY-MM-DD`, both included, up to 366
+days, from 2011 on, in an IANA `timeZone`, `UTC` by default. Each is for the links' managers and trusted server code,
+like `get`:
 
 ```ts
 const { days, total } = await app.api.shortLinks.clicksByDay(
@@ -168,14 +170,22 @@ const { links } = await app.api.shortLinks.clickTotals(
   { actor }
 )
 // links: [{ id, clicks: 412 }, ...], for up to 50 links, in the order asked.
+
+const { values } = await app.api.shortLinks.clicksBy(
+  { ids: page.links.map((link) => link.id), by: "country", from: "2026-10-12", to: "2026-11-10" },
+  { actor }
+)
+// values: [{ value: "DE", clicks: 31 }, { value: "FR", clicks: 12 }, { value: null, clicks: 4 }], most first.
 ```
 
-`clickTotals` leaves out ids of no link and links the caller doesn't manage. Lifetime counts are each link's `clicks`,
-and `list({ sort: "clicks" })` lists the most opened links first.
+`clicksBy` counts by `host`, `country`, `referrer` or `outcome`, up to `limit` values, 10 by default and 50 at most,
+with `null` for clicks without one, such as visits with no `Referer`. Its `total` counts every click. `clickTotals` and
+`clicksBy` leave out ids of no link and links the caller doesn't manage. Lifetime counts are each link's `clicks`, and
+`list({ sort: "clicks" })` lists the most opened links first.
 
-`recordClicks({ id, at })`, server only, records up to 500 clicks at given times, such as a demo's history, from 2011 to
-now. It adds them to `clicks` and moves `lastClickedAt` to the latest of them and the link's last click, in one batch
-with their rows, so a seeded link's counter and chart agree, and returns the link.
+`recordClicks({ id, clicks })`, server only, records up to 500 clicks, each `{ at, host?, country?, referrer? }`, such
+as a demo's history, from 2011 to now. It adds them to `clicks` and moves `lastClickedAt` to the latest of them and the
+link's last click, in one batch with their rows, so a seeded link's counter and chart agree, and returns the link.
 
 ## Which link opened a page
 

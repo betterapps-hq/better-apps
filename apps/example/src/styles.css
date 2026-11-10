@@ -1172,6 +1172,47 @@ code {
   gap: 0.375rem;
 }
 
+.link-activity {
+  display: grid;
+  gap: 0.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.link-activity h3 {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.link-activity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.75rem 1.5rem;
+}
+
+.link-activity h4 {
+  margin-bottom: 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+
+.link-activity li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.8125rem;
+}
+
+.link-activity li > span:first-child {
+  overflow-wrap: anywhere;
+}
+
+.link-activity-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+
 @media print {
   .app-header,
   [data-sidebar="sidebar"],

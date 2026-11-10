@@ -278,11 +278,34 @@ export interface ClickTotalsInput extends DayRangeInput {
   ids: readonly string[]
 }
 
-/** The input of `recordClicks`: a link, by its `id`, and when it was opened. */
+/** What `clicksBy` counts clicks by: the host, the visitor's country, the site they came from, or how it went. */
+export type ClickDimension = "host" | "country" | "referrer" | "outcome"
+
+/** The input of `clicksBy`: links, by their `id`s, what to count their clicks by, and the days to count over. */
+export interface ClicksByInput extends DayRangeInput {
+  /** Up to 50 link ids, such as a page of `list`. */
+  ids: readonly string[]
+  by: ClickDimension
+  /** How many values to return, the most clicked first: 10 by default, at most 50. */
+  limit?: number | undefined
+}
+
+/** A click `recordClicks` records: when, and optionally where, the link was opened. */
+export interface RecordedClick {
+  /** From 2011 to now. */
+  at: Date | string
+  /** The host it was opened on, such as `links.acme.com`. */
+  host?: string | undefined
+  /** Two characters, such as `DE`. */
+  country?: string | undefined
+  /** The page the visitor came from. Only its site is kept, such as `https://news.example`. */
+  referrer?: string | undefined
+}
+
+/** The input of `recordClicks`: a link, by its `id`, and up to 500 clicks on it. */
 export interface RecordClicksInput {
   id: string
-  /** Up to 500 times, from 2011 to now. */
-  at: readonly (Date | string)[]
+  clicks: readonly RecordedClick[]
 }
 
 /** The subject types a set of options lets links point to. */

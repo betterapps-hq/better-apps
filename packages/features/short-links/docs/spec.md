@@ -48,10 +48,14 @@ A link targets either a URL or a record, never both.
 | ----------- | ------ | ------------------------------------------------------------------------------------------------------------ |
 | `linkId`    | string | The link opened. It references `shortLink.id`, so removing the link removes its clicks.                      |
 | `clickedAt` | date   | When it was opened.                                                                                          |
+| `host`      | string | The host it was opened on, such as `links.acme.com`, or `null` for a recorded click without one.             |
+| `country`   | string | The visitor's country, such as `DE`, from Cloudflare's `request.cf`, or `null`.                              |
+| `referrer`  | string | The site the visitor came from, such as `https://news.example`, or `null`.                                   |
+| `outcome`   | string | `opened`, or `granted` when the link also set the access cookie.                                             |
 | `slot`      | date   | The start of the 15-minute slot, in UTC, that `clickedAt` falls in, so clicks per day are one grouped count. |
 
-It keeps nothing about who opened the link: no IP address, user agent or referrer. Its index, `(linkId, slot)`, serves a
-link's clicks over a range, and finding them when the link goes.
+It keeps nothing about who opened the link, as [What a click keeps](#what-a-click-keeps) describes. Its index,
+`(linkId, slot)`, serves a link's clicks over a range, and finding them when the link goes.
 
 ## Configuration
 
@@ -231,6 +235,22 @@ reader gets them, with names and no user ids, and who reacted shows only where i
 - The events an open emits, such as `link.clicked`, are written in the same batch as the click, so a click and its
   events commit together.
 
+### What a click keeps
+
+Each click row says where the link was opened, and nothing that identifies who opened it:
+
+- `host` is the request URL's hostname, lowercase and without a trailing dot, as `resolve` gets it. It says which of the
+  app's hosts or an organization's domains the link was shared on.
+- `country` is the two-character code Cloudflare puts in `request.cf.country`, such as `DE`, or its own codes such as
+  `XX` and `T1`. Elsewhere it's `null`, since short links don't look up IP addresses. A country alone doesn't identify
+  anyone.
+- `referrer` is the origin of an http or https `Referer` header, such as `https://news.example`, without its path or
+  query, which can hold search terms or ids. Other schemes, such as `android-app:`, and missing headers give `null`.
+  Many browsers and apps send none, so `null` covers direct visits and hidden sources alike.
+- `outcome` is `opened`, or `granted` for a link that grants access and set its cookie. An open that sends the visitor
+  on to another host, `hopped` in `link.clicked`, writes no row, so every row counts in `clicks`.
+- It keeps no IP address, user agent, city or cookie.
+
 ### Clicks over time
 
 Since 2011, every IANA time zone's offset has been a whole number of 15 minutes, such as Kathmandu's 5:45, and has
@@ -238,7 +258,7 @@ changed only at the edge of a 15-minute slot, without stepping the date back. So
 every zone, and a day's clicks are the sum of its slots' counts. Before 2011 some zones broke this, such as St. John's,
 whose clocks went back from 00:01 to 23:01 the day before until November 2010, so ranges start in 2011 at the earliest.
 
-Both queries take a range of calendar days, `from` and `to` as `YYYY-MM-DD`, both included, up to 366 days, from
+The queries take a range of calendar days, `from` and `to` as `YYYY-MM-DD`, both included, up to 366 days, from
 `2011-01-01` to `9998-12-31`, in an IANA `timeZone`, `UTC` by default. Offsets such as `+05:30` aren't taken as zones. A
 range starts at the first moment of `from` in the zone and ends at the first moment after `to`. The days come from
 date-fns and `@date-fns/tz`. A day starts at the earlier of its midnight and the moment after the previous day ends, of
@@ -253,20 +273,29 @@ longer than 24 hours, and a day a zone skipped, such as 30 December 2011 in Samo
   a dashboard's top links: one read for the links and one `countGroups` query by `linkId`, each 90 to a query. It
   returns `{ links, total }`, with `links` as `{ id, clicks }` in the order asked. Ids of no link and links the caller
   doesn't manage are left out alike, so the answer doesn't tell them apart.
+- `clicksBy({ ids, by, from, to, timeZone?, limit? })` counts up to 50 links' clicks over the range by `host`,
+  `country`, `referrer` or `outcome`, such as a dashboard's top domains, countries and referring sites: one read for the
+  links and one `countGroups` query by that field, each 90 to a query. It returns `{ values, total }`, with `values` as
+  `{ value, clicks }`, the most clicked first and ties in alphabetical order, up to `limit`, 10 by default and 50 at
+  most. `null` counts the clicks without a value, such as visits with no `Referer`, after the others with as many.
+  `total` counts every click of the links over the range, including those past `limit`. It leaves out links like
+  `clickTotals` does.
 
-Both are actions with the permissions of `get`: a link's managers, and trusted server code. They take links by their
-`id`, as `recordClicks` does, since an id names one link however its code is shared. Lifetime counts are each link's
-`clicks`, and `list({ sort: "clicks" })` lists the most opened links first.
+The three are actions with the permissions of `get`: a link's managers, and trusted server code. They take links by
+their `id`, as `recordClicks` does, since an id names one link however its code is shared. Lifetime counts are each
+link's `clicks`, and `list({ sort: "clicks" })` lists the most opened links first.
 
 ### Recorded clicks
 
-`recordClicks({ id, at })`, server only, records up to 500 clicks at given times, such as a demo's history. It writes
-their rows, adds them to `clicks`, and sets `lastClickedAt` to the latest of them and the link's last click, in one
-batch, so a seeded link's counter, last click and chart agree. The rows take about 20 statements at most, well under
-D1's limit of queries per invocation. It refuses times later than now or before 2011, and links the caller doesn't
-manage, including one removed while the batch runs, and returns the link. Where foreign keys aren't enforced, such a
-batch writes the rows anyway, and they're deleted again before `NOT_FOUND`. It reads the link's last click before the
-batch, so a live click in between can leave `lastClickedAt` at the latest recorded time rather than that click's.
+`recordClicks({ id, clicks })`, server only, records up to 500 clicks, such as a demo's history. Each click is
+`{ at, host?, country?, referrer? }`: a time, a hostname, two capital letters or digits, and an http or https address
+whose origin is kept. Its outcome is `granted` for a link that grants access and `opened` for any other. It writes their
+rows, adds them to `clicks`, and sets `lastClickedAt` to the latest of them and the link's last click, in one batch, so
+a seeded link's counter, last click and chart agree. The rows take about 20 statements at most, well under D1's limit of
+queries per invocation. It refuses times later than now or before 2011, and links the caller doesn't manage, including
+one removed while the batch runs, and returns the link. Where foreign keys aren't enforced, such a batch writes the rows
+anyway, and they're deleted again before `NOT_FOUND`. It reads the link's last click before the batch, so a live click
+in between can leave `lastClickedAt` at the latest recorded time rather than that click's.
 
 ## The page a link opens
 
@@ -344,7 +373,9 @@ link's host wouldn't, such as when the page is on an organization's domain and t
   and returns `{ removed }`.
 - `clicksByDay({ id, from, to, timeZone? })` returns `{ days, total }`, and `clickTotals({ ids, from, to, timeZone? })`
   returns `{ links, total }`, as [Clicks over time](#clicks-over-time) describes.
-- `recordClicks({ id, at })`, server only, records clicks at given times and returns the link, as
+- `clicksBy({ ids, by, from, to, timeZone?, limit? })` returns `{ values, total }`, as
+  [Clicks over time](#clicks-over-time) describes.
+- `recordClicks({ id, clicks })`, server only, records clicks and returns the link, as
   [Recorded clicks](#recorded-clicks) describes.
 
 Each link comes back as a `ShortLink`: its `id`, `code`, `shortUrl`, its `owner` as `{ type, id }`, `orgId`,

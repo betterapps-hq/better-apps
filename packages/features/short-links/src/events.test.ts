@@ -245,7 +245,7 @@ describe("link.milestone", () => {
     expect(dataOf(t, "link.milestone").map((data) => (data as { clicks: number }).clicks)).toEqual([1, 10])
     // Clicks server code records, such as a demo's history, are imports, so they reach no milestone.
     const seeded = await t.api.create({ target: docs }, t.as("ada"))
-    await t.api.recordClicks({ id: seeded.id, at: [new Date(Date.now() - hour)] })
+    await t.api.recordClicks({ id: seeded.id, clicks: [{ at: new Date(Date.now() - hour) }] })
     expect(t.events("link.milestone")).toHaveLength(2)
 
     const none = setup({ events: { milestones: [] } })

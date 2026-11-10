@@ -18,6 +18,9 @@ import type { SubjectArgs } from 'better-apps';
 import { SubjectGrants } from 'better-apps';
 
 // @public
+export type ClickDimension = "host" | "country" | "referrer" | "outcome";
+
+// @public
 export const clickModel = "shortLinkClick";
 
 // @public
@@ -28,8 +31,21 @@ export type ClickRow = {
     id: string;
     linkId: string;
     clickedAt: Date;
+    host: string | null;
+    country: string | null;
+    referrer: string | null;
+    outcome: "opened" | "granted";
     slot: Date;
 };
+
+// @public
+export interface ClicksBy {
+    total: number;
+    values: {
+        value: string | null;
+        clicks: number;
+    }[];
+}
 
 // @public
 export interface ClicksByDay {
@@ -44,6 +60,14 @@ export interface ClicksByDay {
 export interface ClicksByDayInput extends DayRangeInput {
     // (undocumented)
     id: string;
+}
+
+// @public
+export interface ClicksByInput extends DayRangeInput {
+    // (undocumented)
+    by: ClickDimension;
+    ids: readonly string[];
+    limit?: number | undefined;
 }
 
 // @public
@@ -111,6 +135,8 @@ export const limits: {
     readonly urlLength: 2048;
     readonly maxRangeDays: 366;
     readonly maxRecordedClicks: 500;
+    readonly clickValues: 10;
+    readonly maxClickValues: 50;
 };
 
 // @public
@@ -282,9 +308,18 @@ export type OwnerType = "user" | "org";
 
 // @public
 export interface RecordClicksInput {
-    at: readonly (Date | string)[];
+    // (undocumented)
+    clicks: readonly RecordedClick[];
     // (undocumented)
     id: string;
+}
+
+// @public
+export interface RecordedClick {
+    at: Date | string;
+    country?: string | undefined;
+    host?: string | undefined;
+    referrer?: string | undefined;
 }
 
 // @public
@@ -459,6 +494,9 @@ export function shortLinks<const Options extends ShortLinksOptions>(options?: Op
             serverOnly?: false | undefined;
         };
         clickTotals: ActionDefinition<StandardSchemaV1<ClickTotalsInput, ClickTotalsInput>, ClickTotals> & {
+            serverOnly?: false | undefined;
+        };
+        clicksBy: ActionDefinition<StandardSchemaV1<ClicksByInput, ClicksByInput>, ClicksBy> & {
             serverOnly?: false | undefined;
         };
         recordClicks: ActionDefinition<StandardSchemaV1<RecordClicksInput, RecordClicksInput>, ShortLink> & {
