@@ -24,11 +24,37 @@ export const invoices = new Map<string, { orgId: string; locked?: boolean }>([
 
 const orgOfInvoice = (subjectId: string) => invoices.get(subjectId)?.orgId ?? null
 
-/** Bookings by organization. Any signed-in person sees them, whatever their organization. */
+/**
+ * Bookings by organization. Any signed-in person sees them, whatever their organization. `book-closed` takes no more
+ * files.
+ */
 const bookings = new Map<string, string>([
   ["book-acme", "acme"],
-  ["book-globex", "globex"]
+  ["book-globex", "globex"],
+  ["book-closed", "acme"]
 ])
+
+export const bookAcme = { subjectType: "booking", subjectId: "book-acme" } as const
+export const bookGlobex = { subjectType: "booking", subjectId: "book-globex" } as const
+
+/**
+ * Bookings that pass this many more view checks, then move to another organization, as one moved while a file is
+ * attached to it. Clear it to move them back.
+ */
+export const moving = new Map<string, { checks: number; toOrgId: string }>()
+
+const orgOfBooking = (subjectId: string) => {
+  const move = moving.get(subjectId)
+  return move && move.checks < 0 ? move.toOrgId : (bookings.get(subjectId) ?? null)
+}
+
+function viewBooking(subjectId: string): boolean {
+  const move = moving.get(subjectId)
+  if (move) {
+    move.checks -= 1
+  }
+  return bookings.has(subjectId)
+}
 
 /**
  * Invoices that pass this many more access checks, then can't be seen, as one deleted while a file is attached to it.
@@ -51,8 +77,8 @@ export const subjects = {
       actor.orgId !== null && actor.orgId === orgOfInvoice(subjectId) && stillVisible(subjectId)
   },
   booking: {
-    getOrgId: ({ subjectId }) => bookings.get(subjectId) ?? null,
-    canView: ({ subjectId }) => bookings.has(subjectId)
+    getOrgId: ({ subjectId }) => orgOfBooking(subjectId),
+    canView: ({ subjectId }) => viewBooking(subjectId)
   },
   page: { publicRead: true, canView: () => true, getOrgId: () => null }
 } satisfies Record<string, SubjectDefinition>
@@ -85,7 +111,7 @@ export function setup(extra: Partial<AttachmentsOptions> = {}, { signedUploads =
         maxSize: 1000,
         maxFiles: 3
       },
-      booking: {},
+      booking: { canUpload: ({ subjectId }) => subjectId !== "book-closed" },
       page: {}
     },
     standalone: { canManage: ({ actor }) => actor.roles.includes("admin") },

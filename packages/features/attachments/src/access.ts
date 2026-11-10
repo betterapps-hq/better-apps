@@ -74,6 +74,14 @@ export function ownsFile(actor: Actor, file: AttachmentFile): boolean {
   )
 }
 
+/**
+ * Whether someone can put a file kept on its own on a record in an organization: their own files go on records in any
+ * organization, and anyone else's, an organization's included, only on records in the organization the file is in.
+ */
+export function canPlaceIn(actor: Actor, file: AttachmentFile, orgId: string): boolean {
+  return file.orgId === orgId || file.owner === `user:${actor.userId}`
+}
+
 /** Whether a file is a draft or an upload under way: nothing keeps it yet. */
 export function isUnkept(file: AttachmentFile): boolean {
   return file.owner === null && file.expiresAt !== null

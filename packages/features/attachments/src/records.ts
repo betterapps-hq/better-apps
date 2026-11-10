@@ -1,6 +1,7 @@
 // Files on records: attaching, taking off, reordering and listing them, a person's own files, and deleting files.
 import type { Actor, SubjectRef, WriteOperation } from "better-apps"
 import {
+  canPlaceIn,
   canSeeFiles,
   isTrusted,
   isUnkept,
@@ -47,6 +48,8 @@ async function attachmentsOn(context: Pick<Context, "db">, ref: SubjectRef, orgI
 
 /** Options for `addLinks`. */
 interface LinkOptions {
+  /** The record's organization, as the caller read it and wrote it into the files in `before`. */
+  orgId: string
   /** Writes that run first in the same batch, such as marking an upload ready. */
   before: readonly WriteOperation[]
   /** The files whose update in `before` must match, in the same order. */
@@ -62,18 +65,18 @@ interface LinkOptions {
  * uploads finish at once. A `guarded` file whose update matched nothing, because it expired, was deleted or was
  * attached elsewhere meanwhile, takes its attachment back off and leaves the file to whatever changed it. Then the
  * record is checked again, and files on a record that went away, or out of reach, meanwhile come back off as
- * `withdrawn`.
+ * `withdrawn`, as do files on a record that moved to another organization since the caller read `orgId`, so a file and
+ * its attachment always agree on the organization.
  */
 export async function addLinks(
   config: Config,
   context: Context,
   ref: SubjectRef,
   files: readonly AttachmentFile[],
-  { before, guarded, conflict, committed }: LinkOptions
+  { orgId, before, guarded, conflict, committed }: LinkOptions
 ): Promise<AttachedFile[]> {
   const settings = settingsOf(config, ref.subjectType)
   const { actor } = context
-  const orgId = await orgOf(context.subjects, ref, actor)
   const added = await retried(async () => {
     const existing = await attachmentsOn(context, ref, orgId)
     const already = new Set(existing.map((row) => row.fileId))
@@ -119,12 +122,10 @@ export async function addLinks(
   if (added.failed.size === 0) {
     committed?.()
   }
-  if (!isTrusted(context)) {
-    const visible = actor !== null && (await context.subjects.canView(actor, ref))
-    if (!visible || (await orgOf(context.subjects, ref, actor)) !== orgId) {
-      await removeLinks(config, context, added.links, "withdrawn")
-      throw new AttachmentsError("NOT_FOUND", "That record doesn't exist, or you can't see it.")
-    }
+  const visible = isTrusted(context) || (actor !== null && (await context.subjects.canView(actor, ref)))
+  if (!visible || (await orgOf(context.subjects, ref, actor)) !== orgId) {
+    await removeLinks(config, context, added.links, "withdrawn")
+    throw new AttachmentsError("NOT_FOUND", "That record doesn't exist, or you can't see it.")
   }
   const byId = new Map(files.map((file) => [file.id, file]))
   const now = Date.now()
@@ -164,9 +165,8 @@ export async function attach(config: Config, context: Context): Promise<{ files:
       if (!seen[kept.indexOf(file)]) {
         throw fileNotFound()
       }
-      // An organization's files stay in it. A person's own files go on any record they can add files to.
-      if (file.orgId !== orgId && file.owner !== `user:${actor.userId}`) {
-        throw new AttachmentsError("INVALID_INPUT", "That file belongs to another organization.")
+      if (!canPlaceIn(actor, file, orgId)) {
+        throw new AttachmentsError("INVALID_INPUT", "That file can't go on records in this organization.")
       }
     } else {
       const on = await attachmentsOn(context, ref, orgId)
@@ -190,6 +190,7 @@ export async function attach(config: Config, context: Context): Promise<{ files:
   const attaching = files.map((file) => (drafts.includes(file.id) ? { ...file, expiresAt: null, orgId } : file))
   return {
     files: await addLinks(config, context, ref, attaching, {
+      orgId,
       before,
       guarded: drafts,
       conflict: "That file was added somewhere else, or it expired. Upload it again."

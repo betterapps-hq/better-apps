@@ -1,12 +1,9 @@
 import { describe, expect, it, vi } from "vite-plus/test"
-import { inv1, invoices, secret, setup, vanishing } from "../test/app.js"
+import { bookAcme, bookGlobex, inv1, invoices, moving, secret, setup, vanishing } from "../test/app.js"
 import { attachmentModel, attachments, fileModel, memoryStorage } from "./index.js"
 
 /** A call from a signed-out visitor: a request with no sign-in, rather than trusted server code. */
 const signedOut = () => ({ request: new Request("https://app.test") })
-
-const bookAcme = { subjectType: "booking", subjectId: "book-acme" } as const
-const bookGlobex = { subjectType: "booking", subjectId: "book-globex" } as const
 
 const text = (body: string) => ({ name: "notes.txt", contentType: "text/plain", bytes: body })
 
@@ -33,6 +30,23 @@ describe("uploads onto a record", () => {
       subjectId: "inv-1",
       orgId: "acme"
     })
+  })
+
+  it("join the organization their record is in when they finish, after it moved", async () => {
+    const { api, as, send } = setup()
+    const created = await api.createUpload(
+      { ...bookAcme, name: "a.txt", contentType: "text/plain", size: 3 },
+      as("solo")
+    )
+    expect(created.file.orgId).toBe("acme")
+    await send(created.upload, "abc")
+    moving.set("book-acme", { checks: -1, toOrgId: "globex" })
+    try {
+      const { file, attachment } = await api.completeUpload({ fileId: created.file.id }, as("solo"))
+      expect([file.orgId, attachment?.orgId]).toEqual(["globex", "globex"])
+    } finally {
+      moving.clear()
+    }
   })
 
   it("go straight to storage when it signs uploads", async () => {
@@ -468,12 +482,68 @@ describe("drafts", () => {
   it("go on a record in another organization from their uploader's, but never from anyone else", async () => {
     const { api, as, upload } = setup()
     const { file } = await upload("gus", { subjectType: "booking" })
-    expect(file.orgId).toBe("globex")
+    expect(file.orgId).toBe("")
     await expect(api.attach({ ...bookAcme, fileIds: [file.id] }, as("bob"))).rejects.toMatchObject({
       code: "NOT_FOUND"
     })
     const { files } = await api.attach({ ...bookAcme, fileIds: [file.id] }, as("gus"))
     expect(files[0]).toMatchObject({ id: file.id, orgId: "acme" })
+  })
+
+  it("still need the target to take files, and to allow their type and size", async () => {
+    const { api, as, upload } = setup()
+    const draft = await upload("solo", { subjectType: "booking" })
+    await expect(
+      api.attach({ subjectType: "booking", subjectId: "book-closed", fileIds: [draft.file.id] }, as("solo"))
+    ).rejects.toMatchObject({ code: "FORBIDDEN" })
+    // Bookings take any type, invoices don't, so the invoice's limits apply when the draft goes there.
+    const zip = await upload("bob", { subjectType: "booking" }, { name: "a.zip", contentType: "application/zip" })
+    await expect(api.attach({ ...inv1, fileIds: [zip.file.id] }, as("bob"))).rejects.toMatchObject({
+      code: "INVALID_INPUT"
+    })
+  })
+
+  it("go on a record outside any organization, and go with it", async () => {
+    const about = { subjectType: "page", subjectId: "about" } as const
+    const { api, as, upload } = setup()
+    const { file } = await upload("bob", { subjectType: "page" })
+    const { files } = await api.attach({ ...about, fileIds: [file.id] }, as("bob"))
+    expect(files[0]).toMatchObject({ id: file.id, orgId: "" })
+    const listed = await api.listFiles({ subjectType: "page", subjectIds: ["about"] }, signedOut())
+    expect(listed.about?.map((entry) => entry.id)).toEqual([file.id])
+    expect(await api.removeSubject(about)).toEqual({ removed: 1, done: true })
+    await expect(api.getFile({ fileId: file.id }, as("bob"))).rejects.toMatchObject({ code: "NOT_FOUND" })
+  })
+
+  it("come back off a record that moved to another organization while they were attached", async () => {
+    const { api, as, upload, count, events } = setup()
+    const { file } = await upload("solo", { subjectType: "booking" })
+    moving.set("book-acme", { checks: 1, toOrgId: "globex" })
+    try {
+      await expect(api.attach({ ...bookAcme, fileIds: [file.id] }, as("solo"))).rejects.toMatchObject({
+        code: "NOT_FOUND"
+      })
+    } finally {
+      moving.clear()
+    }
+    expect([count(fileModel), count(attachmentModel)]).toEqual([0, 0])
+    expect(events("attachment.removed")[0]?.data).toMatchObject({ orgId: "acme", reason: "withdrawn" })
+  })
+
+  it("join the organization of the record that wins when records in two race for one", async () => {
+    const { api, as, upload, count } = setup()
+    const { file } = await upload("solo", { subjectType: "booking" })
+    const results = await Promise.allSettled([
+      api.attach({ ...bookAcme, fileIds: [file.id] }, as("solo")),
+      api.attach({ ...bookGlobex, fileIds: [file.id] }, as("solo"))
+    ])
+    const won = results.findIndex((result) => result.status === "fulfilled")
+    expect(results.map((result) => result.status).sort()).toEqual(["fulfilled", "rejected"])
+    expect([count(fileModel), count(attachmentModel)]).toEqual([1, 1])
+    const listed = await api.listFiles({ subjectType: "booking", subjectIds: ["book-acme", "book-globex"] }, as("solo"))
+    const winner = won === 0 ? "acme" : "globex"
+    expect(listed[`book-${winner}`]?.map((entry) => entry.id)).toEqual([file.id])
+    expect(await api.getFile({ fileId: file.id }, as("solo"))).toMatchObject({ orgId: winner })
   })
 
   it("stay on the record that wins when two records race for one", async () => {
@@ -913,11 +983,18 @@ describe("files on their own", () => {
     await expect(api.attach({ ...globex, fileIds: [ours.file.id] }, elsewhere)).rejects.toMatchObject({
       code: "NOT_FOUND"
     })
-    // Gus sees Acme's file on a booking anyone can see, but it stays in Acme.
+    // Gus sees Acme's file on a booking anyone can see, but it stays in Acme. Bob sees Solo's own file on a page, but
+    // it isn't his to bring into Acme.
     await api.attach({ ...bookAcme, fileIds: [ours.file.id] }, as("bob"))
     await expect(api.attach({ ...globex, fileIds: [ours.file.id] }, as("gus"))).rejects.toMatchObject({
       code: "INVALID_INPUT",
-      message: "That file belongs to another organization."
+      message: "That file can't go on records in this organization."
+    })
+    const solos = await upload("solo", { owner: "user" })
+    await api.attach({ subjectType: "page", subjectId: "about", fileIds: [solos.file.id] }, as("solo"))
+    await expect(api.attach({ ...inv1, fileIds: [solos.file.id] }, as("bob"))).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+      message: "That file can't go on records in this organization."
     })
   })
 

@@ -100,10 +100,10 @@ them besides actions, and an app's catch-all route for its base path reaches the
 3. `completeUpload({ fileId })` checks what storage holds and marks the file ready, attaching it to its record.
 
 Attach drafts with `attach({ subjectType, subjectId, fileIds })` once the record exists. Drafts that aren't attached
-expire after `draftTtl`, a day by default. A draft goes on any record its uploader can add files to, whatever its
-organization, and joins that organization. So a person with no active organization, such as an anonymous guest, can
-upload before the record exists. A person's own files go on records in any organization too, but an organization's files
-stay in it.
+expire after `draftTtl`, a day by default. A draft is in no organization until it's attached, then joins its record's,
+so a person with no active organization, such as an anonymous guest, can upload before the record exists. Only its
+uploader can attach it, so attach an anonymous guest's drafts before linking the guest to another account. A person's
+own files go on records in any organization too, but anyone else's stay in the organization they're in.
 
 The upload route counts a body that comes without a length, such as a chunked one, so it never stores more than the
 declared size.
