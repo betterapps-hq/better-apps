@@ -6,6 +6,9 @@ export type { ShortLink, ShortLinkTarget } from "./link.js"
 export type {
   CreateLinkInput,
   GrantCookie,
+  LinkHost,
+  LinkHosts,
+  LinkOriginArgs,
   LinkRules,
   LinkSubject,
   LinkTarget,
@@ -14,6 +17,7 @@ export type {
   ManageArgs,
   NotFoundArgs,
   OwnerType,
+  ResolveHostArgs,
   ShortLinksOptions,
   SubjectTypeOf,
   UpdateLinkInput,

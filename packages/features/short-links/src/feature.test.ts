@@ -510,7 +510,7 @@ describe("access through a link", () => {
       url: ({ subjectId }) => `https://app.example.test/invoices/${subjectId}`
     }
     const split = setup({ subjects: { invoice: elsewhere }, baseUrl: "https://go.example.test" })
-    await expect(split.api.create({ target: inv1, grantsView: true }, split.as("ada"))).rejects.toThrow("cookie.domain")
+    await expectCode(split.api.create({ target: inv1, grantsView: true }, split.as("ada")), "INVALID_INPUT")
     // A link that doesn't grant access has no cookie to deliver.
     expect((await split.api.create({ target: inv1 }, split.as("ada"))).grantsView).toBe(false)
 

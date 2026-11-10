@@ -365,7 +365,8 @@ Each organization has at most one primary domain, the one other features use to 
 
 ## Hostname lookup
 
-Features that serve customers' domains, such as short links, call the server-only `lookup`:
+Features that serve customers' domains, such as [short links](../../short-links/docs/spec.md#organizations-domains),
+call the server-only `lookup`:
 
 ```ts
 const match = await app.api.domains.lookup({ hostname: new URL(request.url).hostname })
@@ -394,8 +395,7 @@ const match = await app.api.domains.lookup({ hostname: new URL(request.url).host
 | `check.scheduled`       | `{ domainId, token }` | Domains' own, for its schedule of checks                                       |
 
 `domain` is a `DomainSummary`: `id`, `orgId` (`null` in an app without organizations), `hostname`, `kind`, `status` and
-`primary`. A feature that caches lookups, such as short links, can drop a hostname on `domain.removed` and
-`domain.status.changed`.
+`primary`. A feature that caches lookups can drop a hostname on `domain.removed` and `domain.status.changed`.
 
 ## Permissions
 
