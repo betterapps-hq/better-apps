@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "b28534bb-b242-4c89-9b98-445debfa6e52",
+  "id": "a0f8fd87-66c3-43fb-8dc5-9be1134e5f0f",
   "prevId": "6a528da8-856b-4a25-bb13-27c28469345c",
   "tables": {
     "invoice": {
@@ -765,6 +765,59 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
+    "attachment_move": {
+      "name": "attachment_move",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "to_org_id": {
+          "name": "to_org_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
+        "deleted": {
+          "name": "deleted",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "claim": {
+          "name": "claim",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "held_at": {
+          "name": "held_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "attachment_move_by_time": {
+          "name": "attachment_move_by_time",
+          "columns": ["held_at"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
     "attachment_removal": {
       "name": "attachment_removal",
       "columns": {
@@ -1481,59 +1534,6 @@
         "reaction_of_user": {
           "name": "reaction_of_user",
           "columns": ["user_id"],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "reaction_move": {
-      "name": "reaction_move",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "to_org_id": {
-          "name": "to_org_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "''"
-        },
-        "deleted": {
-          "name": "deleted",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
-        },
-        "claim": {
-          "name": "claim",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "held_at": {
-          "name": "held_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "reaction_move_by_time": {
-          "name": "reaction_move_by_time",
-          "columns": ["held_at"],
           "isUnique": false
         }
       },

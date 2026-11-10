@@ -98,18 +98,6 @@ export const reactionRemoval = sqliteTable(
   (table) => [index("reaction_removal_by_time").on(table.createdAt)]
 )
 
-export const reactionMove = sqliteTable(
-  "reaction_move",
-  {
-    id: text("id").primaryKey(),
-    toOrgId: text("to_org_id").default("").notNull(),
-    deleted: integer("deleted", { mode: "boolean" }).default(false).notNull(),
-    claim: text("claim").notNull(),
-    heldAt: integer("held_at", { mode: "timestamp_ms" }).notNull()
-  },
-  (table) => [index("reaction_move_by_time").on(table.heldAt)]
-)
-
 export const shortLink = sqliteTable(
   "short_link",
   {
@@ -249,6 +237,18 @@ export const attachmentRemoval = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull()
   },
   (table) => [index("attachment_removal_by_time").on(table.createdAt)]
+)
+
+export const attachmentMove = sqliteTable(
+  "attachment_move",
+  {
+    id: text("id").primaryKey(),
+    toOrgId: text("to_org_id").default("").notNull(),
+    deleted: integer("deleted", { mode: "boolean" }).default(false).notNull(),
+    claim: text("claim").notNull(),
+    heldAt: integer("held_at", { mode: "timestamp_ms" }).notNull()
+  },
+  (table) => [index("attachment_move_by_time").on(table.heldAt)]
 )
 
 export const betterAppsEvent = sqliteTable(

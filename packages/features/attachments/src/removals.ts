@@ -146,10 +146,29 @@ export async function removeLinks(
   writer: Writer,
   links: readonly Attachment[],
   reason: DetachReason,
-  { bulk = false, keepFiles = false }: { bulk?: boolean; keepFiles?: boolean } = {}
+  options: { bulk?: boolean; keepFiles?: boolean } = {}
 ): Promise<void> {
   if (links.length === 0) {
     return
+  }
+  const { writes, doomed } = await linkRemoval(writer, links, reason, options)
+  await writer.db.batch(writes)
+  await purge(config, writer.db, doomed)
+}
+
+/**
+ * Emits the events of taking files off records, as `removeLinks` does, and returns its writes and the files they mark
+ * `deleted`, for a caller that batches them with writes of its own and then purges those files. A batch that fails drops
+ * the events with it.
+ */
+export async function linkRemoval(
+  writer: Writer,
+  links: readonly Attachment[],
+  reason: DetachReason,
+  { bulk = false, keepFiles = false }: { bulk?: boolean; keepFiles?: boolean } = {}
+): Promise<{ writes: WriteOperation[]; doomed: AttachmentFile[] }> {
+  if (links.length === 0) {
+    return { writes: [], doomed: [] }
   }
   const files = await filesById(
     writer.db,
@@ -178,8 +197,7 @@ export async function removeLinks(
   for (const file of doomed) {
     writer.emit("file.deleted", { file: eventFile(file), reason: fileReasons[reason] })
   }
-  await writer.db.batch([...linkRemovals(links, doomed), ...markDeleted(doomed)])
-  await purge(config, writer.db, doomed)
+  return { writes: [...linkRemovals(links, doomed), ...markDeleted(doomed)], doomed }
 }
 
 /**
