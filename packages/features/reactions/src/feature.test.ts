@@ -639,6 +639,9 @@ describe("toClientEvent", () => {
 })
 
 describe("with comments", () => {
+  // The id of a thread's row in reactions' table of move turns.
+  const turnId = (threadId: string) => JSON.stringify(["comments.thread", threadId])
+
   // Comments' subject types and events, as @better-apps/comments declares them, without its tables.
   function withComments({ open = false } = {}) {
     const threads = new Map([["t-1", { orgId: "acme", comments: new Set(["c-1", "c-2"]) }]])
@@ -703,9 +706,7 @@ describe("with comments", () => {
       database.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${reactionModel} WHERE orgId = ?`).get(orgId)
     // Where reactions expect the thread to be, from the move they follow, or deleted.
     const turn = (threadId: string) =>
-      database.sqlite
-        .prepare(`SELECT toOrgId, deleted FROM ${moveModel} WHERE id = ?`)
-        .get(JSON.stringify(["comments.thread", threadId]))
+      database.sqlite.prepare(`SELECT toOrgId, deleted FROM ${moveModel} WHERE id = ?`).get(turnId(threadId))
     return {
       api: app.api.reactions,
       emit: app.api.comments.emit,
@@ -949,7 +950,7 @@ describe("with comments", () => {
     expect(setup.turn("t-old")).toEqual({ toOrgId: "", deleted: 1 })
     setup.database.sqlite
       .prepare(`UPDATE ${moveModel} SET heldAt = ? WHERE id = ?`)
-      .run(Date.now() - 31 * 24 * 60 * 60_000, JSON.stringify(["comments.thread", "t-old"]))
+      .run(Date.now() - 31 * 24 * 60 * 60_000, turnId("t-old"))
     setup.threads.set("t-1", { orgId: "globex", comments: new Set(["c-1", "c-2"]) })
     await setup.emit(moved("t-1", "globex", ["c-1", "c-2"]))
     expect(setup.turn("t-old")).toBeUndefined()
@@ -1191,7 +1192,7 @@ describe("with comments", () => {
       setup.threads.delete("t-big")
       run(
         `INSERT INTO ${moveModel} (id, toOrgId, deleted, claim, heldAt) VALUES (?, '', 1, 'deleted', ?)`,
-        JSON.stringify(["comments.thread", "t-big"]),
+        turnId("t-big"),
         Date.now()
       )
     })
