@@ -10,3 +10,4 @@
 - [Attachments spec: files on records, uploads, downloads and cleanup](../packages/features/attachments/docs/spec.md)
 - [Uploading through attachments with UploadCN](../packages/integrations/uploadcn/README.md)
 - [Domains spec, with the one-time Cloudflare for SaaS setup](../packages/features/domains/docs/spec.md)
+- [Better Booking spec: scheduling, booking pages on organizations' domains, short links and documents](../apps/booking/docs/spec.md)
