@@ -939,7 +939,7 @@
                                         "id": "h3Fn5",
                                         "name": "Title",
                                         "style": {
-                                          "size": "text-base",
+                                          "size": "text-2xl",
                                           "weight": 600,
                                           "leading": "leading-tight"
                                         },
@@ -1180,7 +1180,7 @@
                                 "type": "component",
                                 "component": "nova/Badge",
                                 "props": {
-                                  "variant": "outline"
+                                  "variant": "secondary"
                                 },
                                 "slots": {
                                   "children": [
@@ -1200,6 +1200,10 @@
                                       "tag": "span"
                                     }
                                   ]
+                                },
+                                "style": {
+                                  "background": "warning",
+                                  "foreground": "warning-foreground"
                                 }
                               },
                               {
@@ -3006,7 +3010,7 @@
                                                     "type": "component",
                                                     "component": "nova/Badge",
                                                     "props": {
-                                                      "variant": "outline"
+                                                      "variant": "secondary"
                                                     },
                                                     "slots": {
                                                       "children": [
@@ -3026,6 +3030,10 @@
                                                           "tag": "span"
                                                         }
                                                       ]
+                                                    },
+                                                    "style": {
+                                                      "background": "warning",
+                                                      "foreground": "warning-foreground"
                                                     }
                                                   }
                                                 ]
@@ -5373,7 +5381,7 @@
                                         "id": "KZ3TP",
                                         "name": "Title",
                                         "style": {
-                                          "size": "text-base",
+                                          "size": "text-2xl",
                                           "weight": 600,
                                           "leading": "leading-tight"
                                         },
@@ -12504,7 +12512,7 @@
                                         "id": "zpYtE",
                                         "name": "Title",
                                         "style": {
-                                          "size": "text-base",
+                                          "size": "text-2xl",
                                           "weight": 600,
                                           "leading": "leading-tight"
                                         },
@@ -18366,7 +18374,7 @@
                                         "name": "Title",
                                         "style": {
                                           "font": "font-mono",
-                                          "size": "text-base",
+                                          "size": "text-2xl",
                                           "weight": 600,
                                           "leading": "leading-tight"
                                         },
@@ -21782,7 +21790,7 @@
                                         "id": "FTwyr",
                                         "name": "Title",
                                         "style": {
-                                          "size": "text-base",
+                                          "size": "text-2xl",
                                           "weight": 600,
                                           "leading": "leading-tight"
                                         },
@@ -24167,7 +24175,7 @@
                                         "id": "rVOJx",
                                         "name": "Title",
                                         "style": {
-                                          "size": "text-base",
+                                          "size": "text-2xl",
                                           "weight": 600,
                                           "leading": "leading-tight"
                                         },
@@ -28696,7 +28704,7 @@
                                         "id": "XHRpA",
                                         "name": "Title",
                                         "style": {
-                                          "size": "text-base",
+                                          "size": "text-2xl",
                                           "weight": 600,
                                           "leading": "leading-tight"
                                         },
@@ -28791,7 +28799,7 @@
                                         "type": "component",
                                         "component": "nova/Badge",
                                         "props": {
-                                          "variant": "outline"
+                                          "variant": "secondary"
                                         },
                                         "slots": {
                                           "children": [
@@ -28811,6 +28819,10 @@
                                               "tag": "span"
                                             }
                                           ]
+                                        },
+                                        "style": {
+                                          "background": "warning",
+                                          "foreground": "warning-foreground"
                                         }
                                       }
                                     ]
@@ -32704,7 +32716,7 @@
                                                         "type": "component",
                                                         "component": "nova/Badge",
                                                         "props": {
-                                                          "variant": "outline"
+                                                          "variant": "secondary"
                                                         },
                                                         "slots": {
                                                           "children": [
@@ -32724,6 +32736,10 @@
                                                               "tag": "span"
                                                             }
                                                           ]
+                                                        },
+                                                        "style": {
+                                                          "background": "warning",
+                                                          "foreground": "warning-foreground"
                                                         }
                                                       }
                                                     ]
@@ -34257,7 +34273,7 @@
                                         "id": "uEALX",
                                         "name": "Title",
                                         "style": {
-                                          "size": "text-base",
+                                          "size": "text-2xl",
                                           "weight": 600,
                                           "leading": "leading-tight"
                                         },
@@ -34352,7 +34368,7 @@
                                         "type": "component",
                                         "component": "nova/Badge",
                                         "props": {
-                                          "variant": "outline"
+                                          "variant": "secondary"
                                         },
                                         "slots": {
                                           "children": [
@@ -34372,6 +34388,10 @@
                                               "tag": "span"
                                             }
                                           ]
+                                        },
+                                        "style": {
+                                          "background": "warning",
+                                          "foreground": "warning-foreground"
                                         }
                                       }
                                     ]
@@ -36127,7 +36147,7 @@
                                         "id": "ZcrKo",
                                         "name": "Title",
                                         "style": {
-                                          "size": "text-base",
+                                          "size": "text-2xl",
                                           "weight": 600,
                                           "leading": "leading-tight"
                                         },
@@ -36222,7 +36242,7 @@
                                         "type": "component",
                                         "component": "nova/Badge",
                                         "props": {
-                                          "variant": "outline"
+                                          "variant": "secondary"
                                         },
                                         "slots": {
                                           "children": [
@@ -36242,6 +36262,10 @@
                                               "tag": "span"
                                             }
                                           ]
+                                        },
+                                        "style": {
+                                          "background": "warning",
+                                          "foreground": "warning-foreground"
                                         }
                                       }
                                     ]
@@ -38229,7 +38253,7 @@
                                         "id": "vPwwy",
                                         "name": "Title",
                                         "style": {
-                                          "size": "text-base",
+                                          "size": "text-2xl",
                                           "weight": 600,
                                           "leading": "leading-tight"
                                         },
@@ -39225,7 +39249,7 @@
                                         "id": "MetgR",
                                         "name": "Title",
                                         "style": {
-                                          "size": "text-base",
+                                          "size": "text-2xl",
                                           "weight": 600,
                                           "leading": "leading-tight"
                                         },
@@ -44857,7 +44881,7 @@
                                         "id": "eiJIW",
                                         "name": "Title",
                                         "style": {
-                                          "size": "text-base",
+                                          "size": "text-2xl",
                                           "weight": 600,
                                           "leading": "leading-tight"
                                         },
@@ -45877,7 +45901,7 @@
                                                             "type": "component",
                                                             "component": "nova/Badge",
                                                             "props": {
-                                                              "variant": "outline"
+                                                              "variant": "secondary"
                                                             },
                                                             "slots": {
                                                               "children": [
@@ -45897,6 +45921,10 @@
                                                                   "tag": "span"
                                                                 }
                                                               ]
+                                                            },
+                                                            "style": {
+                                                              "background": "warning",
+                                                              "foreground": "warning-foreground"
                                                             }
                                                           }
                                                         ]
@@ -46394,7 +46422,7 @@
                                                                                 "type": "component",
                                                                                 "component": "nova/Badge",
                                                                                 "props": {
-                                                                                  "variant": "outline"
+                                                                                  "variant": "secondary"
                                                                                 },
                                                                                 "slots": {
                                                                                   "children": [
@@ -46414,6 +46442,10 @@
                                                                                       "tag": "span"
                                                                                     }
                                                                                   ]
+                                                                                },
+                                                                                "style": {
+                                                                                  "background": "warning",
+                                                                                  "foreground": "warning-foreground"
                                                                                 }
                                                                               }
                                                                             ]
@@ -46642,7 +46674,7 @@
                                                                                 "type": "component",
                                                                                 "component": "nova/Badge",
                                                                                 "props": {
-                                                                                  "variant": "outline"
+                                                                                  "variant": "secondary"
                                                                                 },
                                                                                 "slots": {
                                                                                   "children": [
@@ -46662,6 +46694,10 @@
                                                                                       "tag": "span"
                                                                                     }
                                                                                   ]
+                                                                                },
+                                                                                "style": {
+                                                                                  "background": "warning",
+                                                                                  "foreground": "warning-foreground"
                                                                                 }
                                                                               }
                                                                             ]
@@ -46716,7 +46752,7 @@
                                                         "type": "component",
                                                         "component": "nova/Badge",
                                                         "props": {
-                                                          "variant": "outline"
+                                                          "variant": "secondary"
                                                         },
                                                         "slots": {
                                                           "children": [
@@ -46736,6 +46772,10 @@
                                                               "tag": "span"
                                                             }
                                                           ]
+                                                        },
+                                                        "style": {
+                                                          "background": "warning",
+                                                          "foreground": "warning-foreground"
                                                         }
                                                       }
                                                     ]
@@ -47289,7 +47329,7 @@
                                                                                 "type": "component",
                                                                                 "component": "nova/Badge",
                                                                                 "props": {
-                                                                                  "variant": "outline"
+                                                                                  "variant": "secondary"
                                                                                 },
                                                                                 "slots": {
                                                                                   "children": [
@@ -47309,6 +47349,10 @@
                                                                                       "tag": "span"
                                                                                     }
                                                                                   ]
+                                                                                },
+                                                                                "style": {
+                                                                                  "background": "warning",
+                                                                                  "foreground": "warning-foreground"
                                                                                 }
                                                                               }
                                                                             ]
@@ -47537,7 +47581,7 @@
                                                                                 "type": "component",
                                                                                 "component": "nova/Badge",
                                                                                 "props": {
-                                                                                  "variant": "outline"
+                                                                                  "variant": "secondary"
                                                                                 },
                                                                                 "slots": {
                                                                                   "children": [
@@ -47557,6 +47601,10 @@
                                                                                       "tag": "span"
                                                                                     }
                                                                                   ]
+                                                                                },
+                                                                                "style": {
+                                                                                  "background": "warning",
+                                                                                  "foreground": "warning-foreground"
                                                                                 }
                                                                               }
                                                                             ]
@@ -48277,7 +48325,7 @@
                                         "id": "DccBx",
                                         "name": "Title",
                                         "style": {
-                                          "size": "text-base",
+                                          "size": "text-2xl",
                                           "weight": 600,
                                           "leading": "leading-tight"
                                         },
@@ -49655,7 +49703,7 @@
                                         "id": "p1RYX",
                                         "name": "Title",
                                         "style": {
-                                          "size": "text-base",
+                                          "size": "text-2xl",
                                           "weight": 600,
                                           "leading": "leading-tight"
                                         },
@@ -50578,7 +50626,7 @@
                                         "id": "YHxmY",
                                         "name": "Title",
                                         "style": {
-                                          "size": "text-base",
+                                          "size": "text-2xl",
                                           "weight": 600,
                                           "leading": "leading-tight"
                                         },
@@ -51293,7 +51341,7 @@
                                         "id": "NxtFL",
                                         "name": "Title",
                                         "style": {
-                                          "size": "text-base",
+                                          "size": "text-2xl",
                                           "weight": 600,
                                           "leading": "leading-tight"
                                         },
@@ -54062,7 +54110,7 @@
                                         "id": "EIuQQ",
                                         "name": "Title",
                                         "style": {
-                                          "size": "text-base",
+                                          "size": "text-2xl",
                                           "weight": 600,
                                           "leading": "leading-tight"
                                         },
@@ -54921,7 +54969,7 @@
                     "id": "acaKP",
                     "name": "Title",
                     "style": {
-                      "size": "text-base",
+                      "size": "text-2xl",
                       "weight": 600,
                       "leading": "leading-tight"
                     },
@@ -55620,7 +55668,7 @@
                         "id": "llczQ",
                         "name": "Title",
                         "style": {
-                          "size": "text-base",
+                          "size": "text-2xl",
                           "weight": 600,
                           "leading": "leading-tight"
                         },
@@ -55952,7 +56000,7 @@
                                         "id": "VbsqF",
                                         "name": "Title",
                                         "style": {
-                                          "size": "text-base",
+                                          "size": "text-2xl",
                                           "weight": 600,
                                           "leading": "leading-tight"
                                         },
@@ -61820,7 +61868,7 @@
                                 "id": "gpgDm",
                                 "name": "Title",
                                 "style": {
-                                  "size": "text-base",
+                                  "size": "text-2xl",
                                   "weight": 600,
                                   "leading": "leading-tight"
                                 },
@@ -63499,7 +63547,7 @@
                                         "id": "xapXc",
                                         "name": "Title",
                                         "style": {
-                                          "size": "text-base",
+                                          "size": "text-2xl",
                                           "weight": 600,
                                           "leading": "leading-tight"
                                         },
@@ -64268,7 +64316,7 @@
                                                             "id": "P1rf6",
                                                             "name": "Title",
                                                             "style": {
-                                                              "size": "text-base",
+                                                              "size": "text-2xl",
                                                               "weight": 600,
                                                               "leading": "leading-tight"
                                                             },
@@ -65658,7 +65706,7 @@
                     "id": "izirV",
                     "name": "Title",
                     "style": {
-                      "size": "text-base",
+                      "size": "text-2xl",
                       "weight": 600,
                       "leading": "leading-tight"
                     },
@@ -67537,7 +67585,7 @@
                                                     "id": "DMqiT",
                                                     "name": "Title",
                                                     "style": {
-                                                      "size": "text-base",
+                                                      "size": "text-2xl",
                                                       "weight": 600,
                                                       "leading": "leading-tight"
                                                     },
@@ -69625,7 +69673,7 @@
                             "id": "oHDbL",
                             "name": "Title",
                             "style": {
-                              "size": "text-base",
+                              "size": "text-2xl",
                               "weight": 600,
                               "leading": "leading-tight"
                             },

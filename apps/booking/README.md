@@ -74,4 +74,5 @@ custom domains through [Cloudflare for SaaS](../../packages/adapters/hostnames-c
 - `booking.par`: the Parity design, built on the app's own components and `src/styles.css`.
 - `designs/Booking.pen`: the Pencil design, linked to `designs/Shadcn Nova.lib.pen`.
 
-The brand is teal on Nova's neutral base. Its tokens are in `src/styles.css`.
+The brand is teal on Nova's neutral base, with amber for warnings. Its tokens, and the type sizes and shadows the kit's
+stylesheet leaves out, are in `src/styles.css`.

@@ -1121,6 +1121,14 @@ in the [domains spec](../../../packages/features/domains/docs/spec.md#one-time-c
   | `brand-foreground`      | `oklch(0.99 0.005 185)`  | `oklch(0.21 0.035 192)` |
   | `brand-soft`            | `oklch(0.965 0.022 185)` | `oklch(0.3 0.045 190)`  |
   | `brand-soft-foreground` | `oklch(0.42 0.085 190)`  | `oklch(0.87 0.075 183)` |
+  | `warning`               | `oklch(0.86 0.14 85)`    | `oklch(0.36 0.07 65)`   |
+  | `warning-foreground`    | `oklch(0.33 0.08 55)`    | `oklch(0.9 0.1 88)`     |
+
+- **Warning**: amber. `warning` fills the badges of statuses that need attention, with `warning-foreground` on it, and
+  passes WCAG AA in light and dark.
+- **Type and shadows**: the kit's stylesheet defines only `text-xs`, `text-sm` and `text-base`, and no shadows, so
+  `src/styles.css` adds `text-lg`, `text-xl`, `text-2xl` and `text-3xl`, and `shadow-xs` to `shadow-lg`, at Tailwind's
+  default values. Page titles are `text-2xl` at weight 600.
 
 - Small grey text never sits on a grey surface: `muted-foreground` on `muted` fails contrast at 12px.
 - **Simulated** is an outline badge with a short explanation on hover and focus.
@@ -1132,7 +1140,7 @@ in the [domains spec](../../../packages/features/domains/docs/spec.md#one-time-c
   | ----------------------------------------- | ---------------------------------------------------- |
   | Upcoming, Open, On, Ready                 | `brand-soft` with `brand-soft-foreground`            |
   | Past, Paused, Off, Primary, Default       | Neutral (`secondary`)                                |
-  | Needs a host, Expired, Pending, Not found | Warning                                              |
+  | Needs a host, Expired, Pending, Not found | `warning` with `warning-foreground`                  |
   | Cancelled, Failed                         | Destructive                                          |
   | Public, Private, Lets guests in, Found    | Outline, with a globe, a lock, a key or a check icon |
   | Demo, Simulated, Required                 | Outline                                              |

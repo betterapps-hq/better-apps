@@ -20,6 +20,27 @@
   --sidebar-primary: var(--brand);
   --sidebar-primary-foreground: var(--brand-foreground);
   --sidebar-ring: oklch(0.62 0.11 186);
+
+  /* `warning` fills statuses that need attention, such as Needs a host, Expired and Pending, with
+   * `warning-foreground` on it. Both modes pass WCAG AA. */
+  --warning: oklch(0.86 0.14 85);
+  --warning-foreground: oklch(0.33 0.08 55);
+}
+
+/*
+ * The kit's compiled stylesheet defines only `text-xs`, `text-sm` and `text-base`, and no shadows. The app adds the
+ * larger sizes for page and section titles, and shadows for raised surfaces, at Tailwind's default values.
+ */
+:root {
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 1.875rem;
+
+  --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
 }
 
 /* In the dark, a calmer teal than the light one's inverse, on a deep teal tint rather than flat grey. */
@@ -35,4 +56,7 @@
   --sidebar-primary: var(--brand);
   --sidebar-primary-foreground: var(--brand-foreground);
   --sidebar-ring: oklch(0.6 0.1 186);
+
+  --warning: oklch(0.36 0.07 65);
+  --warning-foreground: oklch(0.9 0.1 88);
 }
