@@ -7,9 +7,9 @@ verifyDepsBeforeRun: error
 catalog:
   typescript: 7.0.2
   vite: npm:@voidzero-dev/vite-plus-core@1.4.0
-  vitest: 5.0.5
-  vite-plus: 1.4.0
-  "@vitest/coverage-v8": 5.0.5
+  vitest: 5.1.0
+  vite-plus: 1.5.0
+  "@vitest/coverage-v8": 5.1.0
 overrides:
   react: 19.3.1
   react-dom: 19.3.1
