@@ -289,19 +289,19 @@
               "reusable": true,
               "ref": "Y:WvjQ0",
               "name": "BK / Badge Warning",
-              "fill": "$Y:custom-warning-background",
-              "stroke": "$Y:custom-warning-border",
+              "fill": "$warning",
+              "stroke": "$warning",
               "strokeWidth": 1,
               "strokeAlignment": "inner",
               "descendants": {
                 "Y:Ifywi": {
-                  "fill": "$Y:custom-warning-foreground"
+                  "fill": "$warning-foreground"
                 },
                 "Y:cDsa0": {
-                  "fill": "$Y:custom-warning-foreground"
+                  "fill": "$warning-foreground"
                 },
                 "Y:FeoJB": {
-                  "fill": "$Y:custom-warning-foreground",
+                  "fill": "$warning-foreground",
                   "content": "Pending"
                 }
               }
@@ -990,9 +990,9 @@
                       "textGrowth": "fixed-width",
                       "width": "fill_container",
                       "content": "Booking pages",
-                      "lineHeight": 1.3333,
+                      "lineHeight": "$Y:text-2xl-lhr",
                       "fontFamily": "$Y:font-sans",
-                      "fontSize": 24,
+                      "fontSize": "$Y:text-2xl",
                       "fontWeight": "600"
                     },
                     {
@@ -17645,9 +17645,9 @@
                           "textGrowth": "fixed-width",
                           "width": "fill_container",
                           "content": "Intro call",
-                          "lineHeight": 1.3333,
+                          "lineHeight": "$Y:text-2xl-lhr",
                           "fontFamily": "$Y:font-sans",
-                          "fontSize": 24,
+                          "fontSize": "$Y:text-2xl",
                           "fontWeight": "600"
                         },
                         {
@@ -25613,9 +25613,9 @@
                           "textGrowth": "fixed-width",
                           "width": "fill_container",
                           "content": "Intro call",
-                          "lineHeight": 1.3333,
+                          "lineHeight": "$Y:text-2xl-lhr",
                           "fontFamily": "$Y:font-sans",
-                          "fontSize": 24,
+                          "fontSize": "$Y:text-2xl",
                           "fontWeight": "600"
                         },
                         {
@@ -26754,9 +26754,9 @@
                           "textGrowth": "fixed-width",
                           "width": "fill_container",
                           "content": "Intro call",
-                          "lineHeight": 1.3333,
+                          "lineHeight": "$Y:text-2xl-lhr",
                           "fontFamily": "$Y:font-sans",
-                          "fontSize": 24,
+                          "fontSize": "$Y:text-2xl",
                           "fontWeight": "600"
                         },
                         {
@@ -27277,9 +27277,9 @@
                           "textGrowth": "fixed-width",
                           "width": "fill_container",
                           "content": "Partner onboarding",
-                          "lineHeight": 1.3333,
+                          "lineHeight": "$Y:text-2xl-lhr",
                           "fontFamily": "$Y:font-sans",
-                          "fontSize": 24,
+                          "fontSize": "$Y:text-2xl",
                           "fontWeight": "600"
                         },
                         {
@@ -28070,9 +28070,9 @@
                           "textGrowth": "fixed-width",
                           "width": "fill_container",
                           "content": "Intro call",
-                          "lineHeight": 1.3333,
+                          "lineHeight": "$Y:text-2xl-lhr",
                           "fontFamily": "$Y:font-sans",
-                          "fontSize": 24,
+                          "fontSize": "$Y:text-2xl",
                           "fontWeight": "600"
                         },
                         {
@@ -29042,9 +29042,9 @@
                           "textGrowth": "fixed-width",
                           "width": "fill_container",
                           "content": "Intro call",
-                          "lineHeight": 1.3333,
+                          "lineHeight": "$Y:text-2xl-lhr",
                           "fontFamily": "$Y:font-sans",
-                          "fontSize": 24,
+                          "fontSize": "$Y:text-2xl",
                           "fontWeight": "600"
                         },
                         {
@@ -29424,9 +29424,9 @@
                           "textGrowth": "fixed-width",
                           "width": "fill_container",
                           "content": "Intro call",
-                          "lineHeight": 1.3333,
+                          "lineHeight": "$Y:text-2xl-lhr",
                           "fontFamily": "$Y:font-sans",
-                          "fontSize": 24,
+                          "fontSize": "$Y:text-2xl",
                           "fontWeight": "600"
                         },
                         {
@@ -30301,9 +30301,9 @@
                           "textGrowth": "fixed-width",
                           "width": "fill_container",
                           "content": "Intro call",
-                          "lineHeight": 1.3333,
+                          "lineHeight": "$Y:text-2xl-lhr",
                           "fontFamily": "$Y:font-sans",
-                          "fontSize": 24,
+                          "fontSize": "$Y:text-2xl",
                           "fontWeight": "600"
                         },
                         {
@@ -31163,9 +31163,9 @@
                           "textGrowth": "fixed-width",
                           "width": "fill_container",
                           "content": "Intro call",
-                          "lineHeight": 1.3333,
+                          "lineHeight": "$Y:text-2xl-lhr",
                           "fontFamily": "$Y:font-sans",
-                          "fontSize": 24,
+                          "fontSize": "$Y:text-2xl",
                           "fontWeight": "600"
                         },
                         {
@@ -32086,9 +32086,9 @@
                       "textGrowth": "fixed-width",
                       "width": "fill_container",
                       "content": "Intro call",
-                      "lineHeight": 1.3333,
+                      "lineHeight": "$Y:text-2xl-lhr",
                       "fontFamily": "$Y:font-sans",
-                      "fontSize": 24,
+                      "fontSize": "$Y:text-2xl",
                       "fontWeight": "600"
                     },
                     {
@@ -33000,9 +33000,9 @@
                       "textGrowth": "fixed-width",
                       "width": "fill_container",
                       "content": "Intro call",
-                      "lineHeight": 1.3333,
+                      "lineHeight": "$Y:text-2xl-lhr",
                       "fontFamily": "$Y:font-sans",
-                      "fontSize": 24,
+                      "fontSize": "$Y:text-2xl",
                       "fontWeight": "600"
                     },
                     {
@@ -41274,9 +41274,9 @@
                                       "textGrowth": "fixed-width",
                                       "width": "fill_container",
                                       "content": "You're booked",
-                                      "lineHeight": 1.3333,
+                                      "lineHeight": "$Y:text-2xl-lhr",
                                       "fontFamily": "$Y:font-sans",
-                                      "fontSize": 24,
+                                      "fontSize": "$Y:text-2xl",
                                       "fontWeight": "600"
                                     }
                                   ]
@@ -45618,9 +45618,9 @@
                                       "textGrowth": "fixed-width",
                                       "width": "fill_container",
                                       "content": "You're booked",
-                                      "lineHeight": 1.3333,
+                                      "lineHeight": "$Y:text-2xl-lhr",
                                       "fontFamily": "$Y:font-sans",
-                                      "fontSize": 24,
+                                      "fontSize": "$Y:text-2xl",
                                       "fontWeight": "600"
                                     }
                                   ]
@@ -46631,9 +46631,9 @@
                                       "textGrowth": "fixed-width",
                                       "width": "fill_container",
                                       "content": "You're booked",
-                                      "lineHeight": 1.3333,
+                                      "lineHeight": "$Y:text-2xl-lhr",
                                       "fontFamily": "$Y:font-sans",
-                                      "fontSize": 24,
+                                      "fontSize": "$Y:text-2xl",
                                       "fontWeight": "600"
                                     }
                                   ]
@@ -47629,9 +47629,9 @@
                                       "textGrowth": "fixed-width",
                                       "width": "fill_container",
                                       "content": "You're booked",
-                                      "lineHeight": 1.3333,
+                                      "lineHeight": "$Y:text-2xl-lhr",
                                       "fontFamily": "$Y:font-sans",
-                                      "fontSize": 24,
+                                      "fontSize": "$Y:text-2xl",
                                       "fontWeight": "600"
                                     }
                                   ]
@@ -48646,9 +48646,9 @@
                                       "textGrowth": "fixed-width",
                                       "width": "fill_container",
                                       "content": "You're booked",
-                                      "lineHeight": 1.3333,
+                                      "lineHeight": "$Y:text-2xl-lhr",
                                       "fontFamily": "$Y:font-sans",
-                                      "fontSize": 24,
+                                      "fontSize": "$Y:text-2xl",
                                       "fontWeight": "600"
                                     }
                                   ]
@@ -49393,9 +49393,9 @@
                                       "textGrowth": "fixed-width",
                                       "width": "fill_container",
                                       "content": "You're booked",
-                                      "lineHeight": 1.3333,
+                                      "lineHeight": "$Y:text-2xl-lhr",
                                       "fontFamily": "$Y:font-sans",
-                                      "fontSize": 24,
+                                      "fontSize": "$Y:text-2xl",
                                       "fontWeight": "600"
                                     }
                                   ]
@@ -50140,9 +50140,9 @@
                                       "textGrowth": "fixed-width",
                                       "width": "fill_container",
                                       "content": "This booking has started.",
-                                      "lineHeight": 1.3333,
+                                      "lineHeight": "$Y:text-2xl-lhr",
                                       "fontFamily": "$Y:font-sans",
-                                      "fontSize": 24,
+                                      "fontSize": "$Y:text-2xl",
                                       "fontWeight": "600"
                                     }
                                   ]
@@ -50921,9 +50921,9 @@
                                       "textGrowth": "fixed-width",
                                       "width": "fill_container",
                                       "content": "This booking has passed.",
-                                      "lineHeight": 1.3333,
+                                      "lineHeight": "$Y:text-2xl-lhr",
                                       "fontFamily": "$Y:font-sans",
-                                      "fontSize": 24,
+                                      "fontSize": "$Y:text-2xl",
                                       "fontWeight": "600"
                                     }
                                   ]
@@ -51669,9 +51669,9 @@
                                       "textGrowth": "fixed-width",
                                       "width": "fill_container",
                                       "content": "This booking was cancelled on Mon, Nov 9.",
-                                      "lineHeight": 1.3333,
+                                      "lineHeight": "$Y:text-2xl-lhr",
                                       "fontFamily": "$Y:font-sans",
-                                      "fontSize": 24,
+                                      "fontSize": "$Y:text-2xl",
                                       "fontWeight": "600"
                                     }
                                   ]
@@ -52284,9 +52284,9 @@
                                       "textGrowth": "fixed-width",
                                       "width": "fill_container",
                                       "content": "This booking was cancelled on Mon, Nov 9.",
-                                      "lineHeight": 1.3333,
+                                      "lineHeight": "$Y:text-2xl-lhr",
                                       "fontFamily": "$Y:font-sans",
-                                      "fontSize": 24,
+                                      "fontSize": "$Y:text-2xl",
                                       "fontWeight": "600"
                                     },
                                     {
@@ -52958,9 +52958,9 @@
                                       "textGrowth": "fixed-width",
                                       "width": "fill_container",
                                       "content": "You're booked",
-                                      "lineHeight": 1.3333,
+                                      "lineHeight": "$Y:text-2xl-lhr",
                                       "fontFamily": "$Y:font-sans",
-                                      "fontSize": 24,
+                                      "fontSize": "$Y:text-2xl",
                                       "fontWeight": "600"
                                     }
                                   ]
@@ -53917,9 +53917,9 @@
                                       "textGrowth": "fixed-width",
                                       "width": "fill_container",
                                       "content": "You're booked",
-                                      "lineHeight": 1.3333,
+                                      "lineHeight": "$Y:text-2xl-lhr",
                                       "fontFamily": "$Y:font-sans",
-                                      "fontSize": 24,
+                                      "fontSize": "$Y:text-2xl",
                                       "fontWeight": "600"
                                     }
                                   ]
@@ -59381,9 +59381,9 @@
                                           "textGrowth": "fixed-width",
                                           "width": "fill_container",
                                           "content": "You're booked",
-                                          "lineHeight": 1.3333,
+                                          "lineHeight": "$Y:text-2xl-lhr",
                                           "fontFamily": "$Y:font-sans",
-                                          "fontSize": 24,
+                                          "fontSize": "$Y:text-2xl",
                                           "fontWeight": "600"
                                         }
                                       ]
@@ -60482,9 +60482,9 @@
                           "textGrowth": "fixed-width",
                           "width": "fill_container",
                           "content": "Intro call",
-                          "lineHeight": 1.3333,
+                          "lineHeight": "$Y:text-2xl-lhr",
                           "fontFamily": "$Y:font-sans",
-                          "fontSize": 24,
+                          "fontSize": "$Y:text-2xl",
                           "fontWeight": "600"
                         },
                         {
@@ -61469,9 +61469,9 @@
                               "textGrowth": "fixed-width",
                               "width": "fill_container",
                               "content": "Intro call",
-                              "lineHeight": 1.3333,
+                              "lineHeight": "$Y:text-2xl-lhr",
                               "fontFamily": "$Y:font-sans",
-                              "fontSize": 24,
+                              "fontSize": "$Y:text-2xl",
                               "fontWeight": "600"
                             },
                             {
@@ -101616,13 +101616,13 @@
       "type": "color",
       "value": [
         {
-          "value": "#B45309",
+          "value": "#FBC959",
           "theme": {
             "mode": "light"
           }
         },
         {
-          "value": "#FCD34D",
+          "value": "#56340E",
           "theme": {
             "mode": "dark"
           }
@@ -101699,6 +101699,23 @@
         },
         {
           "value": "#1A9389",
+          "theme": {
+            "mode": "dark"
+          }
+        }
+      ]
+    },
+    "warning-foreground": {
+      "type": "color",
+      "value": [
+        {
+          "value": "#542802",
+          "theme": {
+            "mode": "light"
+          }
+        },
+        {
+          "value": "#FADB90",
           "theme": {
             "mode": "dark"
           }
