@@ -1,0 +1,5 @@
+.data/
+.tanstack/
+.void/
+.wrangler/
+.env

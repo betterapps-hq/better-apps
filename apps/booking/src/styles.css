@@ -1,0 +1,38 @@
+/*
+ * The kit's stylesheet styles every component. Better Links keeps the kit's neutral Nova base and adds one brand hue,
+ * teal, for primary actions, the active page, links, focus rings and "on" states.
+ */
+@import "@buildkitgg/shadcn-baseui-kit/styles.css";
+
+/*
+ * `brand` fills buttons and marks, with `brand-foreground` on it. `brand-soft` tints selected and "on" states, with
+ * `brand-soft-foreground` on it. Light text on teal and teal text on white both pass WCAG AA.
+ */
+:root {
+  --brand: oklch(0.52 0.1 188);
+  --brand-foreground: oklch(0.99 0.005 185);
+  --brand-soft: oklch(0.965 0.022 185);
+  --brand-soft-foreground: oklch(0.42 0.085 190);
+
+  --primary: var(--brand);
+  --primary-foreground: var(--brand-foreground);
+  --ring: oklch(0.62 0.11 186);
+  --sidebar-primary: var(--brand);
+  --sidebar-primary-foreground: var(--brand-foreground);
+  --sidebar-ring: oklch(0.62 0.11 186);
+}
+
+/* In the dark, a calmer teal than the light one's inverse, on a deep teal tint rather than flat grey. */
+.dark {
+  --brand: oklch(0.76 0.115 184);
+  --brand-foreground: oklch(0.21 0.035 192);
+  --brand-soft: oklch(0.3 0.045 190);
+  --brand-soft-foreground: oklch(0.87 0.075 183);
+
+  --primary: var(--brand);
+  --primary-foreground: var(--brand-foreground);
+  --ring: oklch(0.6 0.1 186);
+  --sidebar-primary: var(--brand);
+  --sidebar-primary-foreground: var(--brand-foreground);
+  --sidebar-ring: oklch(0.6 0.1 186);
+}
