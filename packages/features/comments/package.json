@@ -1,6 +1,6 @@
 {
   "name": "@better-apps/comments",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Comment threads on any record an app owns, optionally pinned to a spot inside it.",
   "license": "MIT",
   "type": "module",

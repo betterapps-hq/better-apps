@@ -1,6 +1,6 @@
 {
   "name": "better-apps",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "App features with their own tables, actions and events, for any framework and auth provider.",
   "license": "MIT",
   "type": "module",

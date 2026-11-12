@@ -1,7 +1,0 @@
-{
-  "type": "minor",
-  "comment": "First release on npm",
-  "packageName": "@better-apps/react",
-  "email": "ajcraswell@gmail.com",
-  "dependentChangeType": "patch"
-}

@@ -1,6 +1,6 @@
 {
   "name": "@better-apps/tanstack-start",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Serves Better Apps from a TanStack Start route and calls its actions from server functions as the signed-in user.",
   "license": "MIT",
   "type": "module",

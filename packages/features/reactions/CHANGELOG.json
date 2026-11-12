@@ -1,0 +1,32 @@
+{
+  "name": "@better-apps/reactions",
+  "entries": [
+    {
+      "date": "Thu, 12 Nov 2026 03:29:03 GMT",
+      "version": "0.1.0",
+      "tag": "@better-apps/reactions_v0.1.0",
+      "comments": {
+        "minor": [
+          {
+            "author": "ajcraswell@gmail.com",
+            "package": "@better-apps/reactions",
+            "commit": "bcd70341aad94c02b86da280e6477d49d2cb6dc1",
+            "comment": "First release on npm"
+          },
+          {
+            "author": "beachball",
+            "package": "@better-apps/reactions",
+            "comment": "Bump @better-apps/react to v0.1.0",
+            "commit": "not available"
+          },
+          {
+            "author": "beachball",
+            "package": "@better-apps/reactions",
+            "comment": "Bump better-apps to v0.1.0",
+            "commit": "not available"
+          }
+        ]
+      }
+    }
+  ]
+}
