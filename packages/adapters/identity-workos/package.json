@@ -1,6 +1,6 @@
 {
   "name": "@better-apps/identity-workos",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "The WorkOS identity adapter for Better Apps.",
   "license": "MIT",
   "type": "module",

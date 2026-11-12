@@ -2,6 +2,27 @@
   "name": "@better-apps/identity-workos",
   "entries": [
     {
+      "date": "Thu, 12 Nov 2026 09:20:42 GMT",
+      "version": "0.1.1",
+      "tag": "@better-apps/identity-workos_v0.1.1",
+      "comments": {
+        "patch": [
+          {
+            "author": "ajcraswell@gmail.com",
+            "package": "@better-apps/identity-workos",
+            "commit": "923591ab1aab70e5ec612dbe13444b297c1746e5",
+            "comment": "Require WorkOS SDK 12.1 or later, which has the access token check the adapter calls"
+          },
+          {
+            "author": "beachball",
+            "package": "@better-apps/identity-workos",
+            "comment": "Bump better-apps to v0.1.1",
+            "commit": "not available"
+          }
+        ]
+      }
+    },
+    {
       "date": "Thu, 12 Nov 2026 03:29:03 GMT",
       "version": "0.1.0",
       "tag": "@better-apps/identity-workos_v0.1.0",

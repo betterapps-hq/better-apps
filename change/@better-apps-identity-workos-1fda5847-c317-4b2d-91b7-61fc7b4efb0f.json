@@ -1,7 +1,0 @@
-{
-  "type": "patch",
-  "comment": "Require WorkOS SDK 12.1 or later, which has the access token check the adapter calls",
-  "packageName": "@better-apps/identity-workos",
-  "email": "ajcraswell@gmail.com",
-  "dependentChangeType": "patch"
-}

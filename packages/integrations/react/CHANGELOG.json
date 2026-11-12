@@ -2,6 +2,21 @@
   "name": "@better-apps/react",
   "entries": [
     {
+      "date": "Thu, 12 Nov 2026 09:20:42 GMT",
+      "version": "0.1.1",
+      "tag": "@better-apps/react_v0.1.1",
+      "comments": {
+        "patch": [
+          {
+            "author": "beachball",
+            "package": "@better-apps/react",
+            "comment": "Bump better-apps to v0.1.1",
+            "commit": "not available"
+          }
+        ]
+      }
+    },
+    {
       "date": "Thu, 12 Nov 2026 03:29:03 GMT",
       "version": "0.1.0",
       "tag": "@better-apps/react_v0.1.0",

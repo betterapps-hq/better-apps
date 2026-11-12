@@ -1,6 +1,6 @@
 {
   "name": "@better-apps/react",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Binds a Better Apps client and its stores to React, for any React app, with or without server rendering.",
   "license": "MIT",
   "type": "module",
