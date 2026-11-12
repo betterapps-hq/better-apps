@@ -1,7 +1,6 @@
 {
   "name": "@better-apps/anchors",
   "version": "0.0.0",
-  "private": true,
   "description": "Spots inside a record, such as an element on a page, that features pin comment threads and annotations to.",
   "license": "MIT",
   "type": "module",

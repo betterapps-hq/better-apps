@@ -1,7 +1,6 @@
 {
   "name": "@better-apps/reactions",
   "version": "0.0.0",
-  "private": true,
   "description": "Emoji reactions on any record an app owns, one per person per emoji, with counts, who reacted and live updates.",
   "license": "MIT",
   "type": "module",

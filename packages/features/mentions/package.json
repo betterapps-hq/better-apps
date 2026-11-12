@@ -1,7 +1,6 @@
 {
   "name": "@better-apps/mentions",
   "version": "0.0.0",
-  "private": true,
   "description": "Who was mentioned where: shared mention tokens, checks and suggestions, and a feature that lists each user's mentions.",
   "license": "MIT",
   "type": "module",
