@@ -34,10 +34,10 @@
   },
   "devDependencies": {
     "beachball": "^2.65.5",
-    "knip": "^6.44.1",
+    "knip": "^6.44.2",
     "vite-plus": "catalog:",
     "@betterapps/playbook": "github:betterapps-hq/playbook",
-    "rulesync": "43.5.0",
+    "rulesync": "43.8.0",
     "skills": "1.7.6"
   }
 }
