@@ -32,7 +32,7 @@
     "@buildkitgg/shadcn-theme": "0.2.0",
     "@tanstack/react-router": "^1.170.46",
     "@tanstack/react-start": "^1.169.4",
-    "@tanstack/react-table": "^8.21.3",
+    "@tanstack/react-table": "^9.3.1",
     "@uploadcn/core": "0.1.4",
     "@uploadcn/react": "0.1.4",
     "better-apps": "workspace:*",
