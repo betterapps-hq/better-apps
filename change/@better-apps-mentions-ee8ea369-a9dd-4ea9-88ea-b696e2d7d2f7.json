@@ -1,0 +1,7 @@
+{
+  "type": "minor",
+  "comment": "First release on npm",
+  "packageName": "@better-apps/mentions",
+  "email": "ajcraswell@gmail.com",
+  "dependentChangeType": "patch"
+}
