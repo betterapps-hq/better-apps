@@ -38,7 +38,7 @@
     "@repo/typescript-config": "workspace:*",
     "@types/node": "24.19.2",
     "@vitest/coverage-v8": "catalog:",
-    "@workos-inc/node": "12.1.0",
+    "@workos-inc/node": "12.2.0",
     "typescript": "catalog:",
     "vitest": "catalog:",
     "vite-plus": "catalog:"
