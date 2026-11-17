@@ -71,19 +71,34 @@ For building command-line tools.
 
 ## UI & components
 
-- Use [shadcn/ui](https://github.com/shadcn-ui/ui) with [`@buildkitgg/shadcn-baseui-nova`](https://github.com/betterapps-hq/buildkit/tree/main/packages/shadcn/shadcn-baseui-nova) as the default style. Install it under the `@buildkitgg/shadcn-baseui-kit` alias so app components and BuildKit adapters share the same kit.
-- Load one reset. With Tailwind 4, import the kit’s `tailwind.css` alongside Tailwind. Without Tailwind, use the kit’s compiled `styles.css`, which includes Preflight. If the app supplies its own reset, use `styles-no-reset.css`. Use [the-new-css-reset](https://github.com/elad2412/the-new-css-reset) only when neither the kit nor the app loads Preflight or another reset.
+- Use [shadcn/ui](https://github.com/shadcn-ui/ui) through [`@buildkitgg/shadcn-sync`](https://github.com/betterapps-hq/buildkit/tree/main/packages/shadcn/shadcn-sync), which builds the components into a `@buildkitgg/shadcn` package inside the app. BuildKit's shadcn managers use the same package.
+
+  Run the installer in the app's folder:
+
+  ```sh
+  pnpm dlx @buildkitgg/shadcn-sync
+  ```
+
+  Import components from the generated package:
+
+  ```tsx
+  import { Button } from "@buildkitgg/shadcn"
+
+  export function SaveButton() {
+    return <Button type="submit">Save</Button>
+  }
+  ```
+- With Tailwind 4, run sync with `--css tailwind` and import `@buildkitgg/shadcn/tailwind.css` after Tailwind. Without Tailwind, the components bring their own CSS and don't reset the page, so use [the-new-css-reset](https://github.com/elad2412/the-new-css-reset) if the app needs a reset.
 - Use [Recharts](https://github.com/recharts/recharts) for charts.
 
 | Need | BuildKit packages |
 | --- | --- |
-| Persistent inline alerts | [`@buildkitgg/react-alerts`](https://github.com/betterapps-hq/buildkit/tree/main/packages/react/react-alerts) manages alert state. [`@buildkitgg/shadcn-alerts-manager`](https://github.com/betterapps-hq/buildkit/tree/main/packages/shadcn/shadcn-alerts-manager) renders the alerts. |
-| Modals | [`@buildkitgg/react-modals`](https://github.com/betterapps-hq/buildkit/tree/main/packages/react/react-modals) manages typed modal state and results. [`@buildkitgg/shadcn-modals-manager`](https://github.com/betterapps-hq/buildkit/tree/main/packages/shadcn/shadcn-modals-manager) renders the dialogs. |
-| Themes | [`@buildkitgg/react-theme`](https://github.com/betterapps-hq/buildkit/tree/main/packages/react/react-theme) manages theme state. [`@buildkitgg/shadcn-theme`](https://github.com/betterapps-hq/buildkit/tree/main/packages/shadcn/shadcn-theme) applies it to shadcn surfaces. |
+| Persistent inline alerts | Use [`@buildkitgg/shadcn-alerts-manager`](https://github.com/betterapps-hq/buildkit/tree/main/packages/shadcn/shadcn-alerts-manager) for inline messages that stay visible while the user works, such as a billing warning with an action to update payment details. |
+| Modals | Use [`@buildkitgg/shadcn-modals-manager`](https://github.com/betterapps-hq/buildkit/tree/main/packages/shadcn/shadcn-modals-manager) when an action needs a dialog result, such as awaiting confirmation before deleting a draft. |
+| Themes | Import `{ createShadcnTheme, useTheme }` from [`@buildkitgg/shadcn-theme`](https://github.com/betterapps-hq/buildkit/tree/main/packages/shadcn/shadcn-theme). Create the store once and call `useTheme(store)` in React components. |
 | User preferences | [`@buildkitgg/react-preferences`](https://github.com/betterapps-hq/buildkit/tree/main/packages/react/react-preferences) manages user preferences. |
 | App configuration | [`@buildkitgg/react-configuration`](https://github.com/betterapps-hq/buildkit/tree/main/packages/react/react-configuration) provides typed configuration and developer overrides. |
 | URL-driven tabs and panels | Use [`@buildkitgg/react-routing`](https://github.com/betterapps-hq/buildkit/tree/main/packages/react/react-routing) with the adapter for the app’s router, either [`@buildkitgg/tanstack-router`](https://github.com/betterapps-hq/buildkit/tree/main/packages/react/tanstack-router) or [`@buildkitgg/react-router`](https://github.com/betterapps-hq/buildkit/tree/main/packages/react/react-router). |
-| Shared component runtime | [`@buildkitgg/shadcn-runtime`](https://github.com/betterapps-hq/buildkit/tree/main/packages/shadcn/shadcn-runtime) supplies localization, text direction, and class merging for BuildKit’s shadcn components. |
 
 ## Markdown & rich text
 

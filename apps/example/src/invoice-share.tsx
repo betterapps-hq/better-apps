@@ -22,7 +22,7 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger
-} from "@buildkitgg/shadcn-baseui-kit"
+} from "@buildkitgg/shadcn"
 import { CopyIcon, Share2Icon, Trash2Icon } from "lucide-react"
 import { useId, useState } from "react"
 import { formatTime, plural } from "./format"

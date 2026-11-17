@@ -1,8 +1,10 @@
 /*
- * The kit's stylesheet styles every component. What follows lays out the app's own pages with the kit's tokens, and
- * adds the few colors the kit doesn't have: invoice statuses and comment pins.
+ * Each generated component brings its own styles, and `shared.css` holds the shadcn theme tokens. What follows lays out
+ * the app's own pages with those tokens, and adds the few colors the theme doesn't have: invoice statuses and comment
+ * pins.
  */
-@import "@buildkitgg/shadcn-baseui-kit/styles.css";
+@import "@buildkitgg/shadcn/shared.css";
+@import "./reset.css";
 
 :root {
   --status-draft: oklch(0.55 0.01 260);
@@ -910,7 +912,7 @@ tr[data-field]:hover .comment-here {
   gap: 0.5rem;
 }
 
-/* The kit sizes a file card to its content; in a list it takes the row. */
+/* The file card sizes itself to its content; in a list it takes the row. */
 .file-card {
   width: 100%;
   min-width: 0;

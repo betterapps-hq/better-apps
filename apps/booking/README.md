@@ -74,5 +74,10 @@ custom domains through [Cloudflare for SaaS](../../packages/adapters/hostnames-c
 - `booking.par`: the Parity design, built on the app's own components and `src/styles.css`.
 - `designs/Booking.pen`: the Pencil design, linked to `designs/Shadcn Nova.lib.pen`.
 
-The brand is teal on Nova's neutral base, with amber for warnings. Its tokens, and the type sizes and shadows the kit's
-stylesheet leaves out, are in `src/styles.css`.
+The brand is teal on Nova's neutral base, with amber for warnings. Its tokens, and the type sizes and shadows the
+generated theme leaves out, are in `src/styles.css`.
+
+The components are stock shadcn, which
+[`@buildkitgg/shadcn-sync`](https://www.npmjs.com/package/@buildkitgg/shadcn-sync) builds into `@buildkitgg/shadcn` on
+install, from the snapshot in `shadcn-registry.json`. Commit that file when it changes, so every install builds the same
+components.

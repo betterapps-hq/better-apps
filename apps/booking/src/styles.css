@@ -1,8 +1,10 @@
 /*
- * The kit's stylesheet styles every component. Better Links keeps the kit's neutral Nova base and adds one brand hue,
- * teal, for primary actions, the active page, links, focus rings and "on" states.
+ * Each generated component brings its own styles, and `shared.css` holds the shadcn theme tokens. Better Links keeps
+ * the neutral Nova theme and adds one brand hue, teal, for primary actions, the active page, links, focus rings and
+ * "on" states.
  */
-@import "@buildkitgg/shadcn-baseui-kit/styles.css";
+@import "@buildkitgg/shadcn/shared.css";
+@import "./reset.css";
 
 /*
  * `brand` fills buttons and marks, with `brand-foreground` on it. `brand-soft` tints selected and "on" states, with
@@ -28,7 +30,7 @@
 }
 
 /*
- * The kit's compiled stylesheet defines only `text-xs`, `text-sm` and `text-base`, and no shadows. The app adds the
+ * The generated theme defines only `text-xs`, `text-sm` and `text-base`, and no shadows. The app adds the
  * larger sizes for page and section titles, and shadows for raised surfaces, at Tailwind's default values.
  */
 :root {

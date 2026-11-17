@@ -1,5 +1,5 @@
+import { Card, CardContent } from "@buildkitgg/shadcn"
 import { AlertRegion } from "@buildkitgg/shadcn-alerts-manager"
-import { Card, CardContent } from "@buildkitgg/shadcn-baseui-kit"
 import { createFileRoute } from "@tanstack/react-router"
 import { SignInPrompt } from "../../app-shell"
 import { DomainSettings } from "../../domain-settings"

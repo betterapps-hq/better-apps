@@ -1,12 +1,4 @@
-import {
-  Button,
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle
-} from "@buildkitgg/shadcn-baseui-kit"
+import { Button, Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@buildkitgg/shadcn"
 import { Link, type ErrorComponentProps } from "@tanstack/react-router"
 import { FileQuestionIcon, TriangleAlertIcon } from "lucide-react"
 import type { InvoiceStatus } from "./db/schema"

@@ -6,8 +6,9 @@ and three subagents, all driving Parity through its CLI.
 - **Parity:** desktop 0.45.1, Windows 11 Pro 10.0.26300
 - **CLI:** `@parity-app/cli@0.31.0`, run with `npx -y @parity-app/cli@0.31.0` from the project folder
 - **Project:** `@better-apps/booking`, a TanStack Start app with no `src/components`. Its components come from
-  `@buildkitgg/shadcn-baseui-kit` (Buildkit's shadcn Nova kit on Base UI 1.x), found through `components.json`. Its
-  stylesheet is `src/styles.css`, which imports the kit's compiled stylesheet and adds four brand tokens.
+  `@buildkitgg/shadcn`, stock shadcn in the Nova style on Base UI 1.x, which `@buildkitgg/shadcn-sync` builds into the
+  app on install. Parity finds it through `components.json` and names its library `shadcn`. Its stylesheet is
+  `src/styles.css`, which imports the package's theme tokens (`shared.css`), adds a page reset and four brand tokens.
 - **Date:** 2026-11-10
 
 Severity: **high** blocks a design or forces a workaround that changes what's built; **medium** costs time or hides a
@@ -20,50 +21,50 @@ mistake; **low** is polish.
 - **Type:** bug
 - **Severity:** high
 - **Steps:**
-  1. In a design, insert the kit's dialog, open:
-     `{ type: "component", component: "nova/Dialog", props: { open: true }, slots: { children: [{ type: "component", component: "nova/DialogContent", slots: { children: [/* DialogHeader, DialogTitle, a field, DialogFooter */] } }] } }`.
+  1. In a design, insert the package's dialog, open:
+     `{ type: "component", component: "shadcn/Dialog", props: { open: true }, slots: { children: [{ type: "component", component: "shadcn/DialogContent", slots: { children: [/* DialogHeader, DialogTitle, a field, DialogFooter */] } }] } }`.
   2. `parity screenshot <design>`.
-  3. The same with `nova/AlertDialog` (`open: true`) and `nova/DropdownMenu` (`open: true`, with a trigger and
+  3. The same with `shadcn/AlertDialog` (`open: true`) and `shadcn/DropdownMenu` (`open: true`, with a trigger and
      `DropdownMenuContent`).
-- **Expected:** the dialog draws over the frame as it does in the app: centred, on its backdrop, with the kit's styles.
-  The menu draws beside its trigger.
+- **Expected:** the dialog draws over the frame as it does in the app: centred, on its backdrop, with the package's
+  styles. The menu draws beside its trigger.
 - **Actual:** the popup's content draws as unstyled HTML (serif default font, native buttons, no surface, no backdrop)
   below the frame's content, at its left edge. The dialog's frame also scrolls, so the screenshot starts about 175px
   down the page and cuts the top off. The dropdown menu's items draw as plain text under the trigger. `parity problems`
   reports nothing for these frames.
-- **Why, as far as we can tell:** the kit's `DialogContent`, `AlertDialogContent` and `DropdownMenuContent` wrap their
-  popup in Base UI's `Portal`, which appends to `document.body`. The frame's stylesheet and tokens seem to be scoped to
-  the frame's own root, so what's portalled to the body gets neither. The kit's parts don't pass a `container` through,
-  and a design can't pass an element as a prop anyway.
+- **Why, as far as we can tell:** the package's `DialogContent`, `AlertDialogContent` and `DropdownMenuContent` wrap
+  their popup in Base UI's `Portal`, which appends to `document.body`. The frame's stylesheet and tokens seem to be
+  scoped to the frame's own root, so what's portalled to the body gets neither. The package's parts don't pass a
+  `container` through, and a design can't pass an element as a prop anyway.
 - **Error text:** none. That's part of the problem: nothing says the popup escaped the frame.
 - **Workaround:** draw every popup in place with layouts: an absolutely positioned overlay with a scrim, and a surface
-  using the `popover`, `popover-foreground` and `border` tokens, holding the kit's real buttons and fields. This is the
-  one place the designs don't use the project's components. It affects Dialog, AlertDialog, DropdownMenu, Select's and
-  Combobox's lists, Popover, Tooltip, Sheet and toasts.
+  using the `popover`, `popover-foreground` and `border` tokens, holding the package's real buttons and fields. This is
+  the one place the designs don't use the project's components. It affects Dialog, AlertDialog, DropdownMenu, Select's
+  and Combobox's lists, Popover, Tooltip, Sheet and toasts.
 - **Suggestion:** give each frame its own portal root (or scope styles so `body` inside a frame is styled), and have
   `problems` flag elements drawn outside the frame's root.
 
-### 2. A project that gets its styles from a compiled kit stylesheet has only three type sizes and no shadows
+### 2. A project that gets its styles from compiled component styles has only three type sizes and no shadows
 
 - **Type:** difficulty
 - **Severity:** medium
 - **Steps:** `parity tokens --category font-size --limit 200`, then `GetTokens({ category: "shadow" })` in a snippet.
 - **Expected:** enough of a type scale to set a page title, and a shadow for raised surfaces.
 - **Actual:** `text-base`, `text-sm` and `text-xs` are the only sizes ("3 tokens"), and there are no shadow tokens. The
-  kit's own components use larger type and shadows through utility classes compiled into its stylesheet, but those
-  aren't variables, so styles can't name them. `size: "text-2xl"`, `"1.5rem"` and `"24px"` all warn and draw at the
-  inherited size.
+  package's own components use larger type and shadows through utility classes compiled into their stylesheets, but
+  those aren't variables, so styles can't name them. `size: "text-2xl"`, `"1.5rem"` and `"24px"` all warn and draw at
+  the inherited size.
 - **Error text:** `size "text-2xl" isn't a token. Use a name from GetTokens().` and
   `shadow "shadow-lg" isn't a token. Use a name from GetTokens().`
 - **Workaround:** page titles are `text-base` at weight 600; popups have a border and no shadow.
 - **What `parity tokens` returns:** `parity tokens --category font-size --limit 200` prints
   `3 tokens. Name them in styles without "--".` then `text-base: default 1rem`, `text-sm: default .875rem`,
   `text-xs: default .75rem`. `parity tokens --category shadow` prints `No tokens match.`
-- **Why:** the kit's `dist/styles.css` is compiled Tailwind v4.3.3 output, not a stylesheet that imports Tailwind's
-  theme. Tailwind only emits the theme variables its build used, and in that file the only `--text-*` variables are
+- **Why:** the package's `shared.css` is compiled Tailwind output, not a stylesheet that imports Tailwind's theme.
+  Tailwind only emits the theme variables its build used, and in that file the only `--text-*` variables are
   `--text-base`, `--text-sm` and `--text-xs`, with no `--shadow-*` at all. So Parity reads the file correctly, and the
   app has no Tailwind build of its own (`vite.config.ts` has only TanStack Start and React), so `text-2xl` wouldn't
-  exist in its CSS either. The kit's own larger type and shadows are utility classes baked into its components.
+  exist in its CSS either. The package's own larger type and shadows are utility classes baked into its components.
 - **What would help:** say so in the warning ("this project defines no larger size; add `--text-2xl` to
   `src/styles.css`"), let `SetTokens` or a new call add a token rather than only change one, and offer the framework's
   default scale (marked as not yet in the project) when the project's stylesheet is a compiled Tailwind build.
@@ -114,7 +115,7 @@ mistake; **low** is polish.
 - **Severity:** low
 - **Steps:** give a header layout `border: "border", borderWidth: 1` to get a line under it.
 - **Actual:** a full box. There's no per-side width.
-- **Workaround:** a `nova/Separator` under the header.
+- **Workaround:** a `shadcn/Separator` under the header.
 
 ### 7. A state can't change anything inside an instance, though `document.md` says it can
 
@@ -184,14 +185,14 @@ mistake; **low** is polish.
 - **Severity:** low
 - **Found by:** subagent A
 - **Steps and actual:**
-  - `nova/Calendar` with `selected`, and `nova/Input` with `style`, warn and then render as asked.
-    `Props("nova/Calendar", { all: true })` lists `defaultMonth`, `disabled` and `weekStartsOn` but not `selected`,
+  - `shadcn/Calendar` with `selected`, and `shadcn/Input` with `style`, warn and then render as asked.
+    `Props("shadcn/Calendar", { all: true })` lists `defaultMonth`, `disabled` and `weekStartsOn` but not `selected`,
     which react-day-picker types per mode.
   - `Update(path, { props: { "aria-sort": null } })` applies with a warning, though `execute.md` says to set a key to
     `null` to remove it. `unset: { props: ["aria-sort"] }` works.
-- **Error text:** `nova/Calendar has no prop "selected". Check Props("nova/Calendar").`;
-  `nova/Input has no prop "style".`;
-  `nova/TableHead aria-sort is one of "none", "ascending", "descending", "other", not null`.
+- **Error text:** `shadcn/Calendar has no prop "selected". Check Props("shadcn/Calendar").`;
+  `shadcn/Input has no prop "style".`;
+  `shadcn/TableHead aria-sort is one of "none", "ascending", "descending", "other", not null`.
 
 ### 12. A prop can't be a `Date`
 
@@ -278,7 +279,8 @@ mistake; **low** is polish.
 - **Type:** difficulty
 - **Severity:** low
 - **Found by:** subagent B
-- **Steps:** `nova/Separator` with `style: { position: "absolute", left: 14, right: 0 }` (an hour line in a week grid).
+- **Steps:** `shadcn/Separator` with `style: { position: "absolute", left: 14, right: 0 }` (an hour line in a week
+  grid).
 - **Expected:** it stretches between the two edges, as a layout does.
 - **Actual:** it stays 100% wide and starts at `left`, so it runs past its parent.
 - **Workaround:** an absolutely placed layout around the separator.
@@ -325,7 +327,7 @@ a colour swatch with a background too.
 - **Found by:** subagents A and C
 - **Steps:**
   - a `span` text with `lines: 1` and `maxWidth: 40` measured 224px;
-  - `textAlign: "end"` on a `span` inside a table cell does nothing, so numbers in the kit's tables aren't
+  - `textAlign: "end"` on a `span` inside a table cell does nothing, so numbers in the package's tables aren't
     right-aligned;
   - a web address in a 225px column can't wrap: only `lines: 1` with an ellipsis works.
 - **Expected:** a warning that the style has no effect on an inline tag, or the text made a block when it's given a
@@ -375,11 +377,11 @@ a colour swatch with a background too.
   width inside 13px columns, so they overlapped until they got `width: "fill"` and `minWidth: 0`. A layout with a size
   or a background isn't empty in any sense that matters. Workaround used across the designs: a text child holding one
   space.
-- **Entry 10** (subagent C, and the lead): the cause was the shared shell. The kit's `SidebarInset` has
+- **Entry 10** (subagent C, and the lead): the cause was the shared shell. The package's `SidebarInset` has
   `min-width: auto`, so a wide table squeezed the sidebar on 14 screens (185px on Booking pages, 235px on Bookings,
   197px on Links, 0px on Link). `problems` found none of them. After setting `minWidth: 0` on the inset, the Booking
-  pages table scrolled sideways inside the kit's table container in three of its states, and `problems` and `Measure`
-  both missed that too: every row measured 960px in a 960px table while the screenshot showed a scrollbar.
+  pages table scrolled sideways inside the package's table container in three of its states, and `problems` and
+  `Measure` both missed that too: every row measured 960px in a 960px table while the screenshot showed a scrollbar.
 
 ## What worked
 

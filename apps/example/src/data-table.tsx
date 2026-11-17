@@ -21,7 +21,7 @@ import {
   TableHead,
   TableHeader,
   TableRow
-} from "@buildkitgg/shadcn-baseui-kit"
+} from "@buildkitgg/shadcn"
 import {
   createTable,
   flexRender,
@@ -42,7 +42,7 @@ import {
 } from "lucide-react"
 import { useState, type ReactNode } from "react"
 
-// Table parts in the style of tablecn, built from the kit's components on TanStack Table.
+// Table parts in the style of tablecn, built from the shadcn components on TanStack Table.
 
 declare module "@tanstack/react-table" {
   interface ColumnMeta<TData extends RowData, TValue> {

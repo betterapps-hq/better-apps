@@ -31,7 +31,7 @@ import {
   RadioGroupItem,
   Spinner,
   toast
-} from "@buildkitgg/shadcn-baseui-kit"
+} from "@buildkitgg/shadcn"
 import { CopyIcon, GlobeIcon, RefreshCwIcon, StarIcon, Trash2Icon } from "lucide-react"
 import { useRef, useState, type FormEvent } from "react"
 import { formatTime } from "./format"
