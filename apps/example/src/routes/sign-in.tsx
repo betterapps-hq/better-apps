@@ -13,7 +13,7 @@ import {
   FieldLabel,
   FieldSeparator,
   Input
-} from "@buildkitgg/shadcn-baseui-kit"
+} from "@buildkitgg/shadcn"
 import { createFileRoute } from "@tanstack/react-router"
 import { useState, type FormEvent } from "react"
 import { initials } from "../app-shell"

@@ -13,7 +13,7 @@ import {
   ItemDescription,
   ItemTitle,
   Textarea
-} from "@buildkitgg/shadcn-baseui-kit"
+} from "@buildkitgg/shadcn"
 import { createFileRoute, useRouter } from "@tanstack/react-router"
 import { useState, type FormEvent } from "react"
 import { SignInPrompt } from "../app-shell"

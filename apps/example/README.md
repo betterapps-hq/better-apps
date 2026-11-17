@@ -65,12 +65,13 @@ Then open <http://127.0.0.1:4190>. `build` and `preview` run the production buil
   file can delete it, and so can Ada. Comment boxes have a paperclip: files upload while the comment is written and
   attach once it's posted. Files picked while a comment posts wait for the next one. Uploads go through
   [`@better-apps/uploadcn`](../../packages/integrations/uploadcn/README.md), with UploadCN's `Upload` primitives styled
-  with the kit, `useAttachmentsUploader` in the panel and `useDraftUploader` in comment boxes. Images show a thumbnail.
-  Uploads, failures, moves and deletions are announced in polite live regions, with files picked together said in one
-  message, and a failure also shows beside its upload. The Files panel is for signed-in people. The UI is in
-  `src/invoice-files.tsx`. The bytes go in a folder through the storage adapter in `src/folder-storage.server.ts`, where
-  a Worker would use [`@better-apps/storage-r2`](../../packages/adapters/storage-r2/README.md). On start, the server
-  sweeps away uploads that never finished and drafts that were never posted.
+  with the generated components, `useAttachmentsUploader` in the panel and `useDraftUploader` in comment boxes. Images
+  show a thumbnail. Uploads, failures, moves and deletions are announced in polite live regions, with files picked
+  together said in one message, and a failure also shows beside its upload. The Files panel is for signed-in people. The
+  UI is in `src/invoice-files.tsx`. The bytes go in a folder through the storage adapter in
+  `src/folder-storage.server.ts`, where a Worker would use
+  [`@better-apps/storage-r2`](../../packages/adapters/storage-r2/README.md). On start, the server sweeps away uploads
+  that never finished and drafts that were never posted.
 - **Notes**, at `/notes`, is a tiny feature in `src/features.ts`. Its loader calls a server function that calls
   `api.notes.list()` as the request's user, and the form posts to `/api/apps/notes/add` from the browser.
 - **Domains** from [`@better-apps/domains`](../../packages/features/domains/README.md), at `/settings/domains`, give the
@@ -99,13 +100,14 @@ Then open <http://127.0.0.1:4190>. `build` and `preview` run the production buil
 
 ## Interface
 
-The UI comes from Buildkit's shadcn kit,
-[`@buildkitgg/shadcn-baseui-nova`](https://www.npmjs.com/package/@buildkitgg/shadcn-baseui-nova), installed under the
-`@buildkitgg/shadcn-baseui-kit` alias, so the app imports components from one name whichever style it picks.
-`src/styles.css` imports the kit's compiled styles and lays out the app's own pages with the kit's tokens, and adds
-colors for invoice statuses and comment pins.
+The UI is stock shadcn on Base UI in the Nova style. On install,
+[`@buildkitgg/shadcn-sync`](https://www.npmjs.com/package/@buildkitgg/shadcn-sync) builds the components into
+`@buildkitgg/shadcn`, a package inside the app's `node_modules`, from the snapshot in `shadcn-registry.json`. Commit
+that file when it changes, so every install builds the same components. Each component brings its own styles.
+`src/styles.css` imports the shadcn theme tokens and a reset for the app's own pages, lays those pages out with the
+tokens, and adds colors for invoice statuses and comment pins.
 
-- `src/app-shell.tsx` is the frame: the kit's sidebar, a header with where the page sits, and the account menu with the
+- `src/app-shell.tsx` is the frame: the shadcn sidebar, a header with where the page sits, and the account menu with the
   appearance and sign-out.
 - `src/ui.ts` creates the light and dark theme with
   [`@buildkitgg/shadcn-theme`](https://www.npmjs.com/package/@buildkitgg/shadcn-theme), saved in the browser and applied
@@ -113,12 +115,12 @@ colors for invoice statuses and comment pins.
   [`@buildkitgg/shadcn-modals-manager`](https://www.npmjs.com/package/@buildkitgg/shadcn-modals-manager), and the alerts
   that stay until dismissed with
   [`@buildkitgg/shadcn-alerts-manager`](https://www.npmjs.com/package/@buildkitgg/shadcn-alerts-manager). Short
-  confirmations, such as a resolved thread, use the kit's toasts.
-- `src/data-table.tsx` has table parts in the style of [tablecn](https://tablecn.com), built from the kit's components:
+  confirmations, such as a resolved thread, use shadcn's toasts.
+- `src/data-table.tsx` has table parts in the style of [tablecn](https://tablecn.com), built from the shadcn components:
   sortable column headers, a filter by several values with their counts, and pages. Its `useDataTable` creates the table
   the way `useReactTable` does. TanStack Table changes one table object in place, so the hook and the parts that read
   the table opt out of the React Compiler with `"use no memo"`.
-- Icons are [Lucide](https://lucide.dev), which the kit uses too.
+- Icons are [Lucide](https://lucide.dev), which the components use too.
 
 ## Database
 

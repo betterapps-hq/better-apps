@@ -23,7 +23,7 @@ import {
   DropdownMenuTrigger,
   Progress,
   Spinner
-} from "@buildkitgg/shadcn-baseui-kit"
+} from "@buildkitgg/shadcn"
 import type { Uploader, UploadItem, UploaderState, UploadStatus } from "@uploadcn/core"
 import { Upload, useUploadContext, useUploadItem, useUploadSelector, type UploadMessages } from "@uploadcn/react"
 import {

@@ -1,4 +1,3 @@
-import { AlertRegion } from "@buildkitgg/shadcn-alerts-manager"
 import {
   Avatar,
   AvatarFallback,
@@ -28,7 +27,8 @@ import {
   SidebarTrigger,
   Toaster,
   TooltipProvider
-} from "@buildkitgg/shadcn-baseui-kit"
+} from "@buildkitgg/shadcn"
+import { AlertRegion } from "@buildkitgg/shadcn-alerts-manager"
 import { ModalRenderer } from "@buildkitgg/shadcn-modals-manager"
 import { useTheme, type Theme } from "@buildkitgg/shadcn-theme"
 import { Link, useLocation, useMatch } from "@tanstack/react-router"

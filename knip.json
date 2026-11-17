@@ -67,8 +67,8 @@
     },
     "apps/booking": {
       "ignoreDependencies": [
+        "@buildkitgg/shadcn",
         "@buildkitgg/shadcn-alerts-manager",
-        "@buildkitgg/shadcn-baseui-kit",
         "@buildkitgg/shadcn-modals-manager",
         "@buildkitgg/shadcn-theme",
         "lucide-react"

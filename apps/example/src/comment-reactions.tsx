@@ -12,7 +12,7 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger
-} from "@buildkitgg/shadcn-baseui-kit"
+} from "@buildkitgg/shadcn"
 import { createStore } from "better-apps/client"
 import { SmileIcon, SmilePlusIcon } from "lucide-react"
 import { useState } from "react"

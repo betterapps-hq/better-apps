@@ -15,7 +15,7 @@ import {
   InputGroup,
   InputGroupAddon,
   InputGroupInput
-} from "@buildkitgg/shadcn-baseui-kit"
+} from "@buildkitgg/shadcn"
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router"
 import {
   getCoreRowModel,

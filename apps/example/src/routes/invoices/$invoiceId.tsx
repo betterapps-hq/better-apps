@@ -19,7 +19,7 @@ import {
   TableHeader,
   TableRow,
   toast
-} from "@buildkitgg/shadcn-baseui-kit"
+} from "@buildkitgg/shadcn"
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router"
 import {
   BanknoteIcon,

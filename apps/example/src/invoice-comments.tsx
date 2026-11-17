@@ -14,7 +14,6 @@ import {
   type Subject
 } from "@better-apps/comments/react"
 import type { DraftHandoff } from "@better-apps/uploadcn/react"
-import { AlertRegion } from "@buildkitgg/shadcn-alerts-manager"
 import {
   Avatar,
   AvatarFallback,
@@ -42,7 +41,8 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger
-} from "@buildkitgg/shadcn-baseui-kit"
+} from "@buildkitgg/shadcn"
+import { AlertRegion } from "@buildkitgg/shadcn-alerts-manager"
 import {
   CheckIcon,
   EllipsisIcon,

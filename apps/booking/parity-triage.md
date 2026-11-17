@@ -7,7 +7,8 @@ and three subagents, all driving Parity through its CLI.
 - **CLI:** `@parity-app/cli@0.31.0`, run with `npx -y @parity-app/cli@0.31.0` from the project folder
 - **Project:** `@better-apps/booking`, a TanStack Start app with no `src/components`. Its components come from
   `@buildkitgg/shadcn-baseui-kit` (Buildkit's shadcn Nova kit on Base UI 1.x), found through `components.json`. Its
-  stylesheet is `src/styles.css`, which imports the kit's compiled stylesheet and adds four brand tokens.
+  stylesheet is `src/styles.css`, which imports the kit's compiled stylesheet and adds four brand tokens. The app has
+  since moved to components built by `@buildkitgg/shadcn-sync`; the entries below describe the kit as it was then.
 - **Date:** 2026-11-10
 
 Severity: **high** blocks a design or forces a workaround that changes what's built; **medium** costs time or hides a

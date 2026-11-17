@@ -1108,8 +1108,8 @@ in the [domains spec](../../../packages/features/domains/docs/spec.md#one-time-c
 
 ## Interface
 
-- Components come from Buildkit's Nova kit, `@buildkitgg/shadcn-baseui-nova`, under the `@buildkitgg/shadcn-baseui-kit`
-  alias. Icons are Lucide.
+- Components are stock shadcn on Base UI in the Nova style, built into `@buildkitgg/shadcn` by Buildkit's
+  `@buildkitgg/shadcn-sync` when the app installs. Icons are Lucide.
 - **Brand**: teal, on Nova's neutral base, in `src/styles.css`. `brand` fills primary buttons and the brand mark, with
   `brand-foreground` on it; `brand-soft` tints the selected nav item, "on" states and booking blocks in the week view,
   with `brand-soft-foreground` on it. `primary`, `ring` and the sidebar's primary colours are teal. Light and dark both
@@ -1126,7 +1126,7 @@ in the [domains spec](../../../packages/features/domains/docs/spec.md#one-time-c
 
 - **Warning**: amber. `warning` fills the badges of statuses that need attention, with `warning-foreground` on it, and
   passes WCAG AA in light and dark.
-- **Type and shadows**: the kit's stylesheet defines only `text-xs`, `text-sm` and `text-base`, and no shadows, so
+- **Type and shadows**: the generated theme defines only `text-xs`, `text-sm` and `text-base`, and no shadows, so
   `src/styles.css` adds `text-lg`, `text-xl`, `text-2xl` and `text-3xl`, and `shadow-xs` to `shadow-lg`, at Tailwind's
   default values. Page titles are `text-2xl` at weight 600.
 

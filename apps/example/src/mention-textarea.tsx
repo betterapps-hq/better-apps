@@ -1,6 +1,6 @@
 import { useSuggestMentions, type Subject } from "@better-apps/comments/react"
 import { mentionToken } from "@better-apps/mentions"
-import { Avatar, AvatarFallback, Textarea } from "@buildkitgg/shadcn-baseui-kit"
+import { Avatar, AvatarFallback, Textarea } from "@buildkitgg/shadcn"
 import {
   useEffect,
   useId,
