@@ -39,7 +39,7 @@
     "drizzle-orm": "^0.45.2"
   },
   "devDependencies": {
-    "@neondatabase/serverless": "1.2.0",
+    "@neondatabase/serverless": "1.2.1",
     "@repo/typescript-config": "workspace:*",
     "@types/node": "24.19.2",
     "@types/pg": "8.23.1",
